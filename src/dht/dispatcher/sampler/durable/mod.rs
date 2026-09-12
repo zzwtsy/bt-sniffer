@@ -1,0 +1,292 @@
+//! 数据库确认由 select 驱动，绝不在 UDP 收发分支中等待磁盘。
+//!
+//! Sampler 长期持有预约和结算 future；事件循环取消一次等待不会撤销已接纳的数据库命令。
+use super::*;
+use crate::{
+    identity::LocalIdentity,
+    storage::{Clock, CooldownLease, RestoredCooldown, StorageError, StorageHandle},
+};
+use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
+#[cfg(test)]
+mod tests;
+
+/// 预约完成后将原请求和租约结果一并交回；等待期间原请求留在 reserving future 内。
+pub(super) struct ReservationResult {
+    request: Request,
+    lease_result: Result<CooldownLease, StorageError>,
+}
+
+pub(super) struct Durable {
+    report: Option<tokio::sync::watch::Sender<Option<crate::persistence::SessionFault>>>,
+    pub(super) clock: Clock,
+    storage: StorageHandle,
+    identity: LocalIdentity,
+    pub(super) reserving: Option<BoxFuture<'static, ReservationResult>>,
+    pub(super) ready: Option<Request>,
+    pub(super) settling: FuturesUnordered<BoxFuture<'static, Result<(), StorageError>>>,
+}
+impl std::fmt::Debug for Durable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DurableSampler")
+            .field("identity", &self.identity)
+            .finish_non_exhaustive()
+    }
+}
+impl Sampler {
+    pub(in crate::dht::dispatcher) fn attach_storage(
+        &mut self,
+        storage: StorageHandle,
+        identity: LocalIdentity,
+        restored: Vec<RestoredCooldown>,
+    ) -> Result<(), StorageError> {
+        if self.session.is_some() || self.durable.is_some() {
+            return Err(StorageError::Invalid("不能替换正在使用的持久化状态"));
+        }
+        let now = tokio::time::Instant::now().into_std();
+        for value in restored {
+            let remaining = match value {
+                RestoredCooldown::Id { remaining_ms, .. }
+                | RestoredCooldown::Ip { remaining_ms, .. } => remaining_ms,
+            };
+            let duration = Duration::from_millis(
+                u64::try_from(remaining).map_err(|_| StorageError::Invalid("冷却时间无效"))?,
+            );
+            let until = now
+                .checked_add(duration)
+                .ok_or(StorageError::Invalid("冷却期限溢出"))?;
+            match value {
+                RestoredCooldown::Id {
+                    node_id, failures, ..
+                } => {
+                    self.ids.insert(node_id, Cooldown { until, failures });
+                }
+                RestoredCooldown::Ip { ip, .. } => {
+                    self.ips.insert(ip, until);
+                }
+            }
+        }
+        self.durable = Some(Durable {
+            report: None,
+            clock: Clock::default(),
+            storage,
+            identity,
+            reserving: None,
+            ready: None,
+            settling: FuturesUnordered::new(),
+        });
+        Ok(())
+    }
+    pub(in crate::dht::dispatcher) fn mark_storage_fault(&mut self, error: StorageError) {
+        if let Some(report) = self.durable.as_ref().and_then(|d| d.report.as_ref()) {
+            crate::persistence::report_fault(
+                report,
+                crate::persistence::SessionFault::StorageWrite(error.clone()),
+            );
+        }
+        self.stop(tokio::time::Instant::now().into_std());
+        self.status.storage_error = Some(error);
+        self.status.pause = PauseReason::Storage;
+    }
+    pub(in crate::dht::dispatcher) fn report_errors_to(
+        &mut self,
+        report: tokio::sync::watch::Sender<Option<crate::persistence::SessionFault>>,
+    ) {
+        if let Some(d) = &mut self.durable {
+            d.report = Some(report);
+        }
+    }
+    pub(super) fn reserve_request(&mut self, request: Request, now: Instant) -> Option<Request> {
+        let Some(durable) = self.durable.as_mut() else {
+            return Some(request);
+        };
+        if request.lease.is_some() || request.kind == RequestKind::FindNodeFallback {
+            return Some(request);
+        }
+        let s = self.session.as_ref()?;
+        let duration = s
+            .config
+            .minimum_interval
+            .max(UNSUPPORTED_FOR)
+            .as_nanos()
+            .div_ceil(1_000_000);
+        let at = match durable.clock.millis_at(now) {
+            Ok(at) => at,
+            Err(error) => {
+                self.mark_storage_fault(error);
+                return None;
+            }
+        };
+        let Ok(duration) = i64::try_from(duration) else {
+            self.mark_storage_fault(StorageError::Invalid("冷却时长溢出"));
+            return None;
+        };
+        let store = durable.storage.clone();
+        let identity = durable.identity;
+        let capacity = s.config.cooldown_capacity;
+        durable.reserving = Some(Box::pin(async move {
+            let result = store
+                .reserve_sampling(
+                    identity,
+                    request.node.id,
+                    request.node.address.ip(),
+                    at,
+                    duration,
+                    capacity,
+                )
+                .await;
+            ReservationResult {
+                request,
+                lease_result: result,
+            }
+        }));
+        self.status.pause = PauseReason::Storage;
+        self.deadline = None;
+        None
+    }
+    pub(super) fn take_reserved(&mut self, capacity: usize, now: Instant) -> Option<Request> {
+        let d = self.durable.as_mut()?;
+        let s = self.session.as_mut()?;
+        if d.ready.is_none() || !d.settling.is_empty() || capacity == 0 {
+            return None;
+        }
+        if now < s.next_send {
+            self.deadline = Some(s.next_send);
+            return None;
+        }
+        s.next_send = now + s.config.send_spacing;
+        d.ready.take()
+    }
+    /// 结算 future 数量不超过采样并发数，结算未完成时不再开始新采样。
+    pub(super) fn settle_request(&mut self, request: &Request, now: Instant) {
+        let Some(lease) = request.lease.clone() else {
+            return;
+        };
+        let Some(cooldown) = self.ids.get(&request.node.id).copied() else {
+            return;
+        };
+        let Some(durable) = self.durable.as_mut() else {
+            return;
+        };
+        let at = match durable.clock.millis_at(now) {
+            Ok(at) => at,
+            Err(error) => {
+                self.mark_storage_fault(error);
+                return;
+            }
+        };
+        let duration = cooldown
+            .until
+            .saturating_duration_since(now)
+            .as_nanos()
+            .div_ceil(1_000_000)
+            .max(1);
+        let Ok(duration) = i64::try_from(duration) else {
+            self.mark_storage_fault(StorageError::Invalid("冷却结算溢出"));
+            return;
+        };
+        let store = durable.storage.clone();
+        durable.settling.push(Box::pin(async move {
+            store
+                .settle_sampling(lease, at, duration, cooldown.failures)
+                .await
+        }));
+    }
+    /// socket 返回不确定的发送结果，保守保留冷却，但不计远端失败。
+    pub(in crate::dht::dispatcher) fn uncertain_send(&mut self, request: Request, now: Instant) {
+        self.finished(&request);
+        self.cancel_request(&request, now);
+    }
+    pub(in crate::dht::dispatcher) fn abandon_unsent(&mut self, request: Request, now: Instant) {
+        self.finished(&request);
+        if request.kind == RequestKind::Sample {
+            self.ids.remove(&request.node.id);
+            self.ips.remove(&request.node.address.ip());
+            if let Some(lease) = request.lease
+                && let Some(d) = &mut self.durable
+            {
+                let store = d.storage.clone();
+                d.settling
+                    .push(Box::pin(async move { store.abandon_sampling(lease).await }));
+            }
+        }
+        // 保持原有发送间隔，防止本地容量不足导致热循环。
+        if let Some(s) = &mut self.session {
+            s.next_send = s.next_send.max(now + Duration::from_secs(1));
+            self.deadline = Some(s.next_send);
+        }
+    }
+    pub(in crate::dht::dispatcher) fn cancel_request(&mut self, request: &Request, now: Instant) {
+        let Some(lease) = request.lease.clone() else {
+            return;
+        };
+        // 预约确认可能晚于 stop；内存与磁盘都从实际结算时刻等待，不能让内存先到期。
+        let duration = Duration::from_millis(lease.duration_ms.max(21_600_000) as u64);
+        let Some(until) = now.checked_add(duration) else {
+            self.mark_storage_fault(StorageError::Invalid("取消冷却时间溢出"));
+            return;
+        };
+        self.cooldown(request.node, until, 0);
+        let Some(d) = &mut self.durable else {
+            return;
+        };
+        let store = d.storage.clone();
+        let at = d.clock.millis_at(now);
+        d.settling.push(Box::pin(async move {
+            let duration = lease.duration_ms.max(21_600_000);
+            store.settle_sampling(lease, at?, duration, 0).await
+        }));
+    }
+    pub(in crate::dht::dispatcher) async fn flush_storage(&mut self) -> Result<(), StorageError> {
+        while self
+            .durable
+            .as_ref()
+            .is_some_and(|d| d.reserving.is_some() || !d.settling.is_empty())
+        {
+            self.storage_event().await;
+        }
+        self.status.storage_error.clone().map_or(Ok(()), Err)
+    }
+    /// 取消 select 不会丢失正在排队的 SQL future，它一直保存在 durable 状态中。
+    pub(in crate::dht::dispatcher) async fn storage_event(&mut self) {
+        let Some(d) = self.durable.as_mut() else {
+            return pending().await;
+        };
+        enum Event {
+            Reserved(Box<Request>, Result<CooldownLease, StorageError>),
+            Settled(Result<(), StorageError>),
+        }
+        let event = tokio::select! {
+            reservation = async {
+                match d.reserving.as_mut() {
+                    Some(future) => future.await,
+                    None => pending().await,
+                }
+            } => Event::Reserved(Box::new(reservation.request), reservation.lease_result),
+            result = async {
+                if d.settling.is_empty() {
+                    pending().await
+                } else {
+                    d.settling.next().await.expect("仍有待结算的操作")
+                }
+            } => Event::Settled(result),
+        };
+        match event {
+            Event::Reserved(mut request, result) => {
+                d.reserving = None;
+                match result {
+                    Ok(lease) => {
+                        request.lease = Some(lease);
+                        if self.session.is_some() && request.generation == self.generation {
+                            d.ready = Some(*request);
+                        } else {
+                            self.abandon_unsent(*request, tokio::time::Instant::now().into_std());
+                        }
+                    }
+                    Err(error) => self.mark_storage_fault(error),
+                }
+            }
+            Event::Settled(Err(error)) => self.mark_storage_fault(error),
+            Event::Settled(Ok(())) => {}
+        }
+    }
+}

@@ -1,0 +1,30 @@
+[package]
+name = "bt-sniffer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bendy = {version = "0.6", features = ["serde"]}
+rand = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "=1.53.1", features = ["rt", "macros", "net", "sync", "time", "test-util", "io-util", "signal"] }
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
+futures-util = { version = "0.3", features = ["sink"] }
+bytes = "1"
+sha1 = "0.11"
+serde_bytes = "0.11"
+rusqlite = { version = "0.40.2", features = ["bundled", "backup", "functions"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+socket2 = "0.6"
+directories = "6"
+governor = { version = "0.10", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"

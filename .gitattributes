@@ -1,0 +1,31 @@
+.agents/** linguist-generated=true
+
+# 统一文本文件的换行处理；二进制文件不会被自动改写
+* text=auto
+
+# Rust、Cargo、配置和文档文件统一使用 LF 换行
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.svg text eol=lf
+
+# 常见二进制文件，禁止 Git 执行文本差异和换行转换
+*.7z binary
+*.gz binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.pdf binary
+*.png binary
+*.tar binary
+*.webp binary
+*.wasm binary
+*.zip binary
