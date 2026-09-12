@@ -14,9 +14,6 @@ pub(crate) const DEFAULT_BOOTSTRAP: [&str; 3] = [
 #[derive(Debug, Parser)]
 #[command(version, about = "持久化的双栈 BitTorrent DHT 服务节点")]
 pub(crate) struct Cli {
-    /// 日志格式，始终输出到 stderr。
-    #[arg(long, value_enum, default_value = "text")]
-    pub(crate) log_format: crate::logging::Format,
     /// 状态目录；默认使用操作系统的本地应用数据目录。
     #[arg(long)]
     pub(crate) state_dir: Option<PathBuf>,

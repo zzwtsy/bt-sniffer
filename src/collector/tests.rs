@@ -1,6 +1,10 @@
 //! 通过本机 UDP/TCP 与临时数据库验证发现到入库的闭环，以及故障、取消和恢复。
-use super::*;
+use super::{
+    worker::{Outcome, run_job},
+    *,
+};
 use crate::{
+    app::session::{FaultLog, FaultReporter, Session, SessionFault},
     dht::{
         dispatcher::{DhtDispatcherConfig, RemoteNode},
         routing::AddressFamily,
@@ -12,12 +16,13 @@ use crate::{
     },
     net::udp::UdpTransport,
     peer_wire::{self, PeerId},
-    persistence::PersistentSession,
     storage::StorageConfig,
 };
+use crate::{krpc::InfoHashV1, metadata::VerifiedMetadata};
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
+use std::net::SocketAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -130,15 +135,13 @@ fn response(
 }
 /// 会话拥有节点与数据库；测试保留 handle 发命令，address 供模拟远端访问。
 struct Fixture {
-    session: PersistentSession,
+    session: Session,
     handle: DhtHandle,
     address: SocketAddr,
 }
 
 async fn fixture(dir: &std::path::Path, family: AddressFamily) -> Fixture {
-    let mut session = PersistentSession::open(StorageConfig::new(dir))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir)).await.unwrap();
     let transport = udp(family).await;
     let address = transport.local_addr().unwrap();
     let mut cfg = DhtDispatcherConfig::default();
@@ -407,19 +410,19 @@ async fn capacity_protection_keeps_dht_live_and_preserves_jobs() {
     storage.shutdown().await.unwrap();
 }
 
-/// RPC 发送遵守共享间隔，TCP 占用同 IP 时拒绝并行进入。
+/// 同 IP 的第二次许可申请等待首个持有者释放；不建立 TCP 连接。
 #[tokio::test(start_paused = true)]
 async fn rpc_spacing_and_tcp_ip_exclusion() {
     let network = Arc::new(lookup::Network::default());
     let ip = "127.0.0.1".parse().unwrap();
-    let connection = network.connect(ip).await;
+    let connection_permit = network.acquire_for_ip(ip).await;
     let n = network.clone();
-    let waiting = tokio::spawn(async move { n.connect(ip).await });
+    let waiting = tokio::spawn(async move { n.acquire_for_ip(ip).await });
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(!waiting.is_finished());
-    drop(connection);
+    drop(connection_permit);
     drop(waiting.await.unwrap());
-    assert_eq!(network.connections(), 0);
+    assert_eq!(network.tracked_tcp_ips(), 0);
 }
 
 /// 显式运行的真实时间耐久测试；混合合法宣布、重复 hash、无效 token 和 DHT 服务查询。
@@ -624,10 +627,13 @@ async fn completion_rollback_and_stale_success_are_atomic() {
     let old = store.claim_job(100).await.unwrap().unwrap();
     store.recover_jobs(200).await.unwrap();
     let current = store.claim_job(200).await.unwrap().unwrap();
-    store
-        .complete_job(old, verified().await, 201)
-        .await
-        .unwrap();
+    assert_eq!(
+        store
+            .complete_job(old, verified().await, 201)
+            .await
+            .unwrap(),
+        UpdateResult::Stale
+    );
     assert!(store.metadata(hash()).await.unwrap().is_none());
     store
         .call(|connection| {
@@ -643,12 +649,12 @@ async fn completion_rollback_and_stale_success_are_atomic() {
         })
         .await
         .unwrap();
-    assert!(
+    assert!(matches!(
         store
             .complete_job(current.clone(), verified().await, 202)
-            .await
-            .is_err()
-    );
+            .await,
+        Err(StorageError::Database(_))
+    ));
     assert!(store.metadata(hash()).await.unwrap().is_none());
     assert_eq!(store.fetch_stats().await.unwrap().running, 1);
     store
@@ -658,10 +664,13 @@ async fn completion_rollback_and_stale_success_are_atomic() {
         })
         .await
         .unwrap();
-    store
-        .complete_job(current, verified().await, 203)
-        .await
-        .unwrap();
+    assert_eq!(
+        store
+            .complete_job(current, verified().await, 203)
+            .await
+            .unwrap(),
+        UpdateResult::Applied
+    );
     assert_eq!(store.metadata(hash()).await.unwrap().unwrap(), INFO);
     assert_eq!(store.fetch_stats().await.unwrap().succeeded, 1);
     storage.shutdown().await.unwrap();
@@ -914,15 +923,15 @@ async fn worker_failure_reports_claim_and_drains_success() {
         let storage = crate::storage::Storage::open(StorageConfig::new(dir.path()))
             .await
             .unwrap();
-        let (report, mut faults) = watch::channel(None);
+        let (report, mut faults) = FaultReporter::new();
         let collector = Collector::new(
             storage.handle.clone(),
             vec![],
             config(dir.path()),
             Clock::default(),
             CancellationToken::new(),
-            report,
-            FaultLog::default(),
+            report.pause_notifications(),
+            report.collector_callback(FaultLog::default()),
         )
         .await
         .unwrap();
@@ -951,12 +960,12 @@ async fn worker_failure_reports_claim_and_drains_success() {
         };
         let generation = bad.generation;
         let network = lookup::Network::default();
-        let connection = network.connect("127.0.0.1".parse().unwrap()).await;
+        let connection_permit = network.acquire_for_ip("127.0.0.1".parse().unwrap()).await;
         let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let mut workers = Workers::default();
         let task = workers.spawn(bad.clone(), async move {
-            let (_connection, _permit) = (connection, permit);
+            let (_connection_permit, _permit) = (connection_permit, permit);
             if abort {
                 std::future::pending::<()>().await;
             }
@@ -979,7 +988,7 @@ async fn worker_failure_reports_claim_and_drains_success() {
         assert!(errors.iter().any(|error| matches!(error,
             CollectorError::Worker { hash, generation: actual, source }
             if *hash == bad_hash && *actual == generation && source.is_cancelled() == abort)));
-        assert_eq!(network.connections(), 0);
+        assert_eq!(network.tracked_tcp_ips(), 0);
         assert_eq!(semaphore.available_permits(), 1);
         assert_eq!(
             storage.handle.metadata(hash()).await.unwrap().unwrap(),
@@ -1020,15 +1029,15 @@ async fn control_failure_is_fatal_and_other_node_is_cleaned_up() {
         )
         .await
         .unwrap();
-    let (report, faults) = watch::channel(None);
+    let (report, faults) = FaultReporter::new();
     let collector = Collector::new(
         session.test_store(),
         vec![closed.clone(), live.clone()],
         config(dir.path()),
         Clock::default(),
         CancellationToken::new(),
-        report,
-        FaultLog::default(),
+        report.pause_notifications(),
+        report.collector_callback(FaultLog::default()),
     )
     .await
     .unwrap();
@@ -1056,7 +1065,7 @@ async fn collector_retry_uses_injected_clock_and_survives_reopen() {
         let storage = crate::storage::Storage::open(settings.clone())
             .await
             .unwrap();
-        let (report, _) = watch::channel(None);
+        let (report, _) = FaultReporter::new();
         let clock = Clock::new(
             tokio::time::Instant::now().into_std(),
             std::time::UNIX_EPOCH + Duration::from_secs(anchor),
@@ -1067,8 +1076,8 @@ async fn collector_retry_uses_injected_clock_and_survives_reopen() {
             config(dir.path()),
             clock,
             CancellationToken::new(),
-            report,
-            FaultLog::default(),
+            report.pause_notifications(),
+            report.collector_callback(FaultLog::default()),
         )
         .await
         .unwrap();
@@ -1121,22 +1130,22 @@ async fn collector_retry_uses_injected_clock_and_survives_reopen() {
     }
 }
 
-/// 同 IP 等待者由释放通知唤醒；取消等待不能留下连接占用。
+/// 同 IP 等待者由许可释放唤醒，不同 IP 可同时持有许可；取消等待不能遗留 IP 登记。
 #[tokio::test(start_paused = true)]
 async fn tcp_waiters_wake_without_time_and_cancellation_leaks_nothing() {
     use futures_util::FutureExt;
     let network = lookup::Network::default();
     let ip = "127.0.0.1".parse().unwrap();
-    let held = network.connect(ip).await;
-    let mut cancelled = Box::pin(network.connect(ip));
+    let held = network.acquire_for_ip(ip).await;
+    let mut cancelled = Box::pin(network.acquire_for_ip(ip));
     assert!(cancelled.as_mut().now_or_never().is_none());
     drop(cancelled);
-    let mut first = Box::pin(network.connect(ip));
-    let mut second = Box::pin(network.connect(ip));
+    let mut first = Box::pin(network.acquire_for_ip(ip));
+    let mut second = Box::pin(network.acquire_for_ip(ip));
     assert!(first.as_mut().now_or_never().is_none());
     assert!(second.as_mut().now_or_never().is_none());
     let other = network
-        .connect("127.0.0.2".parse().unwrap())
+        .acquire_for_ip("127.0.0.2".parse().unwrap())
         .now_or_never()
         .unwrap();
     let instant = tokio::time::Instant::now();
@@ -1147,7 +1156,7 @@ async fn tcp_waiters_wake_without_time_and_cancellation_leaks_nothing() {
     drop(second.as_mut().now_or_never().unwrap());
     drop(other);
     assert_eq!(tokio::time::Instant::now(), instant);
-    assert_eq!(network.connections(), 0);
+    assert_eq!(network.tracked_tcp_ips(), 0);
 }
 
 /// 清理写入失败仍要回收其他 worker，留下的领取记录可在重启时恢复。
@@ -1158,15 +1167,15 @@ async fn cleanup_write_failure_still_drains_workers_and_preserves_recovery() {
     let storage = crate::storage::Storage::open(StorageConfig::new(dir.path()))
         .await
         .unwrap();
-    let (report, faults) = watch::channel(None);
+    let (report, faults) = FaultReporter::new();
     let mut collector = Collector::new(
         storage.handle.clone(),
         vec![],
         config(dir.path()),
         Clock::default(),
         CancellationToken::new(),
-        report,
-        FaultLog::default(),
+        report.pause_notifications(),
+        report.collector_callback(FaultLog::default()),
     )
     .await
     .unwrap();
@@ -1193,13 +1202,13 @@ async fn cleanup_write_failure_still_drains_workers_and_preserves_recovery() {
         (second, first)
     };
     let network = lookup::Network::default();
-    let connection = network.connect("127.0.0.1".parse().unwrap()).await;
+    let connection_permit = network.acquire_for_ip("127.0.0.1".parse().unwrap()).await;
     let mut workers = Workers::default();
     workers.spawn(success, async move { Outcome::Success(metadata) });
     let cancel = CancellationToken::new();
     let token = cancel.clone();
     workers.spawn(cancelled, async move {
-        let _connection = connection;
+        let _connection_permit = connection_permit;
         token.cancelled().await;
         Outcome::Retry(RetryReason::Deferred)
     });
@@ -1226,7 +1235,7 @@ async fn cleanup_write_failure_still_drains_workers_and_preserves_recovery() {
         Some(SessionFault::StorageWrite(_))
     ));
     assert!(workers.is_empty());
-    assert_eq!(network.connections(), 0);
+    assert_eq!(network.tracked_tcp_ips(), 0);
     assert!(storage.handle.metadata(hash()).await.unwrap().is_none());
     assert_eq!(storage.handle.fetch_stats().await.unwrap().running, 2);
     storage
@@ -1365,7 +1374,7 @@ async fn lookup_promotes_reserve_on_both_families() {
 async fn local_tcp_wait_timeout_does_not_consume_failure_attempt() {
     let network = Arc::new(lookup::Network::default());
     let peer: SocketAddr = "127.0.0.1:6881".parse().unwrap();
-    let held = network.connect(peer.ip()).await;
+    let held = network.acquire_for_ip(peer.ip()).await;
     let outcome = run_job(
         Job {
             hash: hash(),
@@ -1385,7 +1394,7 @@ async fn local_tcp_wait_timeout_does_not_consume_failure_attempt() {
         Outcome::Retry(RetryReason::Local(LocalReason::ResourceWait))
     ));
     drop(held);
-    assert_eq!(network.connections(), 0);
+    assert_eq!(network.tracked_tcp_ips(), 0);
 }
 
 // 固定输入比较与默认回归共用真实 peer/DHT，不以减少接纳任务提高完成率。
@@ -1589,7 +1598,7 @@ async fn fixed_pipeline_scenario(family: AddressFamily, jobs: usize) -> serde_js
     })
     .await
     .unwrap();
-    assert_eq!(network.connections(), 0);
+    assert_eq!(network.tracked_tcp_ips(), 0);
     for task in peer_tasks {
         task.await.unwrap();
     }
@@ -1704,10 +1713,41 @@ async fn failed_hint_is_replaced_by_streamed_peer_with_other_family_unrouted() {
     .await
     .unwrap();
     assert!(matches!(result, Outcome::Success(_)));
-    assert_eq!(network.connections(), 0);
+    assert_eq!(network.tracked_tcp_ips(), 0);
     bad_task.await.unwrap();
     good_task.await.unwrap();
     remote_task.await.unwrap();
     assert_eq!(f.handle.status().await.unwrap().pending, 0);
     f.session.shutdown().await.unwrap();
+}
+
+/// 构造末尾订阅不补发旧暂停通知；唯一报告端退出仍按监督通道关闭报告错误。
+#[tokio::test]
+async fn late_fault_subscription_and_closed_notifications_preserve_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = crate::storage::Storage::open(StorageConfig::new(dir.path()))
+        .await
+        .unwrap();
+    let (pause, _) = watch::channel(());
+    pause.send_replace(());
+    let collector = Collector::new(
+        storage.handle.clone(),
+        vec![],
+        config(dir.path()),
+        Clock::default(),
+        CancellationToken::new(),
+        pause.clone(),
+        Box::new(|_| {}),
+    )
+    .await
+    .unwrap();
+    assert!(!collector.faults.has_changed().unwrap());
+    drop(pause);
+    let errors = collector.run().await.unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, CollectorError::SupervisorClosed))
+    );
+    storage.shutdown().await.unwrap();
 }

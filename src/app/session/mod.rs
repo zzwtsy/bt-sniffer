@@ -1,4 +1,4 @@
-//! 内部持久化接线；不负责绑定公网 socket，也不隐式配置 bootstrap。
+//! 应用运行会话；不负责绑定公网 socket，也不隐式配置 bootstrap。
 //!
 //! 使用顺序是 open → add_node → 按需 start_fetch/start_sampling → shutdown。
 //! add_node 接收调用者已经创建的 socket，IPv4 和 IPv6 可共享一个 session。
@@ -120,16 +120,71 @@ impl std::fmt::Display for SessionFault {
         }
     }
 }
-/// 致命状态不能被稍后到达的普通告警覆盖。
-pub(crate) fn report_fault(report: &watch::Sender<Option<SessionFault>>, fault: SessionFault) {
-    report.send_if_modified(|state| {
-        if state.as_ref() == Some(&fault) || state.as_ref().is_some_and(SessionFault::fatal) {
-            return false;
-        }
-        *state = Some(fault);
-        true
-    });
+/// 会话拥有故障详情；独立的单位通知只告诉 collector 进入原有暂停分支。
+/// 两种 watch 都合并未消费的变化，不是错误历史；已追加诊断由 FaultLog 保存。
+#[derive(Clone)]
+pub(crate) struct FaultReporter {
+    current: watch::Sender<Option<SessionFault>>,
+    pause: watch::Sender<()>,
 }
+impl FaultReporter {
+    pub(crate) fn new() -> (Self, watch::Receiver<Option<SessionFault>>) {
+        let (current, errors) = watch::channel(None);
+        let (pause, _) = watch::channel(());
+        (Self { current, pause }, errors)
+    }
+
+    /// 先按原优先级更新详情，再同步通知暂停；重复故障及致命状态之后的告警不通知。
+    fn publish(&self, fault: SessionFault) {
+        let changed = self.current.send_if_modified(|state| {
+            if state.as_ref() == Some(&fault) || state.as_ref().is_some_and(SessionFault::fatal) {
+                return false;
+            }
+            *state = Some(fault);
+            true
+        });
+        if changed {
+            // () 的值永远相等，必须使用仍会通知同值更新的操作。
+            self.pause.send_replace(());
+        }
+    }
+
+    /// 交给 collector 在构造末尾订阅；不能提前创建 receiver 而补收启动期间的旧通知。
+    pub(crate) fn pause_notifications(&self) -> watch::Sender<()> {
+        self.pause.clone()
+    }
+
+    /// 回调只做同步内存记录：先保留原始诊断，再发布应用故障，禁止在这里等待 I/O。
+    pub(crate) fn collector_callback(
+        &self,
+        faults: FaultLog,
+    ) -> Box<dyn Fn(&crate::collector::CollectorError) + Send + Sync> {
+        let report = self.clone();
+        Box::new(move |error| {
+            faults.push(error.to_string());
+            report.publish(classify_collector_error(error));
+        })
+    }
+
+    /// DHT 只报告自己的存储错误；保留原有仅发布故障、不逐条追加历史诊断的语义。
+    fn storage_callback(&self) -> Box<dyn Fn(StorageError) + Send + Sync> {
+        let report = self.clone();
+        Box::new(move |error| report.publish(SessionFault::StorageWrite(error)))
+    }
+}
+
+/// 应用层决定模块错误对应的会话故障；时钟、控制、配置与 worker 错误仍属于致命故障。
+fn classify_collector_error(error: &crate::collector::CollectorError) -> SessionFault {
+    match error {
+        crate::collector::CollectorError::Storage(error) => {
+            SessionFault::StorageWrite(error.clone())
+        }
+        _ => SessionFault::CollectorFailed {
+            detail: error.to_string(),
+        },
+    }
+}
+
 /// 同一个任务返回结果，在运行期可能是异常退出，在关闭期可能是预期完成。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TaskPhase {
@@ -151,7 +206,7 @@ struct Collection {
     error: Option<StorageError>,
 }
 /// 会话是运行资源的唯一关闭入口；Drop 只中止任务，完成落盘必须显式 await shutdown。
-pub(crate) struct PersistentSession {
+pub(crate) struct Session {
     pub(crate) budget: std::sync::Arc<crate::dht::traffic::Budget>,
     storage: Option<Storage>,
     nodes: Vec<Node>,
@@ -159,12 +214,12 @@ pub(crate) struct PersistentSession {
     stop_fetch: CancellationToken,
     tasks: JoinSet<TaskOutput>,
     roles: HashMap<Id, TaskRole>,
-    report: watch::Sender<Option<SessionFault>>,
+    report: FaultReporter,
     errors: watch::Receiver<Option<SessionFault>>,
     faults: FaultLog,
     shutdown_stage: String,
 }
-impl Drop for PersistentSession {
+impl Drop for Session {
     fn drop(&mut self) {
         // 超时或调用者直接丢弃 session 时，不留下继续联网的孤儿任务。
         self.stop_snapshots.cancel();
@@ -172,7 +227,7 @@ impl Drop for PersistentSession {
         self.tasks.abort_all();
     }
 }
-impl PersistentSession {
+impl Session {
     #[cfg(test)]
     pub(crate) fn test_store(&self) -> StorageHandle {
         self.storage.as_ref().unwrap().handle.clone()
@@ -189,7 +244,7 @@ impl PersistentSession {
         let budget = std::sync::Arc::new(
             crate::dht::traffic::Budget::new(traffic).map_err(StorageError::Invalid)?,
         );
-        let (report, errors) = watch::channel(None);
+        let (report, errors) = FaultReporter::new();
         Ok(Self {
             budget,
             storage: Some(Storage::open(config).await?),
@@ -252,7 +307,7 @@ impl PersistentSession {
         dispatcher.budget = self.budget.clone();
         dispatcher.attach_storage(store.clone(), identity, contacts, cooldowns, policy)?;
         let report = self.report.clone();
-        dispatcher.report_storage_errors_to(report.clone());
+        dispatcher.report_storage_errors_to(report.storage_callback());
         let index = self.nodes.len();
         let task = self
             .tasks
@@ -317,8 +372,8 @@ impl PersistentSession {
             config,
             crate::storage::Clock::default(),
             self.stop_fetch.clone(),
-            self.report.clone(),
-            self.faults.clone(),
+            self.report.pause_notifications(),
+            self.report.collector_callback(self.faults.clone()),
         )
         .await?;
         let task = self
@@ -362,7 +417,7 @@ impl PersistentSession {
                 error: None,
             };
             if let Err(error) = collect(&store, &mut state).await {
-                report_fault(&report, SessionFault::StorageWrite(error.clone()));
+                report.publish(SessionFault::StorageWrite(error.clone()));
                 state.error = Some(error.clone());
                 let _ = handle.pause_for_storage(error).await;
             }
@@ -387,7 +442,8 @@ impl PersistentSession {
             .await;
         if let Err(error) = &result {
             for node in &self.nodes {
-                report_fault(&self.report, SessionFault::StorageWrite(error.clone()));
+                self.report
+                    .publish(SessionFault::StorageWrite(error.clone()));
                 let _ = node.handle.pause_for_storage(error.clone()).await;
             }
         }
@@ -431,7 +487,7 @@ impl PersistentSession {
             }
             tokio::select! {
                 _ = self.storage.as_ref().unwrap().handle.closed() => {
-                    report_fault(&self.report, SessionFault::DatabaseExited);
+                    self.report.publish(SessionFault::DatabaseExited);
                 }
                 result = self.tasks.join_next_with_id(), if !self.tasks.is_empty() => {
                     self.accept_task(result.expect("仍有受监督任务"), TaskPhase::Running);
@@ -460,8 +516,8 @@ impl PersistentSession {
             Ok((_, TaskOutput::Fetch(result))) => match result {
                 Err(errors) => {
                     for error in errors {
-                        let fault = error.fault();
-                        report_fault(&self.report, fault);
+                        let fault = classify_collector_error(&error);
+                        self.report.publish(fault);
                     }
                     None
                 }
@@ -514,7 +570,7 @@ impl PersistentSession {
         };
         if let Some(fault) = fault {
             self.faults.push(fault.to_string());
-            report_fault(&self.report, fault);
+            self.report.publish(fault);
         }
     }
 
@@ -613,6 +669,7 @@ impl PersistentSession {
         }
         let errors = self.faults.take();
         tracing::info!(
+            target: "bt_sniffer::persistence",
             event = "session_shutdown",
             schema_version = 1u64,
             success = errors.is_empty(),
@@ -636,7 +693,7 @@ async fn collect(store: &StorageHandle, state: &mut Collection) -> Result<(), St
             return Ok(());
         };
         let at = unix_millis(batch.observed_at)?;
-        tracing::debug!(responder = ?batch.responder, target = ?batch.target, received_at = ?batch.received_at,
+        tracing::debug!(target: "bt_sniffer::persistence", responder = ?batch.responder, target = ?batch.target, received_at = ?batch.received_at,
             interval = ?batch.interval, num = batch.num, count = batch.samples.len(), "保存已验证采样批次");
         while state.offset < batch.samples.len() {
             let end = (state.offset + 1024).min(batch.samples.len());

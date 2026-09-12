@@ -1,6 +1,6 @@
 //! DHT 身份是稳定的路由位置，不是密码，也不与 TCP Peer ID 共用。
 //!
-//! persistence 为每个实例和地址族加载身份；数据库线程原子地完成首次创建。
+//! app::session 为每个实例和地址族加载身份；数据库线程原子地完成首次创建。
 use crate::{
     dht::routing::AddressFamily,
     krpc::NodeId,

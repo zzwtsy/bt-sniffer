@@ -13,9 +13,9 @@ use serde_bytes::ByteBuf;
 // 故障按类型分类，后到的普通写入告警不能覆盖已经记录的致命错误。
 #[test]
 fn fatal_fault_is_sticky() {
-    let (report, errors) = watch::channel(None);
-    report_fault(&report, SessionFault::DatabaseExited);
-    report_fault(&report, SessionFault::StorageWrite(StorageError::Capacity));
+    let (report, errors) = FaultReporter::new();
+    report.publish(SessionFault::DatabaseExited);
+    report.publish(SessionFault::StorageWrite(StorageError::Capacity));
     assert_eq!(*errors.borrow(), Some(SessionFault::DatabaseExited));
 }
 
@@ -23,9 +23,7 @@ fn fatal_fault_is_sticky() {
 #[tokio::test]
 async fn supervisor_observes_dispatcher_exit() {
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let handle = session
         .add_node(
             "node",
@@ -61,9 +59,7 @@ async fn supervisor_identifies_panicking_roles() {
         TaskRole::FetchCoordinator,
     ] {
         let dir = tempfile::tempdir().unwrap();
-        let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-            .await
-            .unwrap();
+        let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
         let task = session.tasks.spawn(async {
             panic!("测试注入任务崩溃");
         });
@@ -80,9 +76,7 @@ async fn supervisor_identifies_panicking_roles() {
 #[tokio::test]
 async fn supervisor_detects_database_thread_exit() {
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let store = session.storage.as_ref().unwrap().handle.clone();
     assert_eq!(
         store.call::<()>(|_| panic!("测试数据库线程崩溃")).await,
@@ -99,9 +93,7 @@ async fn supervisor_detects_database_thread_exit() {
 #[tokio::test]
 async fn storage_fault_pauses_all_collectors_but_keeps_udp_alive() {
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let mut addresses = Vec::new();
     for index in 0..2 {
         let transport = udp().await;
@@ -124,7 +116,7 @@ async fn storage_fault_pauses_all_collectors_but_keeps_udp_alive() {
     let report = session.report.clone();
     tokio::spawn(async move {
         tokio::task::yield_now().await;
-        report_fault(&report, SessionFault::StorageWrite(StorageError::Capacity));
+        report.publish(SessionFault::StorageWrite(StorageError::Capacity));
     });
     let fault = tokio::time::timeout(Duration::from_secs(2), session.next_fault())
         .await
@@ -250,7 +242,7 @@ async fn recovery_roundtrip(family: AddressFamily) {
         .await
         .unwrap();
     store.shutdown().await.unwrap();
-    let mut session = PersistentSession::open(settings.clone()).await.unwrap();
+    let mut session = Session::open(settings.clone()).await.unwrap();
     let handle = session
         .add_node(
             "node",
@@ -468,7 +460,7 @@ async fn recovery_respects_public_address_policy() {
         .await
         .unwrap();
     store.shutdown().await.unwrap();
-    let mut session = PersistentSession::open(settings).await.unwrap();
+    let mut session = Session::open(settings).await.unwrap();
     let handle = session
         .add_node(
             "node",
@@ -506,7 +498,7 @@ async fn recovery_rejects_unexpected_identity() {
         .await
         .unwrap();
     store.shutdown().await.unwrap();
-    let mut session = PersistentSession::open(settings).await.unwrap();
+    let mut session = Session::open(settings).await.unwrap();
     let handle = session
         .add_node(
             "node",
@@ -538,9 +530,7 @@ async fn recovery_rejects_unexpected_identity() {
 #[tokio::test(start_paused = true)]
 async fn shutdown_timeout_is_reported() {
     let dir = tempfile::tempdir().unwrap();
-    let session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     session.faults.push("最初的 socket 故障".into());
     session.faults.push("后续快照失败".into());
     let handle = session.storage.as_ref().unwrap().handle.clone();
@@ -573,9 +563,7 @@ async fn shutdown_timeout_is_reported() {
 #[tokio::test]
 async fn slow_database_does_not_block_udp() {
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let transport = udp().await;
     let address = transport.local_addr().unwrap();
     session
@@ -635,7 +623,7 @@ async fn shutdown_preserves_unverified_candidates() {
         .await
         .unwrap();
     store.shutdown().await.unwrap();
-    let mut session = PersistentSession::open(settings.clone()).await.unwrap();
+    let mut session = Session::open(settings.clone()).await.unwrap();
     session
         .add_node(
             "node",
@@ -659,9 +647,7 @@ async fn shutdown_preserves_unverified_candidates() {
 #[tokio::test]
 async fn supervisor_distinguishes_unexpected_cancellation() {
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let task = session.tasks.spawn(std::future::pending());
     session.roles.insert(task.id(), TaskRole::FetchCoordinator);
     task.abort();
@@ -681,19 +667,14 @@ async fn supervisor_distinguishes_unexpected_cancellation() {
 #[tokio::test(start_paused = true)]
 async fn timeout_preserves_faults_from_unfinished_cleanup_task() {
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let faults = session.faults.clone();
     let report = session.report.clone();
     let task = session.tasks.spawn(async move {
         faults.push("worker 的原始故障".into());
-        report_fault(
-            &report,
-            SessionFault::CollectorFailed {
-                detail: "worker 的原始故障".into(),
-            },
-        );
+        report.publish(SessionFault::CollectorFailed {
+            detail: "worker 的原始故障".into(),
+        });
         faults.push("随后撤销入口失败".into());
         std::future::pending().await
     });
@@ -706,4 +687,213 @@ async fn timeout_preserves_faults_from_unfinished_cleanup_task() {
             .iter()
             .any(|e| e.contains("30 秒") && e.contains("回收采集协调器"))
     );
+}
+
+/// collector 回调返回前已经保存原始诊断并发布故障；同一存储错误在时钟边界仍属致命错误。
+#[test]
+fn fault_callbacks_record_synchronously_and_preserve_classification() {
+    use crate::collector::CollectorError;
+    for error in [
+        CollectorError::Storage(StorageError::Capacity),
+        CollectorError::Clock(StorageError::Capacity),
+        CollectorError::Control {
+            operation: "查找 peer",
+            source: crate::dht::dispatcher::QueryError::DispatcherClosed,
+        },
+    ] {
+        let (report, errors) = FaultReporter::new();
+        let faults = FaultLog::default();
+        let callback = report.collector_callback(faults.clone());
+        callback(&error);
+        assert_eq!(faults.take(), vec![error.to_string()]);
+        let expected = match &error {
+            CollectorError::Storage(value) => SessionFault::StorageWrite(value.clone()),
+            _ => SessionFault::CollectorFailed {
+                detail: error.to_string(),
+            },
+        };
+        assert_eq!(*errors.borrow(), Some(expected));
+    }
+    let (report, errors) = FaultReporter::new();
+    report.storage_callback()(StorageError::Capacity);
+    assert_eq!(
+        *errors.borrow(),
+        Some(SessionFault::StorageWrite(StorageError::Capacity))
+    );
+}
+
+/// 单位通知也必须支持多次变更；消费暂停通知不应标记会话详情已读。
+#[test]
+fn fault_notifications_follow_sticky_state_without_consuming_details() {
+    let (report, mut errors) = FaultReporter::new();
+    let mut pause = report.pause_notifications().subscribe();
+    assert!(!pause.has_changed().unwrap());
+    for error in [StorageError::Capacity, StorageError::Closed] {
+        report.publish(SessionFault::StorageWrite(error.clone()));
+        assert!(pause.has_changed().unwrap());
+        pause.borrow_and_update();
+        assert!(errors.has_changed().unwrap());
+        assert_eq!(
+            *errors.borrow_and_update(),
+            Some(SessionFault::StorageWrite(error.clone()))
+        );
+        report.publish(SessionFault::StorageWrite(error));
+        assert!(!pause.has_changed().unwrap());
+        assert!(!errors.has_changed().unwrap());
+    }
+    report.publish(SessionFault::DatabaseExited);
+    assert!(pause.has_changed().unwrap());
+    pause.borrow_and_update();
+    errors.borrow_and_update();
+    report.publish(SessionFault::StorageWrite(StorageError::Capacity));
+    report.publish(SessionFault::CollectorFailed {
+        detail: "后到的致命故障".into(),
+    });
+    assert!(!pause.has_changed().unwrap());
+    assert_eq!(*errors.borrow(), Some(SessionFault::DatabaseExited));
+}
+
+/// 两个先后收尾阶段各需 20 秒，必须在总计 30 秒时超时，而不是为第二阶段重新计时。
+#[tokio::test(start_paused = true)]
+async fn shutdown_stages_share_one_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
+    let (finished, next) = tokio::sync::oneshot::channel();
+    let faults = session.faults.clone();
+    let first = session.tasks.spawn(async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        faults.push("第一阶段已观察的错误".into());
+        finished.send(()).unwrap();
+        TaskOutput::Fetch(Ok(()))
+    });
+    session.roles.insert(first.id(), TaskRole::FetchCoordinator);
+    let faults = session.faults.clone();
+    let second = session.tasks.spawn(async move {
+        next.await.unwrap();
+        faults.push("第二阶段已观察的错误".into());
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        TaskOutput::Snapshot(Ok(()))
+    });
+    session.roles.insert(second.id(), TaskRole::Snapshot(0));
+    let started = tokio::time::Instant::now();
+    let errors = session.shutdown().await.unwrap_err();
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+    assert!(errors.iter().any(|e| e == "第一阶段已观察的错误"));
+    assert!(errors.iter().any(|e| e == "第二阶段已观察的错误"));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("30 秒") && e.contains("回收节点任务"))
+    );
+}
+
+/// 尚未完成节点停产时丢弃 next_fault，下一次必须继续处理同一故障，不能提前标记已读。
+#[tokio::test]
+async fn cancelled_fault_handling_keeps_detail_unread() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
+    let identity =
+        identity::load_or_create(&session.test_store(), "paused", AddressFamily::Ipv4, 1)
+            .await
+            .unwrap();
+    let table = RoutingTable::new(
+        identity.node_id,
+        AddressFamily::Ipv4,
+        std::time::Instant::now(),
+    );
+    let (dispatcher, handle) = DhtDispatcher::with_config(
+        udp().await,
+        table,
+        TransactionManager::new(Duration::from_secs(1), 8),
+        config(),
+    )
+    .unwrap();
+    session.nodes.push(Node {
+        identity,
+        handle,
+        exit: None,
+        collection: None,
+        collecting: false,
+    });
+    session
+        .report
+        .publish(SessionFault::StorageWrite(StorageError::Capacity));
+    let mut waiting = Box::pin(session.next_fault());
+    // dispatcher 尚未运行，停产命令已经入队，但不可能收到完成响应。
+    assert!(futures_util::poll!(&mut waiting).is_pending());
+    drop(waiting);
+    assert!(session.errors.has_changed().unwrap());
+    let task = session
+        .tasks
+        .spawn(async move { TaskOutput::Dispatcher(dispatcher.run_persistent().await) });
+    session.roles.insert(task.id(), TaskRole::Dispatcher(0));
+    let fault = tokio::time::timeout(Duration::from_secs(2), session.next_fault())
+        .await
+        .unwrap();
+    assert_eq!(fault, SessionFault::StorageWrite(StorageError::Capacity));
+    assert!(!session.errors.has_changed().unwrap());
+    assert!(session.shutdown().await.is_err());
+}
+
+/// 使用实际 collect 和 shutdown 路径验证旧 target；只访问临时 SQLite 和临时日志文件。
+#[tokio::test]
+async fn moved_session_logs_keep_target_and_fields() {
+    use tracing::instrument::WithSubscriber;
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
+    let logs = tempfile::NamedTempFile::new().unwrap();
+    let writer = logs.reopen().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_ansi(false)
+        .with_env_filter("off,bt_sniffer::persistence=debug,bt_sniffer::app::session=off")
+        .with_writer(move || writer.try_clone().unwrap())
+        .finish();
+    let dispatch = tracing::Dispatch::new(subscriber);
+    let (sender, receiver) = mpsc::channel(1);
+    sender
+        .send(SampleBatch {
+            responder: crate::dht::dispatcher::DiscoveredNode {
+                id: NodeId([7; 20]),
+                address: "127.0.0.1:1".parse().unwrap(),
+            },
+            target: NodeId([0; 20]),
+            received_at: std::time::Instant::now(),
+            observed_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+            interval: Duration::from_secs(300),
+            num: 1,
+            samples: vec![InfoHashV1([1; 20])],
+        })
+        .await
+        .unwrap();
+    drop(sender);
+    let mut collection = Collection {
+        receiver,
+        current: None,
+        offset: 0,
+        error: None,
+    };
+    collect(&session.test_store(), &mut collection)
+        .with_subscriber(dispatch.clone())
+        .await
+        .unwrap();
+    session.shutdown().with_subscriber(dispatch).await.unwrap();
+    let text = std::fs::read_to_string(logs.path()).unwrap();
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.len(), 2);
+    for event in &events {
+        assert_eq!(event["target"], "bt_sniffer::persistence");
+    }
+    assert_eq!(events[0]["level"], "DEBUG");
+    assert_eq!(events[0]["fields"]["message"], "保存已验证采样批次");
+    assert_eq!(events[0]["fields"]["count"], 1);
+    assert_eq!(events[0]["fields"]["num"], 1);
+    assert_eq!(events[1]["level"], "INFO");
+    assert_eq!(events[1]["fields"]["event"], "session_shutdown");
+    assert_eq!(events[1]["fields"]["schema_version"], 1);
+    assert_eq!(events[1]["fields"]["success"], true);
+    assert_eq!(events[1]["fields"]["error_count"], 0);
 }

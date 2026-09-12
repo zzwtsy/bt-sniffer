@@ -31,20 +31,26 @@ async fn dedup_capacity_recovery_and_stale_generation() {
         UpdateResult::Stale
     );
     assert_eq!(store.fetch_stats().await.unwrap().running, 1);
-    store
-        .retry_job(second, 201, RetryReason::Failed("timeout"))
-        .await
-        .unwrap();
+    assert_eq!(
+        store
+            .retry_job(second, 201, RetryReason::Failed("timeout"))
+            .await
+            .unwrap(),
+        UpdateResult::Applied
+    );
     store.save_hashes(&[first_hash], 202).await.unwrap();
     assert!(store.claim_job(202).await.unwrap().is_none());
     // 连续失败最终进入休眠，释放活跃任务容量给另一个 hash。
     for n in 1..6 {
         let now_ms = 2_000_000 * n;
         let job = store.claim_job(now_ms).await.unwrap().unwrap();
-        store
-            .retry_job(job, now_ms, RetryReason::Failed("timeout"))
-            .await
-            .unwrap();
+        assert_eq!(
+            store
+                .retry_job(job, now_ms, RetryReason::Failed("timeout"))
+                .await
+                .unwrap(),
+            UpdateResult::Applied
+        );
     }
     assert_eq!(store.fetch_stats().await.unwrap().dormant, 1);
     store.backfill_jobs(12_000_000).await.unwrap();

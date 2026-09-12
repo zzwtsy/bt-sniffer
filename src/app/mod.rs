@@ -1,20 +1,21 @@
 //! 应用生命周期：组装内部模块，监督任务，并在退出前排空持久化队列。
 //!
 //! run 绑定 socket、创建会话并启动所选能力；收到信号或致命故障后进入收尾。
-//! 应用先停止自己持有的引导任务，再由 PersistentSession 关闭采集、节点和存储。
+//! 应用先停止自己持有的引导任务，再由 Session 关闭采集、节点和存储。
 mod bootstrap;
+pub(crate) mod session;
 mod sockets;
 #[cfg(test)]
 mod tests;
 
 use crate::{
+    app::session::Session,
     config::Cli,
     dht::{
         dispatcher::{DhtDispatcherConfig, DhtHandle, SamplerConfig},
         transaction::TransactionManager,
     },
     net::udp::UdpTransport,
-    persistence::PersistentSession,
     storage::StorageConfig,
 };
 use std::{future::Future, time::Duration};
@@ -45,7 +46,7 @@ async fn run_with_budget(
     let mut session = tokio::select! {
         biased;
         _ = &mut shutdown => return Ok(()),
-        result = PersistentSession::open_with_traffic(StorageConfig::new(directory), config.traffic()) => result.map_err(|e| vec![e.to_string()])?,
+        result = Session::open_with_traffic(StorageConfig::new(directory), config.traffic()) => result.map_err(|e| vec![e.to_string()])?,
     };
     session.budget = budget;
     let mut handles = Vec::new();
@@ -87,7 +88,6 @@ async fn run_with_budget(
                     }
                     _ = summary.tick() => {
                         session.budget.log();
-                        crate::logging::report();
                         // 日志读取也受退出信号控制，不让慢命令阻止关闭。
                         tokio::select! {
                             biased;
@@ -117,7 +117,7 @@ async fn run_with_budget(
 
 /// 每个成功创建的节点立即交给 session；后续节点失败时，已启动节点仍可统一关闭。
 async fn start_nodes(
-    session: &mut PersistentSession,
+    session: &mut Session,
     config: &Cli,
     sockets: Vec<UdpTransport>,
     handles: &mut Vec<DhtHandle>,

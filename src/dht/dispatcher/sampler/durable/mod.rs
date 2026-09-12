@@ -17,7 +17,7 @@ pub(super) struct ReservationResult {
 }
 
 pub(super) struct Durable {
-    report: Option<tokio::sync::watch::Sender<Option<crate::persistence::SessionFault>>>,
+    report: Option<Box<dyn Fn(StorageError) + Send + Sync>>,
     pub(super) clock: Clock,
     storage: StorageHandle,
     identity: LocalIdentity,
@@ -78,10 +78,8 @@ impl Sampler {
     }
     pub(in crate::dht::dispatcher) fn mark_storage_fault(&mut self, error: StorageError) {
         if let Some(report) = self.durable.as_ref().and_then(|d| d.report.as_ref()) {
-            crate::persistence::report_fault(
-                report,
-                crate::persistence::SessionFault::StorageWrite(error.clone()),
-            );
+            // 先同步报告模块错误，再按原顺序停止采样并更新本地状态。
+            report(error.clone());
         }
         self.stop(tokio::time::Instant::now().into_std());
         self.status.storage_error = Some(error);
@@ -89,7 +87,7 @@ impl Sampler {
     }
     pub(in crate::dht::dispatcher) fn report_errors_to(
         &mut self,
-        report: tokio::sync::watch::Sender<Option<crate::persistence::SessionFault>>,
+        report: Box<dyn Fn(StorageError) + Send + Sync>,
     ) {
         if let Some(d) = &mut self.durable {
             d.report = Some(report);

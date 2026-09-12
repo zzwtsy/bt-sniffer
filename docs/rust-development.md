@@ -1,6 +1,6 @@
 # Rust 开发约束
 
-本文件是 `bt-sniffer` 的 Rust 实现与审查规范，供开发者和两个 Rust skill 共用。运行参数、数值预算和验收命令以 [README](../README.md) 与[采集说明](metadata-collection.md)为准；变更架构时同步修订相关约束。
+本文件记录 `bt-sniffer` 的项目实现约束。[AGENTS.md](../AGENTS.md) 与 [rust-readable-apps](../.agents/skills/rust-readable-apps/SKILL.md) 是主工作流；[rust-best-practices](../.agents/skills/rust-best-practices/SKILL.md) 作为通用参考，不默认重复加载，[rust-async-patterns](../.agents/skills/rust-async-patterns/SKILL.md) 按异步问题查阅相关章节。运行参数、数值预算和验收命令以 [README](../README.md) 与[采集说明](metadata-collection.md)为准；变更架构时同步修订相关约束。规范统一不授权删除或改变现有协议、数据库、安全、故障恢复及运行行为。
 
 ## 可读性与所有权
 
@@ -35,7 +35,7 @@
 
 ## 运行时与模块
 
-- 目录模块统一使用 `模块/mod.rs`，入口与子模块放在同一目录；叶子模块保留独立 `.rs` 文件。拥有子模块的测试目录遵循同样规则，内联模块和 `main.rs` 保留原形式。文件布局不改变逻辑模块路径与可见性。
+- 单文件模块使用 `模块名.rs`，包括叶子模块和独立测试辅助模块，不创建仅含 `mod.rs` 的目录。模块需要两个及以上文件（包括入口和独立测试文件，可位于子目录）时，使用 `模块名/mod.rs` 作为目录入口；小型内联测试可以保留。`main.rs`、`lib.rs`、`build.rs`、独立集成测试和示例等编译目标入口保留 Cargo 所需布局。文件布局不改变逻辑模块路径与可见性；现有模块按批准范围渐进迁移，不因小修复全仓搬迁。
 
 - 这是一个可执行程序；[入口](../src/main.rs)明确内部模块不对其他 crate 提供 API。测试可放在模块内部访问 `pub(crate)` 能力，无需仅为测试拆出公共 library。
 - [Cargo.toml](../Cargo.toml)使用 edition 2024，未单独声明 `rust-version`。先核对现有工具链及依赖要求，不从 skill 的历史版本描述推定 MSRV。
@@ -50,7 +50,7 @@
 - [持久化任务](../src/storage/jobs/mod.rs)通过领取 generation 拒绝旧任务结果。维护任务状态时同时检查 metadata 保存和状态变更的事务边界，不能让取消或重试绕过退避及领取规则。
 - [采集器](../src/collector/mod.rs)使用 task ID 关联领取记录，统一处理正常退出、worker panic 和意外取消，完成在途任务及结果收尾；[Dispatcher](../src/dht/dispatcher/mod.rs)负责 DHT 查询资源。取消测试应观察 transaction、连接和许可最终释放，以及未完成任务可恢复。
 - 满载行为按入口契约区分：协议通知允许按既有规则丢弃并计数；数据库结果不能靠丢弃换取吞吐。DHT 成功 ACK 不表示采集任务已持久化。
-- [会话退出](../src/persistence/mod.rs)停止采集、关闭节点、保存状态、等待任务并关闭数据库；沿用共同清理期限，聚合失败。已报告错误保留在会话共享记录中，不能只放在可能被超时取消的局部 future 内；超时报告当前清理阶段。超时不等于成功，runtime 的 DNS 等待期限也不保证系统 DNS 已停止。
+- [会话退出](../src/app/session/mod.rs)停止采集、关闭节点、保存状态、等待任务并关闭数据库；沿用共同清理期限，聚合失败。已报告错误保留在会话共享记录中，不能只放在可能被超时取消的局部 future 内；超时报告当前清理阶段。超时不等于成功，runtime 的 DNS 等待期限也不保证系统 DNS 已停止。
 
 - 采集器的领取、退避和完成时间使用注入的 `storage::Clock`：单次运行内从 UTC 锚点按单调时间推进，重启继续使用磁盘上的 UTC 期限。事件的观察时间保留原有来源。
 - DHT 控制错误、worker 异常与配置错误属于致命故障，不能转成可降级的存储错误。正常取消不增加远端失败次数；同 IP TCP 等待由释放通知唤醒，取消等待不能遗留占用。
@@ -66,7 +66,7 @@
 
 ## Skill 维护
 
-两个 skill 保持独立职责，入口按需指向参考章节。[skills-lock.json](../skills-lock.json)保留安装来源记录；本地修订由 skill 元数据标记，不手工伪造安装 hash。升级上游时逐项核对本地纠错、项目边界和示例验证。
+主工作流、通用参考和异步专项保持上述职责，入口按需指向参考章节。[skills-lock.json](../skills-lock.json)保留安装来源记录；本地修订由 skill 元数据标记，不手工伪造安装 hash。升级上游时逐项核对本地纠错、项目边界和示例验证。
 
 结构参考 [OpenAI 官方 Skills 文档](https://developers.openai.com/codex/skills/)：名称和描述用于发现，选中后加载入口，详细参考内容按任务读取。
 
@@ -92,4 +92,6 @@
 
 ## 日志输出边界
 
-日志初始化集中于 `logging`，配置校验先于运行资源；main 持有 writer guard 至最终事件后。异步输出只移走 I/O，格式化仍有调用线程开销；有界队列满载丢弃并计数，不反压网络事件循环。guard 超时不是排空或持久化证明。聚合字段遵守 [v1 契约](logging.md)，保留数值类型、区间和累计含义，不输出原始 metadata/报文；测试解析字段，不匹配整条文本。
+日志采用固定策略：stderr 与工作目录 logs/ 同时输出文本，本程序 INFO、第三方 WARN；按 UTC 自然日轮转，最多保留 7 个匹配文件。不提供日志环境变量、格式切换、热更新或多进程共写。依赖 fmt 初始化时可能内部读取 NO_COLOR，但显式 ANSI 设置完全覆盖该默认值。
+
+日志初始化集中于 `logging::init()`，CLI 解析后、runtime 创建前打开日志文件，创建失败明确报错并退出；help/version 不创建日志资源。main 持有两个 writer guard 至最终事件后。两端各有 4,096 条有界 lossy 队列，慢 I/O 在独立后台线程执行；格式化仍有调用线程开销，满载丢弃，不反压网络事件循环。不再维护独立 logging_queue 定时/退出统计。guard 超时不是排空或持久化证明。聚合字段遵守 [v1 契约](logging.md)，保留数值类型、区间和累计含义，不输出原始 metadata/报文；测试解析字段，不匹配整条文本。

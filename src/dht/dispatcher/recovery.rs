@@ -1,6 +1,6 @@
 //! 磁盘联系人只是恢复候选；收到本次运行中的合法响应后才进入路由表。
 //!
-//! persistence 提供磁盘快照；恢复联系人仍须重新验证，退出快照和存储错误分别交还会话。
+//! app::session 提供磁盘快照；恢复联系人仍须重新验证，退出快照和存储错误分别交还会话。
 use super::{
     api::{Command, QueryError, RemoteNode},
     runtime::{DhtDispatcher, PendingPurpose},
@@ -51,7 +51,7 @@ impl Recovery {
 impl DhtDispatcher {
     pub(crate) fn report_storage_errors_to(
         &mut self,
-        report: tokio::sync::watch::Sender<Option<crate::persistence::SessionFault>>,
+        report: Box<dyn Fn(StorageError) + Send + Sync>,
     ) {
         self.sampler.report_errors_to(report);
     }

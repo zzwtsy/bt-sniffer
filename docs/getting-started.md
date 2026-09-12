@@ -49,8 +49,8 @@ test result: ok. 1 passed; 0 failed;
 | `enable_fetch(1)`，发现 `[first_hash, first_hash, second_hash]` | 只有一个活跃任务 | 重复 hash 去重，并受容量限制 |
 | `claim_job(100)` | 返回首次领取；再领一次为空 | 同一任务不能同时被再次领取 |
 | `recover_jobs(200)` 后重新领取 | 第二次 generation 更大 | 恢复使旧领取失效 |
-| 用首次领取提交失败 | 新任务仍是 running | 旧 worker 的迟到结果被忽略 |
-| 当前领取反复失败 | 最终休眠，另一个 hash 可以进入 | 退避和休眠控制重试与容量 |
+| 用首次领取提交失败 | 返回 `Ok(UpdateResult::Stale)`，新任务仍是 running | 旧 worker 的迟到结果被忽略 |
+| 当前领取反复失败 | 每次返回 `Ok(UpdateResult::Applied)`，最终休眠，另一个 hash 可以进入 | Applied 表示重试或休眠状态已提交；退避和休眠控制重试与容量 |
 
 接着打开 [任务实现](../src/storage/jobs/mod.rs)，依次阅读 `claim_job`、`retry_job` 和 `recover_jobs`。测试中的整数时间是 UTC 毫秒，用于安排数据库里的期限；实际采集通过注入的 `Clock` 取得时间，不依靠等待真实分钟来测试退避。
 
@@ -90,9 +90,12 @@ flowchart TD
     announce --> jobs[storage::jobs：发现、领取、重试]
     hashes --> jobs
     jobs --> collector[collector：持有领取、回收 worker]
-    collector --> lookup[lookup：get_peers、同 IP 排他]
-    lookup --> metadata[metadata / peer_wire：握手、分片、原始字节校验]
-    metadata --> complete[storage::jobs：原子保存与完成]
+    collector --> worker[worker：交替推进查找与下载]
+    worker --> lookup[lookup：get_peers、同 IP 排他]
+    worker --> metadata[metadata / peer_wire：握手、分片、原始字节校验]
+    worker --> result[Outcome：返回已校验结果或重试原因]
+    result --> collector
+    collector --> complete[storage::jobs：原子保存与完成]
     session --> shutdown[shutdown：停产、回收、保存快照、关闭数据库]
 ```
 
@@ -104,10 +107,10 @@ flowchart TD
 | [transaction](../src/dht/transaction/mod.rs) → [response](../src/dht/dispatcher/response.rs) → [routing](../src/dht/routing/mod.rs) | 为什么先登记再发包？为什么第三方响应不能消耗在途请求？ |
 | [token](../src/dht/token/mod.rs) → [peer 查询](../src/dht/dispatcher/peer_queries/mod.rs) | 收到 announce 为什么还不能立即写入？成功 ACK 是否代表采集任务已经落盘？ |
 | [sampler](../src/dht/dispatcher/sampler/mod.rs) → [durable](../src/dht/dispatcher/sampler/durable/mod.rs) | 输出许可、磁盘预约、真正发包分别发生在何时？旧会话确认如何收尾？ |
-| [collector](../src/collector/mod.rs) → [lookup](../src/collector/lookup.rs) | Job 与 worker 谁持有？没有种子和查询后没有 peer 为什么不同？ |
+| [collector](../src/collector/mod.rs) → [worker](../src/collector/worker.rs) → [lookup](../src/collector/lookup.rs) | Job 与 worker 谁持有？下载期间如何继续推进查找？没有种子和查询后没有 peer 为什么不同？ |
 | [metadata 会话](../src/metadata/session/mod.rs) → [peer-wire](../src/peer_wire/mod.rs) | 扩展 ID 为什么有两个方向？无关消息为什么不能刷新分片期限？ |
 | [任务完成](../src/storage/jobs/mod.rs) → [数据库线程](../src/storage/mod.rs) | 如何防止旧 generation 落库？调用者取消时，命令和预算归谁？ |
-| [persistence](../src/persistence/mod.rs) 的 `shutdown_inner` | 为什么先回收采集器，再关闭节点，最后关闭数据库？超时后错误保存在哪里？ |
+| [app/session](../src/app/session/mod.rs) 的 `shutdown_inner` | 为什么先回收采集器，再关闭节点，最后关闭数据库？超时后错误保存在哪里？ |
 
 每次只读一行对应的链路，先尝试回答右栏问题，再运行下面的真实测试。已有的协议注释保留 BEP 名称；不用先背完整协议。
 
@@ -119,7 +122,15 @@ flowchart TD
 - `oneshot` 只返回一次结果。取消等待接收端，不会撤销已进入数据库队列的命令。
 - 有界队列限制命令条数，许可另外限制载荷字节。许可随命令持有到处理结束，不能因调用者取消而提前释放。
 
-继续核对三个关键契约：`Deferred` 不增加失败次数；`complete_job` 忽略旧领取时也返回 `Ok(())`，但不写入数据；发送取消通知之后仍需要回收任务、处理结果和确认数据库关闭。
+继续核对 `retry_job` 与 `complete_job` 的返回契约：
+
+| 返回值 | 含义 |
+| --- | --- |
+| `Ok(UpdateResult::Applied)` | 本次更新事务已提交。重试时表示已安排下一轮或进入休眠；完成时表示 metadata、成功状态和地址提示清理已一起提交，已有相同 metadata 时也会返回 Applied。 |
+| `Ok(UpdateResult::Stale)` | 没有匹配 `hash`、`generation` 且仍为 `running` 的任务；本次结果被忽略，不更新任务或 metadata，也不清除地址提示。它不是存储错误，不能计作本次提交。 |
+| `Err(error)` | 校验、预算、命令通道或数据库操作失败，不能按领取过期忽略。事务内出错会回滚未提交的修改；`Closed` 也可能表示未收到命令结果，不能据此断定已入队事务未提交。 |
+
+`complete_job` 在检查领取前先核对 metadata 的 hash，不匹配会返回 `Err(StorageError::Conflict)`，即使领取已经过期。重试的 `Deferred` 和 `Local` 不增加失败次数。调用者取消等待不能证明事务未提交；发送取消通知后，仍需回收任务、处理结果并确认数据库关闭。
 
 ## 6. 跑通从采样到入库
 
@@ -185,7 +196,7 @@ cargo test --locked app::tests::graceful_shutdown_releases_state_directory -- --
 cargo test --locked storage::jobs::tests::
 ```
 
-涉及命令、取消或关闭边界时，再运行相应的 `storage::tests::`、`collector::tests::`、`persistence::tests::`。后两组包含本机 socket 测试；环境禁止创建 socket 时，记录阻塞，不能把它当作通过。
+涉及命令、取消或关闭边界时，再运行相应的 `storage::tests::`、`collector::tests::`、`app::session::tests::`。后两组包含本机 socket 测试；环境禁止创建 socket 时，记录阻塞，不能把它当作通过。
 
 提交改动供审查前执行 [README 的验证命令](../README.md#验证)。内部文档可用以下命令生成：
 

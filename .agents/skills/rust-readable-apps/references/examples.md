@@ -23,7 +23,7 @@ logger::init("app", None, None, None);
 
 ### 直接实现
 
-下面针对一个固定应用给出 `src/logging/mod.rs` 的示例。依赖为 `tracing 0.1`、`tracing-subscriber 0.3`（默认 features）和提供相关 Builder API 的 `tracing-appender 0.2`。采用目标项目兼容的具体版本，不为了复制示例升级依赖。
+下面针对一个固定应用给出 `src/logging.rs` 的示例。依赖为 `tracing 0.1`、`tracing-subscriber 0.3`（默认 features）和提供相关 Builder API 的 `tracing-appender 0.2`。采用目标项目兼容的具体版本，不为了复制示例升级依赖。
 
 ```rust
 //! 初始化终端和文件日志，不读取环境变量或配置文件。
@@ -138,24 +138,20 @@ src/
 ├── app/
 │   ├── mod.rs
 │   └── session/
-│       └── mod.rs
+│       ├── mod.rs
+│       └── tests.rs
 ├── collector/
 │   ├── mod.rs                  # 调度与整体运行
-│   ├── worker/
-│   │   └── mod.rs              # 单个采集任务
-│   ├── peer_lookup/
-│   │   └── mod.rs              # 查找候选 peer
-│   └── connection_limits/
-│       └── mod.rs              # 连接许可，不建立连接
+│   ├── worker.rs               # 单个采集任务
+│   ├── peer_lookup.rs          # 查找候选 peer
+│   └── connection_limits.rs    # 连接许可，不建立连接
 ├── storage/
 │   ├── mod.rs
-│   └── jobs/
-│       └── mod.rs
-└── logging/
-    └── mod.rs
+│   └── jobs.rs
+└── logging.rs
 ```
 
-这不是通用脚手架。只有导出文件的小工具，可能只需要 `main.rs`、`cli/mod.rs` 和 `export/mod.rs`。不要为了“结构化”预建空模块或把每个函数放进单独目录。
+这不是通用脚手架。只有导出文件的小工具，可能只需要 `main.rs`、`cli.rs` 和 `export.rs`。不要为了“结构化”预建空模块或把每个函数放进单独目录。
 
 移动前还要检查这样的关系：
 
@@ -168,7 +164,7 @@ collector 又依赖 session 的错误处理与任务管理定义
 
 同一个状态所有者的私有实现有时可以分布在几个文件中，但如果所有文件都操作几十个共享字段，仅文件数量变多并没有降低理解成本。先确认职责和不变量，再决定是否需要内部小结构体。
 
-独立模块的目标布局为 `foo/mod.rs`，包括测试辅助模块；Cargo 识别的独立入口如 `tests/smoke.rs`、`examples/demo.rs` 不因此机械改名。大型模块测试可以组织为 `tests/mod.rs` 及职责明确的子模块，小型 `#[cfg(test)] mod tests { ... }` 可保留。`mod.rs` 是本项目偏好，不是 Rust 唯一合法布局。
+单文件模块（包括测试辅助模块）使用 `foo.rs`；模块需要两个及以上文件时使用 `foo/mod.rs`，不保留仅含 `mod.rs` 的目录。Cargo 识别的独立入口如 `tests/smoke.rs`、`examples/demo.rs` 不因此机械改名。大型模块测试可以组织为 `tests/mod.rs` 及职责明确的子模块，小型 `#[cfg(test)] mod tests { ... }` 可保留。多文件模块使用 `mod.rs` 是本项目偏好，不是 Rust 唯一合法布局。
 
 语言依据：[Rust 模块文件布局](https://doc.rust-lang.org/book/ch07-05-separating-modules-into-different-files.html)、[Cargo 编译目标布局](https://doc.rust-lang.org/cargo/guide/project-layout.html)。
 

@@ -1,5 +1,6 @@
 # Rust / Cargo
 /target/
+/logs/
 
 # rustfmt 生成的备份文件
 **/*.rs.bk

@@ -1,8 +1,13 @@
 //! worker 的领取所有权与错误来源；异常任务也必须回收领取记录。
 //!
 //! 关闭时主循环停止领取、回收 worker，再处理仍由领取记录标识的任务，不能只发送取消通知。
-use super::*;
-use crate::dht::dispatcher::QueryError;
+use super::worker::Outcome;
+use crate::{
+    dht::dispatcher::QueryError,
+    krpc::InfoHashV1,
+    metadata::MetadataError,
+    storage::{StorageError, jobs::Job},
+};
 use std::{collections::HashMap, error::Error, fmt, future::Future};
 use tokio::task::{Id, JoinError, JoinSet};
 
@@ -31,14 +36,6 @@ impl From<StorageError> for CollectorError {
 impl CollectorError {
     pub(super) fn is_storage(&self) -> bool {
         matches!(self, Self::Storage(_))
-    }
-    pub(crate) fn fault(&self) -> SessionFault {
-        match self {
-            Self::Storage(error) => SessionFault::StorageWrite(error.clone()),
-            _ => SessionFault::CollectorFailed {
-                detail: self.to_string(),
-            },
-        }
     }
 }
 impl fmt::Display for CollectorError {

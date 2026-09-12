@@ -1,29 +1,35 @@
-# 日志配置与字段契约
+# 固定日志输出与字段契约
 
-日志统一输出 stderr。默认 `text`，可用 `--log-format json` 输出每行一个 JSON 对象；JSON 的业务字段保留在 `fields`，不展开到根部。时间使用 UTC，保留 level 和 target，不默认输出线程、文件和行号。
+日志同时写入 stderr 和进程工作目录下的 `logs/bt-sniffer.YYYY-MM-DD.log`，为业务 stdout 留出空间。两端固定文本，本程序 INFO 及以上、第三方依赖 WARN 及以上；时间使用 UTC，保留 level、target，不默认输出线程、文件和行号。
 
 ```bash
-# 正常采集：默认 warn,bt_sniffer=info
+# 日志目录是当前工作目录的 logs/，不随 --state-dir 改变。
 ./bt-sniffer --state-dir ./state --sample --fetch
-
-# 文件或服务器：JSON，无 ANSI 颜色
-RUST_LOG='warn,bt_sniffer=info' ./bt-sniffer --log-format json \
-  --state-dir ./state --sample --fetch > run.jsonl 2>&1
-
-# 临时诊断采集明细
-NO_COLOR=1 RUST_LOG='warn,bt_sniffer=info,bt_sniffer::collector=debug,bt_sniffer::metadata=debug' \
-  ./bt-sniffer --state-dir ./state --sample --fetch > debug.log 2>&1
 ```
 
-未设置 `RUST_LOG` 才采用默认值；显式配置整体覆盖默认值，空字符串关闭日志。非法或非 Unicode 配置启动失败，配置错误通过 stderr 文本报告。`--help` 和 `--version` 不初始化日志线程或运行资源。文本只有 stderr 是终端且 `NO_COLOR` 未设置或为空时启用颜色；JSON 永远不输出颜色。
+不再支持 `--log-format` 或生产 JSON 输出，不解析或校验 `RUST_LOG`、`NO_COLOR` 等日志环境变量，不加载 `.env`，不提供热更新。原 DEBUG 事件仍保留在源码，但固定过滤策略下不输出。文件禁用 ANSI；stderr 仅在连接终端时启用颜色。锁定依赖创建 fmt 层时会内部读取 NO_COLOR，本程序显式 `with_ansi(...)` 完全覆盖它，其值不会影响输出。
+
+## 文件、部署与消费者
+
+文件使用 `tracing-appender 0.2.5` 的 DAILY 轮转：按 UTC 自然日命名，跨日后的首次实际写入触发轮转，不在午夜额外启动任务或生成空文件。后台队列中的日志按实际写入时刻选择文件；跨午夜积压时，事件时间与文件日期可以不同。
+
+最多保留 7 个匹配文件，不是严格保留 7 天，不保证恰好保留 7 个，也不限制单文件大小。启动和轮转时清理，锁定依赖在打开文件前为新文件预留名额，同日重启可能少保留一个。候选文件以 `bt-sniffer` 前缀和 `log` 后缀匹配，并非严格校验日期名；logs/ 应为本程序专用目录，不放置同样匹配的其他文件或归档。正常 I/O 条件下满足文件数量上限；删除失败会报告错误，不能保证上限。
+
+- 工作目录不可写且没有预建可写 logs/ 时，启动失败。只读根文件系统部署需要挂载可写 logs/；不自动改用状态目录或其他路径。
+- `--instance` 仍用于节点身份，状态目录锁只保护数据库，不能隔离日志。多进程必须使用不同工作目录和独立 logs/；即使 --state-dir 不同，也不支持共写相同日志文件。
+- stderr 与文件各写一份，journald 的留存与应用文件相互独立，磁盘占用也分别计算。
+- 旧启动脚本必须移除 --log-format。旧 JSON 行解析器需要迁移；文本不是原 JSON fields 对象的兼容编码。本次仓库检查未发现必须保持的外部解析器或共享日志部署，无法据此排除仓库外消费者。
+- 内部测试继续使用 JSON subscriber 检查事件字段类型；独立验收 JSON 报告与生产日志格式无关，历史报告保留原样。
 
 ## 输出与关闭边界
 
-`tracing-appender 0.2.5` 使用独立 writer 线程，队列容量 4,096 条、lossy 模式。格式化仍发生在调用线程；队列满时丢弃本次投递，不等待输出端腾出名额。条数不是字节硬上限，不应添加完整报文、metadata 或巨大对象日志。
+初始化在 CLI 解析之后、runtime 创建之前完成。help/version 和 CLI 解析失败不创建日志资源；日志目录或文件创建失败时，stderr 报告路径、动作和底层错误，进程返回失败，不继续启动业务。subscriber 注册失败也返回初始化错误。
 
-`logging_queue` 每 60 秒和入口退出时报告 `dropped_total`、`dropped_interval`。它只统计队列投递失败，不检测全部底层 I/O 错误，也不包含报告事件自身之后发生的丢弃。此事件也遵守过滤和队列策略：关闭日志或队列持续饱和时，它不能保证可见。
+文件与 stderr 各有一个独立 writer 线程、4,096 条有界队列，均为 lossy 模式。慢文件不阻塞终端，慢终端不阻塞文件；队列满载丢弃本次投递，不等待输出端腾出名额。格式化仍发生在调用线程，队列条数不是字节硬上限，不应记录完整报文、metadata 或巨大对象。独立 logging_queue 定时/退出统计及其全局状态已移除；业务采集、协议和数据库指标继续保留。
 
-main 持有 WorkerGuard，直到 runtime 收尾及最终错误输出后再释放。锁定版本 guard 尝试投递关闭标记最多等待 100 ms，再等待刷新交接最多 1,000 ms；这独立于现有会话 30 秒清理及 runtime DNS 等待上限，并非将日志纳入数据库事务，也不保证持久落盘。卡住的输出端不能凭 guard 返回判为排空成功。最终验收仍以独立报告、正常退出和数据库复核为依据。
+运行中轮转创建失败由依赖向 stderr 报错并保留旧 writer；删除失败同样直接报告。普通后台写入 I/O 错误并非都能通过现有依赖对外观察，本实现不增加故障监督或自动降级，也不承诺无损日志。
+
+main 持有两个 WorkerGuard，直到会话、runtime 收尾和最终错误事件发出之后。每个 guard 尝试投递关闭标记最多等待 100 ms，再等待刷新交接最多 1,000 ms；两个 guard 的等待可能累计。这独立于会话 30 秒清理和 runtime DNS 等待上限，不保证强杀、断电、I/O 故障时日志完整，也不等于持久落盘。验收仍以独立报告、正常退出和数据库复核为依据。
 
 ## 结构化聚合 v1
 
@@ -43,7 +49,6 @@ main 持有 WorkerGuard，直到 runtime 收尾及最终错误输出后再释放
 | `collector_status`、`collector_failure` | 当前采集状态、累计任务失败类别 |
 | `sampling_backpressure` | 当前暂停原因、累计暂停时间和恢复次数 |
 | `session_shutdown` | 关闭结果 success 和 error_count；具体故障由错误事件输出 |
-| `logging_queue` | 队列投递失败累计和区间值 |
 
 分位数输出 `p95_upper_bound_ms` 或 `p95_exceeds_ms` 等数值字段。无样本时两个字段都缺省；溢出时只有 exceeds，不能用 0 替代缺失或把超过上界当精确耗时。领取等待有限桶到 24 小时，网络阶段到 180 秒。
 
@@ -51,15 +56,14 @@ main 持有 WorkerGuard，直到 runtime 收尾及最终错误输出后再释放
 
 ## systemd 示例
 
-以下路径需按部署位置调整，使用专用账号并提前创建可写状态目录：
+提前创建 `/var/lib/bt-sniffer` 并将其及已有 logs/ 的必要读写权限授予专用账号。二进制仍放在 `/opt/bt-sniffer`；下面不安装服务或修改服务器配置。
 
 ```ini
 [Service]
 Type=simple
 User=bt-sniffer
-WorkingDirectory=/opt/bt-sniffer
-Environment="RUST_LOG=warn,bt_sniffer=info"
-ExecStart=/opt/bt-sniffer/bt-sniffer --state-dir /var/lib/bt-sniffer --sample --fetch --log-format json
+WorkingDirectory=/var/lib/bt-sniffer
+ExecStart=/opt/bt-sniffer/bt-sniffer --state-dir /var/lib/bt-sniffer --sample --fetch
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=bt-sniffer
@@ -68,4 +72,4 @@ TimeoutStopSec=40s
 Restart=on-failure
 ```
 
-`journalctl -u bt-sniffer -o cat` 可查看应用 JSON 行。journald 的限流、容量和留存独立管理，也可能丢弃事件；`logging_queue` 无法统计下游丢弃。本轮不内置文件轮转，不安装服务或修改服务器配置。
+应用文件位于 `/var/lib/bt-sniffer/logs/`。`journalctl -u bt-sniffer -o cat` 查看 stderr 文本；journald 的限流、容量、留存和下游丢弃独立管理。部署多个进程时，分别提供独立工作目录、状态目录及监听端口，不使用此示例共写 logs/。

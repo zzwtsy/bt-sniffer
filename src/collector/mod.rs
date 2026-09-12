@@ -4,22 +4,22 @@
 //! run_inner 负责正常调度，supervise 接收故障，finish 回收任务并保存可提交的结果。
 //! 取消通知只要求网络任务停止，收尾仍需等待任务并处理每条领取记录。
 //!
-//! 入口由 persistence 创建并监督；lookup 负责查找，lifecycle 负责 worker 退出与领取记录的配对。
+//! 入口由 app::session 创建并监督；worker 执行单任务，lookup 负责查找，lifecycle 配对退出与领取记录。
 mod backpressure;
 mod lifecycle;
 mod lookup;
+mod worker;
 use crate::metrics::{Counter, Timing};
 pub(crate) use backpressure::Mode as SampleBackpressure;
 pub(crate) use lifecycle::CollectorError;
 use lifecycle::Workers;
+use worker::{Outcome, run_job};
 #[cfg(test)]
 mod tests;
 use crate::{
     dht::dispatcher::{AnnounceEvent, DhtHandle, FetchIngress},
-    krpc::InfoHashV1,
-    metadata::{MetadataConfig, MetadataError, MetadataFetcher, VerifiedMetadata},
+    metadata::{MetadataConfig, MetadataFetcher},
     net::address::AddressPolicy,
-    persistence::{FaultLog, SessionFault, report_fault},
     storage::{
         Clock, StorageError, StorageHandle,
         jobs::{Job, LocalReason, RetryReason, UpdateResult},
@@ -27,7 +27,6 @@ use crate::{
     },
 };
 use std::{
-    net::SocketAddr,
     path::PathBuf,
     sync::{
         Arc,
@@ -58,10 +57,19 @@ pub(crate) struct Collector {
     receiver: mpsc::Receiver<AnnounceEvent>,
     ingress: FetchIngress,
     stop: CancellationToken,
-    faults: watch::Receiver<Option<SessionFault>>,
-    report: watch::Sender<Option<SessionFault>>,
-    fault_log: FaultLog,
+    /// 只接收暂停通知，故障详情和应用是否退出由会话解释。
+    faults: watch::Receiver<()>,
+    /// 同步报告模块错误；调用者在返回前保存诊断并发布故障，不执行 I/O。
+    report_error: Box<dyn Fn(&CollectorError) + Send + Sync>,
 }
+/// 单次协调器运行中已经提交的结果累计数；只归 run_inner 所有，不包含调度或共享状态。
+#[derive(Default)]
+struct CompletionTotals {
+    succeeded: u64,
+    failed: u64,
+    failure_categories: std::collections::BTreeMap<&'static str, u64>,
+}
+
 impl Collector {
     pub(crate) async fn new(
         store: StorageHandle,
@@ -69,8 +77,8 @@ impl Collector {
         config: Config,
         clock: Clock,
         stop: CancellationToken,
-        report: watch::Sender<Option<SessionFault>>,
-        fault_log: FaultLog,
+        pause_notifications: watch::Sender<()>,
+        report_error: Box<dyn Fn(&CollectorError) + Send + Sync>,
     ) -> Result<Self, CollectorError> {
         store.enable_fetch(config.max_active);
         store
@@ -111,9 +119,8 @@ impl Collector {
             receiver,
             ingress,
             stop,
-            faults: report.subscribe(),
-            report,
-            fault_log,
+            faults: pause_notifications.subscribe(),
+            report_error,
         })
     }
     async fn accept_announce(&self, event: AnnounceEvent) -> Result<(), StorageError> {
@@ -149,8 +156,7 @@ impl Collector {
             .map_err(CollectorError::Clock)
     }
     fn record_error(&self, errors: &mut Vec<CollectorError>, error: CollectorError) {
-        self.fault_log.push(error.to_string());
-        report_fault(&self.report, error.fault());
+        (self.report_error)(&error);
         errors.push(error);
     }
     pub(crate) async fn run(self) -> Result<(), Vec<CollectorError>> {
@@ -205,9 +211,7 @@ impl Collector {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut claim_turn = 0u8;
         let mut cycles = 0u64;
-        let mut failed = 0u64;
-        let mut succeeded = 0u64;
-        let mut failure_categories = std::collections::BTreeMap::new();
+        let mut totals = CompletionTotals::default();
         let mut state_bytes = 0;
         let mut backfill_cursor = None;
         loop {
@@ -217,12 +221,11 @@ impl Collector {
                     if changed.is_err() {
                         return Err(CollectorError::SupervisorClosed);
                     }
-                    if self.faults.borrow().is_some() {
-                        self.storage_paused = true;
-                        self.backpressure.update(self.now()?,0,None,true);
-                        work_cancel.cancel();
-                        self.pause(true).await?;
-                    }
+                    // 每次单位通知都对应一次已接纳故障，不需要读取应用层的故障详情。
+                    self.storage_paused = true;
+                    self.backpressure.update(self.now()?,0,None,true);
+                    work_cancel.cancel();
+                    self.pause(true).await?;
                 }
                 // 异常 worker 也要保留领取记录，交给 finish 收尾。
                 result = workers.next(), if !workers.is_empty() => {
@@ -234,25 +237,7 @@ impl Collector {
                             return Err(error);
                         }
                     };
-                    match result {
-                        Outcome::Control(source) => return Err(CollectorError::Control { operation: "查找 peer", source }),
-                        Outcome::Success(metadata) => {
-                            let bytes = metadata.info().len() as u64;
-                            if self.store.complete_job(job, metadata, self.now()?).await? == UpdateResult::Applied {
-                                succeeded += 1;
-                                network.metrics.add(Counter::MetadataCount, 1);
-                                network.metrics.add(Counter::MetadataBytes, bytes);
-                            }
-                        }
-                        Outcome::Retry(reason) => {
-                            let applied = self.store.retry_job(job, self.now()?, reason).await? == UpdateResult::Applied;
-                            if applied { network.metrics.add(if reason.failure_category().is_some() { Counter::RemoteFailures } else { Counter::LocalDeferrals }, 1); }
-                            if applied && let Some(category) = reason.failure_category() {
-                                failed += 1;
-                                *failure_categories.entry(category).or_insert(0u64) += 1;
-                            }
-                        }
-                    }
+                    self.apply_running_outcome(job, result, &mut totals).await?;
                 }
                 event = self.receiver.recv(), if !self.storage_paused => {
                     if let Some(event) = event {
@@ -262,61 +247,17 @@ impl Collector {
                 _ = tick.tick() => {
                     // 先检查容量，再补建和领取，达到保护阈值后停止扩张。
                     if cycles.is_multiple_of(5) && !self.storage_paused {
-                        state_bytes = state_size(self.config.directory.clone()).await?;
-                        if state_bytes >= self.config.state_max_bytes.saturating_sub(64 * 1024 * 1024) {
-                            self.storage_paused = true;
-                            self.backpressure.update(self.now()?, 0, None, true);
-                            work_cancel.cancel();
-                            self.pause(true).await?;
-                            tracing::warn!(state_bytes, limit = self.config.state_max_bytes,
-                                "状态容量达到保护阈值，暂停采集；保留数据，重启后重新检查");
-                        }
+                        self.check_storage_capacity(work_cancel, &mut state_bytes).await?;
                     }
                     if !self.storage_paused {
-                        let active = self.store.active_jobs().await?;
-                        let now = self.now()?;
-                        let due = if cycles.is_multiple_of(5) && self.config.sample_backpressure == SampleBackpressure::Freshness {
-                            Some(self.store.due_stats(now,self.config.policy).await?)
-                        } else { None };
-                        let resumes = self.backpressure.resumes;
-                        if self.backpressure.update(now,active,due.as_ref(),false) {
-                            self.pause(self.backpressure.paused()).await?;
-                            self.backpressure.log(now);
-                        }
-                        self.metrics.add(Counter::SamplingResumes,self.backpressure.resumes-resumes);
+                        self.update_sampling_backpressure(cycles.is_multiple_of(5)).await?;
                         backfill_cursor = self.store.backfill_page(self.now()?, backfill_cursor).await?;
-                        while workers.len() < self.config.concurrency {
-                            let Some((job, fresh, due_at)) = self.store.claim_preferred(self.now()?, Some(claim_turn < 3), self.config.policy).await? else {
-                                break;
-                            };
-                            network.metrics.add(if fresh { Counter::ClaimsFresh } else { Counter::ClaimsOther }, 1);
-                            network.metrics.observe(Timing::ClaimWait, Duration::from_millis(self.now()?.saturating_sub(due_at).max(0) as u64));
-                            claim_turn = (claim_turn + 1) % 4;
-                            workers.spawn(job.clone(), run_job(
-                                job, self.handles.clone(), fetcher.clone(), network.clone(),
-                                self.config.policy, families.clone(), work_cancel.clone(),
-                            ));
-                        }
+                        self.claim_workers(
+                            workers, work_cancel, &fetcher, &network, &families, &mut claim_turn,
+                        ).await?;
                     }
                     if cycles.is_multiple_of(60) {
-                        network.metrics.log();
-                        self.backpressure.log(self.now()?);
-                        let due = self.store.due_stats(self.now()?, self.config.policy).await?;
-                        let stats = self.store.fetch_stats().await?;
-                        stats.log(false);
-                        for (category,count) in &failure_categories {
-                            tracing::info!(event="collector_failure",schema_version=1u64,scope="total",category,count,"任务失败类别");
-                        }
-                        tracing::info!(
-                            event="collector_status",schema_version=1u64, due_count=due.count, oldest_wait_ms=due.oldest_wait_ms, fresh_due=due.fresh,
-                            sample_hashes = self.store.sample_observations(), active = stats.active(),
-                            succeeded, failed, connections = network.connections(),
-                            announces = self.ingress.observed.load(Ordering::Relaxed),
-                            announce_dropped = self.ingress.dropped.load(Ordering::Relaxed),
-                            state_bytes, capacity_paused=self.backpressure.capacity, backlog_paused=self.backpressure.backlog, storage_paused = self.storage_paused,
-                            admitted_tasks_database=stats.active()+stats.dormant+stats.succeeded,
-                            "metadata 采集状态"
-                        );
+                        self.log_status(&network, &totals, state_bytes).await?;
                     }
                     cycles = cycles.wrapping_add(1);
                 }
@@ -324,6 +265,196 @@ impl Collector {
         }
         Ok(())
     }
+    /// 正常运行的结果提交；只有 Applied 更新累计数，远端失败与本地延期保留各自分类。
+    /// 与 save_outcome 的退出策略不同，此处不能把全部重试改成本地取消。
+    async fn apply_running_outcome(
+        &self,
+        job: Job,
+        result: Outcome,
+        totals: &mut CompletionTotals,
+    ) -> Result<(), CollectorError> {
+        match result {
+            Outcome::Control(source) => {
+                return Err(CollectorError::Control {
+                    operation: "查找 peer",
+                    source,
+                });
+            }
+            Outcome::Success(metadata) => {
+                let bytes = metadata.info().len() as u64;
+                if self.store.complete_job(job, metadata, self.now()?).await?
+                    == UpdateResult::Applied
+                {
+                    totals.succeeded += 1;
+                    self.metrics.add(Counter::MetadataCount, 1);
+                    self.metrics.add(Counter::MetadataBytes, bytes);
+                }
+            }
+            Outcome::Retry(reason) => {
+                let applied =
+                    self.store.retry_job(job, self.now()?, reason).await? == UpdateResult::Applied;
+                if applied {
+                    self.metrics.add(
+                        if reason.failure_category().is_some() {
+                            Counter::RemoteFailures
+                        } else {
+                            Counter::LocalDeferrals
+                        },
+                        1,
+                    );
+                }
+                if applied && let Some(category) = reason.failure_category() {
+                    totals.failed += 1;
+                    *totals.failure_categories.entry(category).or_insert(0u64) += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 更新磁盘占用快照；达到保护阈值后依次暂停存储接纳、通知取消并暂停采样。
+    /// 调用者控制检查频率；I/O 或控制错误向上返回，不继续补建或领取。
+    async fn check_storage_capacity(
+        &mut self,
+        work_cancel: &CancellationToken,
+        state_bytes: &mut u64,
+    ) -> Result<(), CollectorError> {
+        *state_bytes = state_size(self.config.directory.clone()).await?;
+        if *state_bytes >= self.config.state_max_bytes.saturating_sub(64 * 1024 * 1024) {
+            self.storage_paused = true;
+            self.backpressure.update(self.now()?, 0, None, true);
+            work_cancel.cancel();
+            self.pause(true).await?;
+            tracing::warn!(
+                state_bytes = *state_bytes,
+                limit = self.config.state_max_bytes,
+                "状态容量达到保护阈值，暂停采集；保留数据，重启后重新检查"
+            );
+        }
+        Ok(())
+    }
+
+    /// 读取活跃量及按需读取到期快照，更新主动采样暂停与恢复统计；不关闭宣布入口。
+    async fn update_sampling_backpressure(
+        &mut self,
+        refresh_due: bool,
+    ) -> Result<(), CollectorError> {
+        let active = self.store.active_jobs().await?;
+        let now = self.now()?;
+        let due = if refresh_due && self.config.sample_backpressure == SampleBackpressure::Freshness
+        {
+            Some(self.store.due_stats(now, self.config.policy).await?)
+        } else {
+            None
+        };
+        let resumes = self.backpressure.resumes;
+        if self.backpressure.update(now, active, due.as_ref(), false) {
+            self.pause(self.backpressure.paused()).await?;
+            self.backpressure.log(now);
+        }
+        self.metrics.add(
+            Counter::SamplingResumes,
+            self.backpressure.resumes - resumes,
+        );
+        Ok(())
+    }
+
+    /// 补足并发空位；每次领取后先记指标、推进轮次，再把领取副本与网络任务交给 Workers。
+    /// 领取时间和等待统计时间分别读取，保持数据库接纳与指标观察的原有边界。
+    async fn claim_workers(
+        &self,
+        workers: &mut Workers,
+        work_cancel: &CancellationToken,
+        fetcher: &MetadataFetcher,
+        network: &Arc<lookup::Network>,
+        families: &[crate::dht::routing::AddressFamily],
+        claim_turn: &mut u8,
+    ) -> Result<(), CollectorError> {
+        while workers.len() < self.config.concurrency {
+            let Some((job, fresh, due_at)) = self
+                .store
+                .claim_preferred(self.now()?, Some(*claim_turn < 3), self.config.policy)
+                .await?
+            else {
+                break;
+            };
+            network.metrics.add(
+                if fresh {
+                    Counter::ClaimsFresh
+                } else {
+                    Counter::ClaimsOther
+                },
+                1,
+            );
+            network.metrics.observe(
+                Timing::ClaimWait,
+                Duration::from_millis(self.now()?.saturating_sub(due_at).max(0) as u64),
+            );
+            *claim_turn = (*claim_turn + 1) % 4;
+            workers.spawn(
+                job.clone(),
+                run_job(
+                    job,
+                    self.handles.clone(),
+                    fetcher.clone(),
+                    network.clone(),
+                    self.config.policy,
+                    families.to_vec(),
+                    work_cancel.clone(),
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    /// 按原顺序输出网络、背压、数据库和协调器累计状态；查询失败仍向主循环报告。
+    async fn log_status(
+        &mut self,
+        network: &lookup::Network,
+        totals: &CompletionTotals,
+        state_bytes: u64,
+    ) -> Result<(), CollectorError> {
+        network.metrics.log();
+        self.backpressure.log(self.now()?);
+        let due = self
+            .store
+            .due_stats(self.now()?, self.config.policy)
+            .await?;
+        let stats = self.store.fetch_stats().await?;
+        stats.log(false);
+        for (category, count) in &totals.failure_categories {
+            tracing::info!(
+                event = "collector_failure",
+                schema_version = 1u64,
+                scope = "total",
+                category,
+                count,
+                "任务失败类别"
+            );
+        }
+        tracing::info!(
+            event = "collector_status",
+            schema_version = 1u64,
+            due_count = due.count,
+            oldest_wait_ms = due.oldest_wait_ms,
+            fresh_due = due.fresh,
+            sample_hashes = self.store.sample_observations(),
+            active = stats.active(),
+            succeeded = totals.succeeded,
+            failed = totals.failed,
+            connections = network.tracked_tcp_ips(),
+            announces = self.ingress.observed.load(Ordering::Relaxed),
+            announce_dropped = self.ingress.dropped.load(Ordering::Relaxed),
+            state_bytes,
+            capacity_paused = self.backpressure.capacity,
+            backlog_paused = self.backpressure.backlog,
+            storage_paused = self.storage_paused,
+            admitted_tasks_database = stats.active() + stats.dormant + stats.succeeded,
+            "metadata 采集状态"
+        );
+        Ok(())
+    }
+
     /// 退出时保留成功结果，其余任务只延期，避免把本地关闭计作远端失败。
     async fn save_outcome(&self, job: Job, outcome: Outcome) -> Result<(), CollectorError> {
         match outcome {
@@ -419,175 +550,6 @@ impl Collector {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExecutionStage {
-    LocalWait,
-    Dht,
-    Peer,
-    Validation,
-}
-pub(super) enum Outcome {
-    Control(crate::dht::dispatcher::QueryError),
-    Success(VerifiedMetadata),
-    Retry(RetryReason),
-}
-async fn run_job(
-    job: Job,
-    handles: Vec<DhtHandle>,
-    fetcher: MetadataFetcher,
-    network: Arc<lookup::Network>,
-    policy: AddressPolicy,
-    families: Vec<crate::dht::routing::AddressFamily>,
-    cancel: CancellationToken,
-) -> Outcome {
-    let _timer = network.metrics.timer(Timing::Task);
-    let stage = std::sync::Mutex::new(ExecutionStage::LocalWait);
-    let progress = Arc::new(crate::dht::dispatcher::RpcProgress::default());
-    let dht_active = AtomicBool::new(true);
-    let work = async {
-        let mut tried = std::collections::HashSet::new();
-        let mut last = None;
-        let mut hints: std::collections::VecDeque<_> = job
-            .peers
-            .iter()
-            .copied()
-            .filter(|p| policy.accepts(*p) && families.iter().any(|f| f.accepts(*p)))
-            .collect();
-        let mut first_hints: std::collections::VecDeque<_> =
-            hints.drain(..hints.len().min(2)).collect();
-        let (sender, mut peers) = mpsc::channel(32);
-        let mut lookup = Box::pin(lookup::stream(
-            &handles,
-            job.hash,
-            network.clone(),
-            Some(sender),
-            progress.clone(),
-        ));
-        let mut summary = None;
-        while tried.len() < 8 {
-            let mut next = first_hints
-                .pop_front()
-                .or_else(|| peers.try_recv().ok())
-                .or_else(|| hints.pop_front());
-            while next.is_none() && summary.is_none() {
-                *stage.lock().expect("执行阶段锁") = ExecutionStage::Dht;
-                tokio::select! {
-                    biased;
-                    result = &mut lookup => {
-                        dht_active.store(false, Ordering::Relaxed);
-                        if let Some(error) = result.fault { return Outcome::Control(error); }
-                        summary = Some(result);
-                        next = peers.try_recv().ok();
-                    }
-                    peer = peers.recv() => { next = peer; }
-                }
-            }
-            let Some(peer) = next else {
-                break;
-            };
-            if !policy.accepts(peer)
-                || !families.iter().any(|f| f.accepts(peer))
-                || !tried.insert(peer)
-            {
-                continue;
-            }
-            let attempt = attempt(
-                &fetcher, &network, job.hash, peer, &cancel, &mut last, &stage,
-            );
-            tokio::pin!(attempt);
-            let metadata = loop {
-                tokio::select! {
-                    biased;
-                    result = &mut lookup, if summary.is_none() => {
-                        dht_active.store(false, Ordering::Relaxed);
-                        if let Some(error) = result.fault { return Outcome::Control(error); }
-                        summary = Some(result);
-                    }
-                    result = &mut attempt => break result,
-                }
-            };
-            if let Some(metadata) = metadata {
-                if summary.is_none() {
-                    network.metrics.add(Counter::LookupCancelledSuccess, 1);
-                }
-                return Outcome::Success(metadata);
-            }
-        }
-        // 没有再可尝试的地址时，已观察到的远端失败优先；纯本地等待不消耗 attempts。
-        let reason = match last {
-            Some(category) => RetryReason::Failed(category),
-            None if summary
-                .as_ref()
-                .map_or_else(|| progress.sent.load(Ordering::Relaxed), |s| s.sent)
-                > 0 =>
-            {
-                RetryReason::Failed("no_peers")
-            }
-            None if summary.as_ref().map_or_else(
-                || progress.limited.load(Ordering::Relaxed),
-                |s| s.local_limited || s.had_seeds,
-            ) =>
-            {
-                RetryReason::Local(LocalReason::ResourceWait)
-            }
-            None => RetryReason::Local(LocalReason::NoRoute),
-        };
-        Outcome::Retry(reason)
-    };
-    tokio::select! {
-        biased;
-        _ = cancel.cancelled() => Outcome::Retry(RetryReason::Local(LocalReason::Cancelled)),
-        result = tokio::time::timeout(Duration::from_secs(180), work) => {
-            result.unwrap_or_else(|_| Outcome::Retry(if matches!(*stage.lock().expect("执行阶段锁"), ExecutionStage::LocalWait | ExecutionStage::Dht)
-                && (!dht_active.load(Ordering::Relaxed) || progress.sent.load(Ordering::Relaxed) == 0) {
-                RetryReason::Local(LocalReason::ResourceWait)
-            } else { RetryReason::Failed("task_timeout") }))
-        },
-    }
-}
-async fn attempt(
-    fetcher: &MetadataFetcher,
-    network: &lookup::Network,
-    hash: InfoHashV1,
-    peer: SocketAddr,
-    cancel: &CancellationToken,
-    last: &mut Option<&'static str>,
-    stage: &std::sync::Mutex<ExecutionStage>,
-) -> Option<VerifiedMetadata> {
-    *stage.lock().expect("执行阶段锁") = ExecutionStage::LocalWait;
-    let wait = network.metrics.timer(Timing::TcpWait);
-    let _connection = network.connect(peer.ip()).await;
-    drop(wait);
-    *stage.lock().expect("执行阶段锁") = ExecutionStage::Peer;
-    match fetcher.fetch(hash, &[peer], cancel).await {
-        Ok(metadata) => {
-            *stage.lock().expect("执行阶段锁") = ExecutionStage::Validation;
-            Some(metadata)
-        }
-        Err(error) => {
-            if let MetadataError::AllPeersFailed(failures) = &error {
-                for failure in failures {
-                    tracing::debug!(address=%failure.address,stage=?failure.stage,error=%failure.error,"metadata 阶段失败");
-                }
-            }
-            *last = Some(match &error {
-                MetadataError::AllPeersFailed(errors) => match errors.last().map(|f| &f.error) {
-                    Some(crate::metadata::PeerError::HashMismatch) => "hash_mismatch",
-                    Some(crate::metadata::PeerError::Protocol(_)) => "protocol",
-                    Some(crate::metadata::PeerError::Timeout(_)) => "peer_timeout",
-                    Some(crate::metadata::PeerError::Unsupported) => "unsupported",
-                    Some(crate::metadata::PeerError::Limit(_)) => "receive_limit",
-                    Some(crate::metadata::PeerError::Rejected(_)) => "rejected",
-                    _ => "peer_io",
-                },
-                MetadataError::TaskTimeout => "task_timeout",
-                _ => "metadata_unavailable",
-            });
-            tracing::debug!(%peer,%error,category=*last,"metadata peer 获取失败");
-            None
-        }
-    }
-}
 /// 文件系统检查放到阻塞线程；统计数据库与 WAL，结果用于采集软容量保护。
 async fn state_size(directory: PathBuf) -> Result<u64, CollectorError> {
     tokio::task::spawn_blocking(move || {

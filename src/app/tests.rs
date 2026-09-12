@@ -58,9 +58,7 @@ async fn already_cancelled_startup_does_not_create_database() {
 async fn partial_startup_failure_is_cleaned_up() {
     // 第二个同族节点与第一个持久化身份冲突；仍然必须关闭已经启动的节点。
     let dir = tempfile::tempdir().unwrap();
-    let mut session = PersistentSession::open(StorageConfig::new(dir.path()))
-        .await
-        .unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
     let mut handles = Vec::new();
     let mut sockets = Vec::new();
     for _ in 0..2 {
