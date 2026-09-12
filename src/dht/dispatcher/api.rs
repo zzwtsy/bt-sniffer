@@ -252,6 +252,7 @@ impl Error for DispatcherError {
 ///
 /// handle 本身不直接接触 socket 和 routing table。它只把命令交给唯一的 dispatcher
 /// task，再等待该命令自己的 oneshot 返回值。
+/// RPC future 被丢弃时触发取消通知，实际清理由 dispatcher 后续处理，不是同步回收证明。
 #[derive(Debug, Clone)]
 pub(crate) struct DhtHandle {
     pub(super) commands: mpsc::Sender<Command>,
@@ -339,6 +340,7 @@ impl DhtHandle {
     /// 请求事件循环正常关闭，并等待所有待处理查询收到关闭通知。
     ///
     /// 关闭完成后，其他 handle 再提交查询会得到 [`QueryError::DispatcherClosed`]。
+    /// 此确认仅覆盖查询关闭；run_persistent 的存储结算、任务退出和数据库关闭须由会话继续等待。
     pub(crate) async fn shutdown(&self) -> Result<(), QueryError> {
         let (reply, finished) = oneshot::channel();
         self.commands
@@ -349,6 +351,7 @@ impl DhtHandle {
     }
 }
 
+/// 单节点的即时内存快照；数量不是累计值，监听地址与邻居状态也不证明公网入站可达。
 #[derive(Debug)]
 pub(crate) struct DhtStatus {
     pub(crate) node_id: NodeId,

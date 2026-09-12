@@ -32,6 +32,7 @@ pub(super) struct PendingDispatch {
     pub(super) purpose: PendingPurpose,
 }
 
+/// 请求业务目的；从待发意图移入 pending，结束时据此回复调用者或推进内部状态机。
 #[derive(Debug)]
 pub(super) enum PendingPurpose {
     Fetch {
@@ -79,6 +80,7 @@ pub(super) enum PendingPurpose {
 pub(crate) struct DhtDispatcher {
     pub(crate) budget: std::sync::Arc<crate::dht::traffic::Budget>,
     pub(super) queued: std::collections::VecDeque<super::traffic::Queued>,
+    /// 待发队列下次需要推进的最早时间；None 表示无需为该队列设置定时唤醒。
     pub(super) queue_deadline: Option<Instant>,
     pub(super) fetch_ingress: Option<super::fetch::FetchIngress>,
     pub(super) sampling_paused: bool,
@@ -89,7 +91,7 @@ pub(crate) struct DhtDispatcher {
     pub(super) transport: UdpTransport,
     /// 当前 socket 和地址族对应的 routing table。
     pub(super) routing: RoutingTable,
-    /// 保存所有已经发出、仍在等待响应的 transaction。
+    /// 保存发送前已登记和已发出待响应的 transaction；明确发送失败会立即撤销登记。
     pub(super) transactions: TransactionManager,
     /// 接收各个 [`DhtHandle`] 提交的命令。
     commands: mpsc::Receiver<Command>,
@@ -214,7 +216,8 @@ impl DhtDispatcher {
         self.run_loop().await
     }
 
-    /// 借用状态运行循环；外层 run 消费整个实例，退出后自动释放缓存与密钥。
+    /// 借用状态驱动网络循环；生产入口 run_persistent 在本循环返回后继续结算存储。
+    /// 循环回复关闭只确认查询清理，最终快照、任务退出及资源释放仍由外层会话等待。
     pub(super) async fn run_loop(&mut self) -> Result<(), DispatcherError> {
         loop {
             let cancellations: Vec<_> = self
@@ -487,6 +490,8 @@ impl DhtDispatcher {
         self.start_rpc(remote, query, purpose, now).await;
     }
 
+    /// 先登记 transaction 和业务上下文，再尝试 UDP 发送，防止快速响应找不到等待者。
+    /// 发送失败同步移除两处登记；只有发送成功才增加实际发送量。
     pub(super) async fn send_rpc(
         &mut self,
         remote: RemoteNode,

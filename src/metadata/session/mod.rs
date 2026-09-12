@@ -16,6 +16,7 @@ type PeerStream = Framed<TcpStream, LengthDelimitedCodec>;
 
 /// 分片只属于当前 peer，失败后整体丢弃，避免混合来源导致校验无法归责。
 struct Pieces {
+    /// 按已验证的 metadata_size 一次分配；各片写入固定偏移。
     bytes: Vec<u8>,
     /// 与分片编号一一对应；收到相同重复片不再次增加 received。
     complete: Vec<bool>,
@@ -23,6 +24,7 @@ struct Pieces {
     deadlines: Vec<Option<Instant>>,
     /// 下一个尚未发送过请求的分片编号。
     next: usize,
+    /// 已完成的不同分片数，不是字节数，也不包含相同重复片。
     received: usize,
 }
 impl Pieces {
@@ -36,6 +38,7 @@ impl Pieces {
             received: 0,
         }
     }
+    /// 返回最早在途分片期限；没有在途请求时才采用调用者的 fallback。
     fn deadline(&self, fallback: Instant) -> Instant {
         self.deadlines
             .iter()
@@ -44,6 +47,7 @@ impl Pieces {
             .min()
             .unwrap_or(fallback)
     }
+    /// 校验编号、长度和请求状态后接纳；相同重复片幂等，冲突片拒绝。
     fn data(&mut self, piece: usize, total_size: usize, data: &[u8]) -> Result<(), PeerError> {
         if total_size != self.bytes.len() || piece >= self.complete.len() {
             return Err(WireError("分片编号或 total_size 不匹配").into());
@@ -70,6 +74,7 @@ impl Pieces {
     }
 }
 
+/// 复用调用者提供的绝对期限；成功发送不会自动延长握手或已有分片期限。
 async fn send(
     stream: &mut PeerStream,
     bytes: bytes::Bytes,
@@ -170,6 +175,7 @@ async fn receive_frame(
 }
 
 /// BEP 10 字段可以分多次补齐；传输开始后不能更改已分配的 metadata 大小。
+/// 缺省字段沿用旧值，ID 0 表示显式禁用并立即拒绝。
 fn apply_extension(
     update: peer_wire::ExtensionUpdate,
     config: &MetadataConfig,

@@ -27,6 +27,7 @@ pub(crate) struct DispatcherExit {
     pub(crate) storage_flush_result: Result<(), StorageError>,
 }
 
+/// 磁盘候选恢复进度；active 含已提交验证意图但尚未结束的项，不保证均已发包。
 #[derive(Debug, Default)]
 pub(super) struct Recovery {
     queued: VecDeque<SavedContact>,
@@ -55,6 +56,7 @@ impl DhtDispatcher {
     ) {
         self.sampler.report_errors_to(report);
     }
+    /// 校验身份并挂接冷却存储，将过滤后的磁盘联系人放入恢复队列，不直接加入路由表。
     pub(crate) fn attach_storage(
         &mut self,
         storage: StorageHandle,
@@ -90,6 +92,7 @@ impl DhtDispatcher {
                 .max_pending()
                 .saturating_sub(self.maintenance.config.reserved_user_transactions.max(1))
     }
+    /// 在恢复容量和发送节奏允许时推进一个验证；仍受整体待发/transaction 预算约束。
     pub(super) async fn advance_recovery(&mut self, now: Instant) {
         if self
             .recovery
@@ -115,6 +118,7 @@ impl DhtDispatcher {
         )
         .await;
     }
+    /// 合并未验证完的磁盘候选与当前路由快照，已重新验证的地址优先；这里不写数据库。
     pub(super) fn saved_contacts(&self) -> Result<Vec<SavedContact>, StorageError> {
         let mut contacts: HashMap<_, _> = self
             .recovery
@@ -137,7 +141,8 @@ impl DhtDispatcher {
         contacts.truncate(2048);
         Ok(contacts)
     }
-    /// 即使 socket 出错，协调器仍然可以得到最后一份内存快照。
+    /// 网络循环结束后等待采样预约/结算，再把网络、快照、存储三个独立结果交给会话。
+    /// 网络错误不会阻止尝试生成快照；调用方仍须检查各结果并保存快照、关闭数据库。
     pub(crate) async fn run_persistent(mut self) -> DispatcherExit {
         let network_result = self.run_loop().await;
         let storage_flush_result = self.sampler.flush_storage().await;

@@ -9,15 +9,18 @@ use crate::{
 use rand::TryRng;
 use rusqlite::{OptionalExtension, params};
 
+/// 数据库中一个 (instance, family) 对应的稳定身份；复制此值不会创建新身份。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct LocalIdentity {
     /// 数据库行号，只用于外键关联，不会发送到网络。
     pub(crate) key: i64,
     /// KRPC 报文使用的 20 字节节点身份。
     pub(crate) node_id: NodeId,
+    /// 身份所属地址族；同一实例的 IPv4 和 IPv6 使用不同记录。
     pub(crate) family: AddressFamily,
 }
 /// 不存在才创建；已存在但损坏时返回错误，绝不静默换一个 Node ID。
+/// now_ms 为非负 UTC 毫秒，仅首次创建记录时使用；已有身份不再请求随机熵。
 pub(crate) async fn load_or_create(
     store: &StorageHandle,
     instance: &str,
@@ -41,6 +44,7 @@ async fn load_with_entropy(
     if instance.is_empty() || instance.len() > 128 || now_ms < 0 {
         return Err(StorageError::Invalid("身份参数无效"));
     }
+    // 数据库命令可能比当前等待存活更久，持有字符串以满足跨线程的 Send + 'static。
     let instance = instance.to_owned();
     // 查询和首次创建共用一个事务；损坏记录不能被新的随机身份掩盖。
     store

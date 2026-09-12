@@ -14,10 +14,14 @@ use std::{
     time::Duration,
 };
 
+/// 会话级 DHT 配额输入；双栈及各主动来源共享，校验后用于构造限流器。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Config {
+    /// 主动查询总配额，单位包/秒，按 Class 分配；允许一秒额度突发。
     pub(crate) queries: u32,
+    /// 普通入站数据报的包/秒上限，响应预留另计。
     pub(crate) inbound: u32,
+    /// UDP payload 字节/秒；1/8 用于主动查询，剩余用于回复。
     pub(crate) upload: u32,
 }
 impl Default for Config {
@@ -43,6 +47,7 @@ impl Config {
         [fetch, q - fetch - 2 * sample, sample, sample]
     }
 }
+/// 数组顺序固定为采集、控制、采样、反向验证，不能只调整枚举而不核对统计数组。
 #[derive(Debug, Clone, Copy)]
 #[repr(usize)]
 pub(crate) enum Class {
@@ -51,6 +56,7 @@ pub(crate) enum Class {
     Sampling,
     Verification,
 }
+/// governor 使用从 Tokio 单调时钟锚点起的时长，暂停时间测试也能驱动配额。
 #[derive(Debug, Clone)]
 struct TokioClock(tokio::time::Instant);
 impl Clock for TokioClock {
@@ -59,6 +65,8 @@ impl Clock for TokioClock {
         self.0.elapsed()
     }
 }
+/// 元组为 GCRA 的已提交时间状态与提交开关；探测时计算结果但不写回时间。
+/// 外层 Budget 锁覆盖探测和提交全过程，防止中间被其他请求消耗配额。
 #[derive(Debug, Clone, Default)]
 struct ProbeState(Arc<Mutex<(Option<Nanos>, bool)>>);
 impl StateStore for ProbeState {
@@ -102,6 +110,8 @@ impl Limiter {
             state,
         }
     }
+    /// 返回需要等待的时长；commit=false 只探测，true 才提交成功的扣减。
+    /// 单次请求超过突发容量时返回 5 秒等待提示，不表示等待后该请求必定可发送。
     fn check(&self, n: u32, commit: bool) -> Duration {
         self.state.0.lock().expect("配额状态锁").1 = commit;
         match self.limiter.check_n(NonZeroU32::new(n.max(1)).unwrap()) {
@@ -111,8 +121,10 @@ impl Limiter {
         }
     }
 }
+/// 一次组合探测的结果；允许发送时配额已扣减，实际 socket 发送仍由 dispatcher 执行。
 pub(crate) struct Decision {
     pub(crate) wait: Duration,
+    /// 位 0..=3 分别表示类别、目的 IP、发送字节、IP 表容量受限，可同时出现。
     pub(crate) reasons: u8,
 }
 /// 待发意图拥有统计票据，所有 remove/retain/关闭路径都会归还当前数量。
@@ -121,13 +133,17 @@ pub(crate) struct QueueRecord {
     budget: Arc<Budget>,
     class: Class,
     start: tokio::time::Instant,
+    /// 0 出队发送、1 取消、2 排队超时、3 本地拒绝；默认取消，Drop 时结算。
     outcome: usize,
+    /// 本请求已记录的等待原因，避免循环探测重复增加统计。
     seen: u8,
 }
 impl QueueRecord {
+    /// 只设置最终原因；outcome 必须为 0..=3，当前占用和耗时到 Drop 才结算。
     pub(crate) fn finish(&mut self, outcome: usize) {
         self.outcome = outcome;
     }
+    /// 每请求每原因最多记录一次；位定义与 Decision.reasons 一致。
     pub(crate) fn blocked(&mut self, reasons: u8) {
         let fresh = reasons & !self.seen;
         self.seen |= reasons;
@@ -166,6 +182,7 @@ struct IpState {
 pub(crate) struct Stats {
     pub(crate) validated_v4: u64,
     pub(crate) validated_v6: u64,
+    /// 按 Class 排列的实际成功发送包数；不是配额扣减或出队次数。
     pub(crate) packets: [u64; 4],
     pub(crate) bytes: [u64; 4],
     pub(crate) inbound_packets: u64,
@@ -174,6 +191,7 @@ pub(crate) struct Stats {
     pub(crate) reply_bytes: u64,
     pub(crate) limited_drops: u64,
     pub(crate) queue_timeouts: u64,
+    /// 累计接纳的待发意图数；当前占用另由 State.queued_current 保存。
     pub(crate) queued: [u64; 4],
     /// 每类按出队发送、取消、超时、本地拒绝排列。
     pub(crate) queue_finished: [[u64; 4]; 4],
@@ -216,6 +234,7 @@ struct State {
     verification_queued: u64,
     verification_limit: u64,
 }
+/// 会话共享的配额和统计所有者；一个同步锁保证组合配额检查与扣减不可交错。
 #[derive(Debug)]
 pub(crate) struct Budget(Mutex<State>);
 impl Default for Budget {
@@ -246,6 +265,8 @@ impl Budget {
     pub(crate) fn query(&self, class: Class, ip: IpAddr, bytes: usize) -> Duration {
         self.query_observed(class, ip, bytes).wait
     }
+    /// 同一临界区内先探测类别、IP、字节三项，仅全部可用时统一扣减。
+    /// wait=0 表示已获发送额度；IP 表满或任一项受限都不扣减其余配额。
     pub(crate) fn query_observed(&self, class: Class, ip: IpAddr, bytes: usize) -> Decision {
         let mut s = self.0.lock().expect("流量锁");
         if !s.track(ip) {
@@ -285,6 +306,8 @@ impl Budget {
             }
         });
     }
+    /// 检查 IP 表、60 秒冷却和共享待发名额；成功即开始冷却并返回待发许可。
+    /// 拒绝不会延长已有冷却；许可释放只归还名额，不撤销已开始的冷却。
     pub(crate) fn admit_verification(self: &Arc<Self>, ip: IpAddr) -> Option<VerificationPermit> {
         let mut s = self.0.lock().expect("流量锁");
         if !s.track(ip) {
@@ -327,6 +350,7 @@ impl Budget {
             s.bytes[class as usize] += bytes as u64;
         });
     }
+    /// 解码前接纳数据报；pending_source 只选择响应预留，不能替代后续身份与来源校验。
     pub(crate) fn inbound(&self, ip: IpAddr, bytes: usize, pending_source: bool) -> bool {
         let mut s = self.0.lock().expect("流量锁");
         let allowed = if pending_source {
@@ -386,6 +410,7 @@ impl Budget {
     fn update(&self, f: impl Fn(&mut Stats)) {
         self.0.lock().expect("流量锁").update(f);
     }
+    /// 清理 IP 表并取走区间统计；当前实现持 Budget 锁输出，队列丢弃也不会还原区间。
     pub(crate) fn log(&self) {
         let mut s = self.0.lock().expect("流量锁");
         s.clean();

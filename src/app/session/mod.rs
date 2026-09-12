@@ -49,6 +49,7 @@ impl FaultLog {
         std::mem::take(&mut *self.0.lock().expect("会话错误记录锁"))
     }
 }
+/// 会话按 task ID 保存的任务角色；节点任务携带 nodes 下标，全局采集协调器没有节点下标。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskRole {
     Dispatcher(usize),
@@ -232,11 +233,13 @@ impl Session {
     pub(crate) fn test_store(&self) -> StorageHandle {
         self.storage.as_ref().unwrap().handle.clone()
     }
-    /// 打开数据库和错误通道；尚不绑定 socket、不启动采集。
+    /// 测试使用默认流量配置；资源创建契约见 open_with_traffic。
     #[cfg(test)]
     pub(crate) async fn open(config: StorageConfig) -> Result<Self, StorageError> {
         Self::open_with_traffic(config, crate::dht::traffic::Config::default()).await
     }
+    /// 创建共享配额、故障通道并等待数据库打开；尚未接收 socket 或启动采集任务。
+    /// 返回的 Session 是关闭所有资源的唯一入口，后续 add_node/start_fetch 仍可能失败。
     pub(crate) async fn open_with_traffic(
         config: StorageConfig,
         traffic: crate::dht::traffic::Config,
@@ -350,6 +353,8 @@ impl Session {
         });
         Ok(handle)
     }
+    /// 在已有节点上启动唯一的采集协调器；返回前恢复任务并安装宣布入口。
+    /// 至少需要一个节点且不能重复启动；部分初始化失败不会自动撤销已提交的数据库更新。
     pub(crate) async fn start_fetch(
         &mut self,
         config: crate::collector::Config,
@@ -428,6 +433,8 @@ impl Session {
             .insert(task.id(), TaskRole::SampleCollector(index));
         Ok(())
     }
+    /// 显式保存已验证 metadata，不携带领取 generation；自动采集应使用 complete_job。
+    /// 写入失败会发布存储故障并请求节点暂停，仍把原始错误返回调用者。
     #[allow(
         dead_code,
         reason = "保留显式保存入口，自动下载使用领取标识约束的原子完成事务"
@@ -501,6 +508,7 @@ impl Session {
         }
     }
 
+    /// 消费一个任务结果并移除角色映射；同样的退出在运行期和关闭期有不同故障含义。
     fn accept_task(
         &mut self,
         result: Result<(Id, TaskOutput), tokio::task::JoinError>,

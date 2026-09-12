@@ -90,13 +90,16 @@ enum StorageCommand {
     Shutdown,
 }
 
+/// 可克隆的数据库命令入口，不拥有关闭完成确认；克隆不会创建新连接或新线程。
 #[derive(Clone)]
 pub(crate) struct StorageHandle {
     /// 有界队列限制排队命令数；bytes 单独限制载荷大小。
     sender: mpsc::Sender<StorageCommand>,
     bytes: Arc<Semaphore>,
     byte_capacity: usize,
+    /// 进程内采集接纳上限，0 表示尚未启用；不是数据库中当前任务数量。
     fetch_limit: Arc<std::sync::atomic::AtomicUsize>,
+    /// 已观察采样 hash 数，可能重复；不代表新增任务或成功下载数。
     sample_observations: Arc<std::sync::atomic::AtomicU64>,
 }
 impl fmt::Debug for StorageHandle {
@@ -107,9 +110,12 @@ impl fmt::Debug for StorageHandle {
 /// 应用持有所有者以正常关闭；各模块只拿可克隆的 handle。
 pub(crate) struct Storage {
     pub(crate) handle: StorageHandle,
+    /// 数据库连接关闭并释放目录锁后发送结果；由唯一 Storage 所有者消费。
     finished: oneshot::Receiver<Result<(), StorageError>>,
 }
 impl Storage {
+    /// 校验容量并启动独占 SQLite 的线程；返回前等待连接、锁和迁移准备完成。
+    /// 初始化失败返回具体错误；取消等待会丢弃接收端，线程发现已无控制者后退出。
     pub(crate) async fn open(config: StorageConfig) -> Result<Self, StorageError> {
         if config.command_capacity == 0
             || config.command_capacity > Semaphore::MAX_PERMITS
@@ -161,6 +167,9 @@ impl Storage {
             finished,
         })
     }
+    /// 排入关闭屏障并等待连接关闭、目录锁释放；成功不等于所有 handle 已被销毁。
+    /// 屏障前已接纳操作先执行，屏障后的操作收到 Closed；调用方应先停止生产者。
+    /// 取消本次等待不撤回已入队屏障，也不提供关闭完成证明。
     pub(crate) async fn shutdown(self) -> Result<(), StorageError> {
         self.handle
             .sender
@@ -228,6 +237,9 @@ impl StorageHandle {
             .map_err(|_| StorageError::Closed)?;
         result.await.map_err(|_| StorageError::Closed)?
     }
+    /// 小型操作使用零字节预算，捕获的输入须有独立大小约束；仍占用有界命令队列。
+    /// 携带较大复制数据的入口须先 budget 再 submit，不能经本入口绕过载荷限制。
+    /// Closed 可能发生在入队前，也可能只是结果通道关闭，不能据此断定事务未提交。
     pub(super) async fn call<T: Send + 'static>(
         &self,
         operation: impl FnOnce(&mut Connection) -> Result<T, StorageError> + Send + 'static,

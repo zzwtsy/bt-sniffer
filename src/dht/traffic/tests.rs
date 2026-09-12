@@ -95,6 +95,7 @@ async fn all_class_prefixes_obey_shared_rate_envelope() {
 }
 
 #[tokio::test(start_paused = true)]
+// 同一意图重复观察两个等待原因，确认按原因去重，并在 Drop 后归还当前占用。
 async fn queue_statistics_count_intents_not_budget_polls() {
     let budget = Arc::new(Budget::default());
     let mut queued = budget.queue_record(Class::Collector);

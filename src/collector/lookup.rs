@@ -20,6 +20,7 @@ use std::{
 };
 use tokio::time::Instant;
 
+/// 查询节奏预留：next 是所有 worker 的下一次机会，ips 是各目的 IP 的下一次机会。
 #[derive(Default)]
 struct Rate {
     next: Option<Instant>,
@@ -68,6 +69,8 @@ impl Network {
             ..Self::default()
         }
     }
+    /// 同时满足全局 100 ms 和同 IP 1 秒间隔才预留机会；等待时释放锁。
+    /// 返回只获得节奏许可，后续实际发包还受 dispatcher 配额限制。
     async fn pace(&self, ip: std::net::IpAddr) {
         loop {
             let wait = {
@@ -128,6 +131,7 @@ impl Network {
     }
 }
 
+/// 本地容量或配额等待可重试；其他结果交给查找状态机，外层总期限限制整个循环。
 async fn query(
     handle: DhtHandle,
     node: DiscoveredNode,
@@ -196,7 +200,9 @@ async fn family(
     }
     true
 }
-/// collector 自己的协议状态机；注入 RPC 便于验证查询上限、截止和取消。
+/// 单地址族迭代查找；最多 3 条并发、32 次候选查询，候选表保留近邻，失败项释放 shortlist 名额。
+/// peers 与另一地址族共享并去重，合计最多 32 个；结果通过 try_send 尽力通知，不等待慢消费者。
+/// 普通远端失败继续尝试，dispatcher 关闭或 transaction 故障向上返回；总期限由 stream 施加。
 async fn search<Q, F>(
     hash: InfoHashV1,
     seeds: Vec<DiscoveredNode>,
@@ -316,11 +322,15 @@ pub(super) struct LookupResult {
     #[cfg(test)]
     pub(super) peers: Vec<SocketAddr>,
     pub(super) had_seeds: bool,
+    /// 退出时已观察到的实际 RPC 发送数；0 不等于没有尝试申请本地资源。
     pub(super) sent: u64,
+    /// 是否观察到本地限流，用于区别本地等待与远端失败，不能表示一直处于限流。
     pub(super) local_limited: bool,
+    /// 需要上层处理的控制故障；即使此前已发现 peer，也不能把此故障吞掉。
     pub(super) fault: Option<QueryError>,
 }
 
+/// 双栈共享的去重结果与可选通知端；通知失败仍保留去重记录，不保证消费者收到每个地址。
 struct PeerOutput {
     peers: Arc<std::sync::Mutex<Vec<SocketAddr>>>,
     sender: Option<tokio::sync::mpsc::Sender<SocketAddr>>,
@@ -349,7 +359,7 @@ impl Drop for LookupReport {
     }
 }
 
-/// 两种地址族共用结果集与总期限；超时保留已经找到的 peer，取消会丢弃在途查找。
+/// 测试用的非流式包装；查询、期限和取消契约与 stream 相同，另返回收集到的 peer。
 #[cfg(test)]
 pub(super) async fn lookup(
     handles: &[DhtHandle],
@@ -358,6 +368,10 @@ pub(super) async fn lookup(
 ) -> LookupResult {
     stream(handles, hash, network, None, Arc::default()).await
 }
+/// 同时驱动各地址族，合计等待最多 30 秒；sender 将新 peer 及时交给 worker 下载。
+/// 正常结束或超时返回已观察的种子、发送和故障状态；超时不是独立错误分支。
+/// 丢弃 future 会丢弃内部查找并通知 RPC 取消；dispatcher 稍后实际回收 transaction。
+/// LookupReport 在退出时记录统计，不能把结束计数理解成查找成功。
 pub(super) async fn stream(
     handles: &[DhtHandle],
     hash: InfoHashV1,

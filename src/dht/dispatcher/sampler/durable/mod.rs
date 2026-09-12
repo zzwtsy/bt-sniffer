@@ -16,13 +16,17 @@ pub(super) struct ReservationResult {
     lease_result: Result<CooldownLease, StorageError>,
 }
 
+/// 采样器持有的数据库工作状态；future 留在这里，单次 select 被取消不会丢失进度。
 pub(super) struct Durable {
     report: Option<Box<dyn Fn(StorageError) + Send + Sync>>,
     pub(super) clock: Clock,
     storage: StorageHandle,
     identity: LocalIdentity,
+    /// 至多一个待确认预约，future 同时持有原请求；None 表示当前没有等待预约。
     pub(super) reserving: Option<BoxFuture<'static, ReservationResult>>,
+    /// 已确认且仍属于当前启停代数的请求，等待容量与发送间隔，尚未真正发送。
     pub(super) ready: Option<Request>,
+    /// 待驱动或待确认的结算/撤销 future；放入集合不代表已入数据库队列，退出时须等待结果。
     pub(super) settling: FuturesUnordered<BoxFuture<'static, Result<(), StorageError>>>,
 }
 impl std::fmt::Debug for Durable {
@@ -33,6 +37,7 @@ impl std::fmt::Debug for Durable {
     }
 }
 impl Sampler {
+    /// 仅在未运行且未挂接时安装持久化状态，将剩余 UTC 毫秒恢复为当前单调期限。
     pub(in crate::dht::dispatcher) fn attach_storage(
         &mut self,
         storage: StorageHandle,
@@ -76,6 +81,7 @@ impl Sampler {
         });
         Ok(())
     }
+    /// 先同步报告原始存储错误，再停止采样并保留错误状态；不会直接关闭数据库线程。
     pub(in crate::dht::dispatcher) fn mark_storage_fault(&mut self, error: StorageError) {
         if let Some(report) = self.durable.as_ref().and_then(|d| d.report.as_ref()) {
             // 先同步报告模块错误，再按原顺序停止采样并更新本地状态。
@@ -93,6 +99,8 @@ impl Sampler {
             d.report = Some(report);
         }
     }
+    /// 无持久化、已有租约或联系人回退请求可直接返回；否则保存预约 future 并返回 None。
+    /// None 也可能来自已停止或时钟错误，需结合状态判断，不表示请求已发出或预约被撤销。
     pub(super) fn reserve_request(&mut self, request: Request, now: Instant) -> Option<Request> {
         let Some(durable) = self.durable.as_mut() else {
             return Some(request);
@@ -141,6 +149,8 @@ impl Sampler {
         self.deadline = None;
         None
     }
+    /// 容量、发送间隔与结算状态均允许时移出 ready；None 表示当前不能交付请求。
+    /// 取出只推进采样发送节奏，实际入队、配额和 UDP 发送仍由 dispatcher 处理。
     pub(super) fn take_reserved(&mut self, capacity: usize, now: Instant) -> Option<Request> {
         let d = self.durable.as_mut()?;
         let s = self.session.as_mut()?;
@@ -194,6 +204,8 @@ impl Sampler {
         self.finished(&request);
         self.cancel_request(&request, now);
     }
+    /// 仅用于确认尚未发送的请求：释放内存跟踪并按租约撤销磁盘预约。
+    /// 数据库撤销 future 留在 settling，返回不表示撤销事务已完成；发送不确定不能走此路径。
     pub(in crate::dht::dispatcher) fn abandon_unsent(&mut self, request: Request, now: Instant) {
         self.finished(&request);
         if request.kind == RequestKind::Sample {
@@ -213,6 +225,8 @@ impl Sampler {
             self.deadline = Some(s.next_send);
         }
     }
+    /// 对发送结果未知或已进入发送阶段的请求保守延长冷却，避免取消后立刻重复采样。
+    /// 与 abandon_unsent 相反，此路径保留并结算租约；本地取消不累计远端失败。
     pub(in crate::dht::dispatcher) fn cancel_request(&mut self, request: &Request, now: Instant) {
         let Some(lease) = request.lease.clone() else {
             return;
@@ -234,6 +248,8 @@ impl Sampler {
             store.settle_sampling(lease, at?, duration, 0).await
         }));
     }
+    /// 在停止调度后排空仍持有的预约与结算 future，返回保留的存储错误。
+    /// 不负责业务批次消费或数据库关闭；取消等待后不能声称排空完成。
     pub(in crate::dht::dispatcher) async fn flush_storage(&mut self) -> Result<(), StorageError> {
         while self
             .durable

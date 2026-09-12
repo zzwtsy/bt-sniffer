@@ -39,10 +39,14 @@ impl RetryReason {
     }
 }
 
+/// 本地条件导致的延期分类，均不消耗远端失败重试次数。
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LocalReason {
+    /// 资源或配额暂不可用，尚不能据此认定远端失败。
     ResourceWait,
+    /// 缺少可用 DHT 路由，等待后续发现。
     NoRoute,
+    /// 本轮被取消，领取应交回重试流程。
     Cancelled,
 }
 impl RetryReason {
@@ -87,6 +91,7 @@ pub(crate) struct Job {
     /// 尚未过期的宣布地址；可能为空，需要通过 DHT 查找 peer。
     pub(crate) peers: Vec<SocketAddr>,
 }
+/// 数据库当前状态快照；任务数按状态统计，metadata_bytes 是已存原始字节总量。
 #[derive(Debug, Default)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub(crate) struct Stats {
@@ -115,10 +120,12 @@ impl Stats {
         );
     }
 
+    /// 接纳额度只计算 pending、running 和 retry_wait，不含 dormant、succeeded。
     pub(crate) fn active(&self) -> i64 {
         self.pending + self.running + self.retry_wait
     }
 }
+/// 返回活跃任务剩余名额；limit 为 0 表示不接纳，超额时饱和为 0。
 pub(super) fn available(connection: &Connection, limit: usize) -> Result<usize, StorageError> {
     if limit == 0 {
         return Ok(0);
@@ -132,6 +139,8 @@ pub(super) fn available(connection: &Connection, limit: usize) -> Result<usize, 
     )?;
     Ok(limit.saturating_sub(count as usize))
 }
+/// 在调用者的事务内尝试创建或重新激活任务，并扣减本批剩余名额。
+/// 无名额、已有 metadata 或现有任务无需激活时也可返回 Ok，不代表新建了任务。
 pub(super) fn enqueue(
     connection: &Connection,
     hash: InfoHashV1,
@@ -190,6 +199,7 @@ impl StorageHandle {
     pub(crate) fn sample_observations(&self) -> u64 {
         self.sample_observations.load(Ordering::Relaxed)
     }
+    /// 设置后续写入 hash 时的任务接纳上限；不会在此回填或取消已有任务。
     pub(crate) fn enable_fetch(&self, limit: usize) {
         self.fetch_limit.store(limit, Ordering::Relaxed);
     }

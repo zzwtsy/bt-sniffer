@@ -155,7 +155,7 @@ impl From<io::Error> for UdpTransportError {
 
 /// 可以在多个异步任务之间共享的 UDP transport。
 ///
-/// 通常由一个任务持续调用 [`Self::recv`]，其他任务使用克隆的 handle 发送消息。
+/// 通常由一个任务持续调用 [`Self::recv_datagram`]，其他任务使用克隆的 handle 发送消息。
 #[derive(Debug, Clone)]
 pub(crate) struct UdpTransport {
     socket: Arc<UdpSocket>,

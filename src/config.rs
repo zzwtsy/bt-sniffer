@@ -17,6 +17,7 @@ pub(crate) struct Cli {
     /// 状态目录；默认使用操作系统的本地应用数据目录。
     #[arg(long)]
     pub(crate) state_dir: Option<PathBuf>,
+    // 实例名与地址族共同定位数据库身份，不隔离日志，也不绕过状态目录独占锁。
     #[arg(long, default_value = "main", value_parser = instance_name)]
     pub(crate) instance: String,
     /// IPv4 UDP 监听地址（默认 0.0.0.0:6881）。
@@ -44,8 +45,10 @@ pub(crate) struct Cli {
     /// --sample --fetch 组合的主动采样背压；capacity 保留原满载暂停策略。
     #[arg(long, value_enum, default_value = "freshness")]
     pub(crate) sample_backpressure: crate::collector::SampleBackpressure,
+    // 同时持有任务领取的 worker 数上限，不是每个地址族各自的额度。
     #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=64), requires = "fetch")]
     pub(crate) fetch_concurrency: u16,
+    // 活跃任务接纳上限，不限制数据库中的全部历史任务数。
     #[arg(long, default_value_t = 10000, value_parser = clap::value_parser!(u32).range(1..=1000000), requires = "fetch")]
     pub(crate) fetch_max_active_jobs: u32,
     /// 数据库及 WAL 的软容量预算，预留 64 MiB 清理空间。
@@ -65,6 +68,7 @@ pub(crate) struct Cli {
     pub(crate) allow_local: bool,
 }
 impl Cli {
+    /// 生成双栈共用的流量额度配置；这里只复制值，不创建限流器。
     pub(crate) fn traffic(&self) -> crate::dht::traffic::Config {
         crate::dht::traffic::Config {
             queries: self.dht_query_rate,
@@ -73,6 +77,7 @@ impl Cli {
         }
     }
     /// 只计算目录路径；目录创建和独占锁由 Storage 负责。
+    /// 日志目录独立固定为进程工作目录下的 logs，不由此路径决定。
     pub(crate) fn directory(&self) -> Result<PathBuf, String> {
         self.state_dir
             .clone()
@@ -81,6 +86,7 @@ impl Cli {
             })
             .ok_or_else(|| "无法确定数据目录，请指定 --state-dir".into())
     }
+    /// 本地模式仍只接受单播地址，不等于关闭地址校验。
     pub(crate) fn policy(&self) -> AddressPolicy {
         if self.allow_local {
             AddressPolicy::LocalUnicast
@@ -99,6 +105,7 @@ impl Cli {
         }
     }
 }
+/// 按 UTF-8 字节数限制身份键的实例名部分，不按汉字或字符个数计数。
 fn instance_name(value: &str) -> Result<String, String> {
     if value.is_empty() || value.len() > 128 {
         Err("实例名必须为 1～128 字节".into())

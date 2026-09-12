@@ -1,9 +1,11 @@
-//! Storage 打开连接时执行版本检查与迁移；表、索引和版本号在同一事务中提交。
-//! 拒绝未知的较新版本，迁移失败保留原库，不能靠删除数据重新初始化。
+//! Storage 打开连接时执行版本检查、版本迁移，再补充领取索引。
+//! v1/v2 的表、对应索引和版本号在同一迁移事务中提交；补充领取索引单独执行。
+//! 拒绝较新版本；迁移事务失败会回滚，但补充索引失败不撤销已提交的版本迁移。
 use super::StorageError;
 use rusqlite::Connection;
 
-/// 新库顺序执行 v1 和 v2；旧库只执行尚未完成的版本，最后统一提交。
+/// 新库顺序执行 v1 和 v2，旧库只执行缺少的版本；迁移提交后再补领取索引。
+/// 已是 v2 的数据库也会补索引；该步失败会返回错误，已有数据和版本迁移仍保留。
 pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version > 2 {

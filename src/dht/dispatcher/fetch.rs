@@ -16,12 +16,14 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+/// 已通过协议校验的宣布及其观察时间；到达入口不代表数据库已接纳或提交。
 #[derive(Debug, Clone)]
 pub(crate) struct AnnounceEvent {
     pub(crate) hash: InfoHashV1,
     pub(crate) peer: SocketAddr,
     pub(crate) observed_at: SystemTime,
 }
+/// collector 拥有接收端，节点共享此发送入口；暂停/满载/关闭时尽力丢弃并计数。
 #[derive(Debug, Clone)]
 pub(crate) struct FetchIngress {
     pub(crate) sender: mpsc::Sender<AnnounceEvent>,
@@ -30,6 +32,7 @@ pub(crate) struct FetchIngress {
     pub(crate) observed: Arc<AtomicU64>,
 }
 impl FetchIngress {
+    /// observed 先计入所有进入此处的事件；丢弃不阻塞 UDP 循环，也不撤销协议 ACK。
     pub(super) fn announce(&self, event: AnnounceEvent) {
         self.observed.fetch_add(1, Ordering::Relaxed);
         if self.paused.load(Ordering::Relaxed) || self.sender.try_send(event).is_err() {
@@ -37,6 +40,7 @@ impl FetchIngress {
         }
     }
 }
+/// 经过响应校验的候选节点与 peer 地址；地址并不保证可达，实际下载仍需握手和校验。
 #[derive(Debug)]
 pub(crate) struct GetPeersResponse {
     pub(crate) nodes: Vec<DiscoveredNode>,
@@ -70,6 +74,8 @@ impl DhtHandle {
         self.get_peers_observed(remote, hash, Arc::new(RpcProgress::default()))
             .await
     }
+    /// 提交一次 get_peers 并等待结果；progress 观察实际发送和本地等待，不拥有 transaction。
+    /// 丢弃 future 触发取消，queued/pending 登记由 dispatcher 清理；不能把取消通知当回收完成。
     pub(crate) async fn get_peers_observed(
         &self,
         remote: RemoteNode,
@@ -91,6 +97,7 @@ impl DhtHandle {
             .map_err(|_| QueryError::DispatcherClosed)?;
         result.await.map_err(|_| QueryError::DispatcherClosed)?
     }
+    /// 从当前路由表读取查找种子；空集合是无可用种子，不是网络查询返回空结果。
     pub(crate) async fn fetch_seeds(
         &self,
         hash: InfoHashV1,
@@ -102,6 +109,7 @@ impl DhtHandle {
             .map_err(|_| QueryError::DispatcherClosed)?;
         result.await.map_err(|_| QueryError::DispatcherClosed)
     }
+    /// 安装或撤销宣布入口；返回表示 dispatcher 已处理命令，不表示先前宣布已持久化。
     pub(crate) async fn fetch_ingress(
         &self,
         ingress: Option<FetchIngress>,
@@ -113,6 +121,7 @@ impl DhtHandle {
             .map_err(|_| QueryError::DispatcherClosed)?;
         result.await.map_err(|_| QueryError::DispatcherClosed)
     }
+    /// 暂停主动采样调度；不等同于停止 dispatcher，也不直接关闭宣布接纳。
     pub(crate) async fn pause_sampling(&self, paused: bool) -> Result<(), QueryError> {
         let (reply, result) = oneshot::channel();
         self.commands
@@ -122,6 +131,7 @@ impl DhtHandle {
         result.await.map_err(|_| QueryError::DispatcherClosed)
     }
 }
+/// 等待任一 RPC 取消；没有 token 时永久 pending，避免事件循环空转。
 pub(super) async fn wait_cancelled(tokens: Vec<CancellationToken>) {
     if tokens.is_empty() {
         std::future::pending::<()>().await;

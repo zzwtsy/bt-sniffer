@@ -12,6 +12,8 @@ use std::{collections::HashSet, fmt, net::SocketAddr, sync::Arc, time::Duration}
 use tokio::{sync::Semaphore, time::Instant};
 use tokio_util::sync::CancellationToken;
 
+/// 单次 fetch 及单个 peer 的资源限制；所有时长均为相对期限。
+/// 默认 fetch 总期限为 120 秒，独立于 collector worker 覆盖整轮查找和下载的期限。
 #[derive(Debug, Clone)]
 pub(crate) struct MetadataConfig {
     /// Fetcher 的所有克隆共用这些名额，不在内部积压任务。
@@ -22,21 +24,27 @@ pub(crate) struct MetadataConfig {
     pub(crate) task_timeout: Duration,
     /// 单个 peer 即使一直发送无关数据，也不能超过这个期限。
     pub(crate) peer_timeout: Duration,
+    /// 从开始 TCP 建连起算，且仍受单 peer 和任务总期限约束。
     pub(crate) connect_timeout: Duration,
     /// TCP 连接成功后开始，标准握手与扩展握手共用此期限。
     pub(crate) handshake_timeout: Duration,
     /// 从每条分片请求发送完成起算，不因其他消息到达而续期。
     pub(crate) piece_timeout: Duration,
+    /// 同一 peer 已发送但尚未完成的分片请求数上限。
     pub(crate) request_window: usize,
     /// 在采用远端 metadata_size 分配内存前检查。
     pub(crate) max_metadata_size: usize,
     /// 长度前缀超过此值时，Codec 在读取正文前拒绝该帧。
     pub(crate) max_frame_size: usize,
+    /// 扩展握手或 metadata 消息头的字节上限，不含分片原始载荷。
     pub(crate) max_header_size: usize,
+    /// Bencode 嵌套层数上限。
     pub(crate) max_depth: usize,
     /// 计入标准握手、长度前缀及所有被忽略的帧。
     pub(crate) max_received_bytes: usize,
+    /// 单 peer 长度前缀帧数上限，包含被忽略的帧和 keepalive。
     pub(crate) max_received_frames: usize,
+    /// 连接前筛选地址；通过筛选不表示地址可达或 peer 可信。
     pub(crate) address_policy: AddressPolicy,
 }
 impl Default for MetadataConfig {
@@ -90,6 +98,7 @@ impl MetadataConfig {
     }
 }
 
+/// 错误发生阶段；Peer 表示单 peer 总期限，不是额外的协议步骤。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stage {
     Connect,
@@ -98,6 +107,7 @@ pub(crate) enum Stage {
     Verify,
     Peer,
 }
+/// 当前 peer 的失败原因；fetch 可继续尝试下一个地址，不据此判定整个任务失败。
 #[derive(Debug)]
 pub(crate) enum PeerError {
     Io(std::io::Error),
@@ -134,12 +144,14 @@ impl fmt::Display for PeerError {
     }
 }
 impl std::error::Error for PeerError {}
+/// 一次已尝试地址的阶段和原因，供全部地址失败时保留诊断信息。
 #[derive(Debug)]
 pub(crate) struct PeerFailure {
     pub(crate) address: SocketAddr,
     pub(crate) stage: Stage,
     pub(crate) error: PeerError,
 }
+/// fetch 级结果：本地接纳失败、取消和总超时，与逐 peer 失败列表分开。
 #[derive(Debug)]
 pub(crate) enum MetadataError {
     InvalidConfig,
@@ -187,6 +199,7 @@ impl VerifiedMetadata {
         &self.info
     }
 }
+/// 克隆共享配置和并发许可，并沿用同一 TCP Peer ID；不持有后台下载任务。
 #[derive(Debug, Clone)]
 pub(crate) struct MetadataFetcher {
     config: Arc<MetadataConfig>,
@@ -199,6 +212,7 @@ impl MetadataFetcher {
         self.metrics = metrics;
         self
     }
+    /// 先校验限制并生成 Peer ID；无效配置或熵源失败时不建立网络连接。
     pub(crate) fn new(config: MetadataConfig) -> Result<Self, MetadataError> {
         Self::with_entropy(config, |bytes| {
             rand::rngs::SysRng
@@ -223,6 +237,8 @@ impl MetadataFetcher {
         })
     }
     /// 没有内部任务队列。丢弃这个 future 会一并关闭当前 socket 并释放并发名额。
+    /// 按输入顺序过滤、去重并尝试地址；名额已满立即返回 AtCapacity，不排队。
+    /// 成功只表示取得已校验的原始 metadata，不表示入库；取消和总超时不返回部分字节。
     pub(crate) async fn fetch(
         &self,
         hash: InfoHashV1,

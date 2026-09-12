@@ -15,6 +15,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+/// 单节点采样状态机的容量和期限；构造时不分配资源，start_sampling 时统一校验。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SamplerConfig {
     /// 采样和回退查询共用的在途名额。
@@ -89,8 +90,10 @@ pub(crate) struct SampleBatch {
     pub(crate) observed_at: std::time::SystemTime,
     pub(crate) responder: DiscoveredNode,
     pub(crate) target: NodeId,
+    /// 本次运行的单调接收时刻，用于调度期限；落库观察时间使用 observed_at。
     pub(crate) received_at: Instant,
     pub(crate) interval: Duration,
+    /// 远端宣称的已知 hash 总数，不是本批 samples 长度，也不是本地已保存数量。
     pub(crate) num: u64,
     pub(crate) samples: Vec<InfoHashV1>,
 }
@@ -113,6 +116,8 @@ impl fmt::Display for SamplerError {
 }
 impl std::error::Error for SamplerError {}
 
+/// 采样器状态快照；in_flight/candidates 是当前量，成功/失败/不支持是观察计数。
+/// pause 表示当前等待原因，是否真正存储失败要同时检查 storage_error。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SamplerStatus {
     pub(crate) storage_error: Option<crate::storage::StorageError>,
@@ -125,6 +130,8 @@ pub(crate) struct SamplerStatus {
     pub(crate) pause: PauseReason,
 }
 impl DhtHandle {
+    /// 等待 dispatcher 接纳启动请求并返回有界批次接收端；消费者负责持久化与跨批去重。
+    /// 入队后放弃等待不会自动撤回启动命令；丢弃接收端由输出关闭检测触发停止。
     pub(crate) async fn start_sampling(
         &self,
         config: SamplerConfig,
@@ -136,6 +143,7 @@ impl DhtHandle {
             .map_err(|_| SamplerError::DispatcherClosed)?;
         result.await.unwrap_or(Err(SamplerError::DispatcherClosed))
     }
+    /// 等待 dispatcher 停止调度；不确认批次已消费、预约已结算或数据库已关闭。
     pub(crate) async fn stop_sampling(&self) -> Result<(), SamplerError> {
         let (reply, result) = oneshot::channel();
         self.commands

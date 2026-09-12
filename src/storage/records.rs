@@ -10,6 +10,7 @@ use rusqlite::{OptionalExtension, params};
 use sha1::{Digest, Sha1};
 use std::net::{IpAddr, SocketAddr};
 
+/// 过去验证过的联系人快照；恢复后仍需网络验证，不能当作本轮已响应节点。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SavedContact {
     pub(crate) id: NodeId,
@@ -17,12 +18,14 @@ pub(crate) struct SavedContact {
     /// 最近验证响应的 UTC 毫秒时间，不是当前进程的 Instant。
     pub(crate) responded_at: i64,
 }
+/// 保存 4 或 16 字节 IP 地址，不包含端口；端口独立存储。
 pub(super) fn ip_bytes(ip: IpAddr) -> Vec<u8> {
     match ip {
         IpAddr::V4(ip) => ip.octets().to_vec(),
         IpAddr::V6(ip) => ip.octets().to_vec(),
     }
 }
+/// 只检查地址编码长度；地址族、端口和使用策略由调用层继续校验。
 pub(super) fn decode_ip(bytes: &[u8]) -> Result<IpAddr, StorageError> {
     match bytes.len() {
         4 => Ok(IpAddr::from(<[u8; 4]>::try_from(bytes).unwrap())),
@@ -243,6 +246,7 @@ pub(super) fn check_metadata_size(
     }
     Ok(())
 }
+/// 合并 UTC 毫秒观察时间，保留最早 first_seen 与最晚 last_seen；事务由调用者管理。
 pub(super) fn upsert_hash(
     connection: &rusqlite::Connection,
     hash: InfoHashV1,

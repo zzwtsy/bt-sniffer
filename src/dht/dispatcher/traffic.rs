@@ -10,6 +10,7 @@ use crate::{
 };
 use std::time::{Duration, Instant};
 
+/// 尚未登记 transaction 的待发意图；持有业务上下文、统计票据及本地排队期限。
 #[derive(Debug)]
 pub(super) struct Queued {
     pub(super) remote: RemoteNode,
@@ -59,9 +60,11 @@ impl Outbound {
     }
 }
 impl DhtDispatcher {
+    /// 待发加已登记请求共用容量；仅查看 transactions 会漏掉尚未发出的占用。
     pub(super) fn occupied(&self) -> usize {
         self.transactions.len() + self.queued.len()
     }
+    /// 检查共享容量与用户名额后入队，再尝试推进发送；返回不代表已经发出或收到响应。
     pub(super) async fn start_rpc(
         &mut self,
         remote: RemoteNode,
@@ -99,6 +102,8 @@ impl DhtDispatcher {
         });
         self.advance_outbound(now).await;
     }
+    /// 扫描取消、超时和配额；受限目的地址不阻止后续可发送意图前进。
+    /// 获得额度后出队并交给 send_rpc 登记/发送，下一唤醒点由等待期限和排队期限共同决定。
     pub(super) async fn advance_outbound(&mut self, now: Instant) {
         self.queue_deadline = None;
         let mut index = 0;
@@ -161,6 +166,7 @@ impl DhtDispatcher {
             }
         }
     }
+    /// 只撤销尚在待发队列中的采样，因此可走明确未发送的租约回退路径。
     pub(super) fn discard_queued_sampling(&mut self, now: Instant) {
         let mut index = 0;
         while index < self.queued.len() {

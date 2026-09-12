@@ -21,6 +21,8 @@ use std::{
 use tokio::sync::mpsc;
 
 const UNSUPPORTED_FOR: Duration = Duration::from_secs(21600);
+/// 当前调度停顿原因，不是错误分类；Storage 可表示等确认，也可伴随实际存储故障。
+/// 是否发生存储错误还需查看 SamplerStatus.storage_error，不能仅凭 pause 判定。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum PauseReason {
     #[default]
@@ -97,7 +99,9 @@ pub(super) enum OutputWatch {
 /// 预留的批次许可和磁盘租约随请求走到成功、失败或取消的收尾路径。
 #[derive(Debug)]
 pub(super) struct Request {
+    /// 采样启停代数，拒绝旧会话的迟到结果；不同于 SQLite 任务领取 generation。
     generation: u64,
+    /// 可选磁盘冷却预约；预留成功不代表请求已发出，结束时按发送确定性结算。
     lease: Option<crate::storage::CooldownLease>,
     pub(super) node: DiscoveredNode,
     pub(super) target: NodeId,
@@ -203,6 +207,7 @@ impl Session {
     }
 }
 
+/// dispatcher 独占的采样状态；session 管一轮启停，冷却表和 durable 跨启停保留。
 #[derive(Debug, Default)]
 pub(super) struct Sampler {
     generation: u64,
@@ -215,6 +220,8 @@ pub(super) struct Sampler {
 }
 
 impl Sampler {
+    /// 校验配置并建立有界批次通道，更新启停代数；返回接收端不代表已经发包。
+    /// 已运行、配置无效或存储故障时拒绝启动，不能用重启绕过冷却。
     pub(super) fn start(
         &mut self,
         config: SamplerConfig,
@@ -270,6 +277,7 @@ impl Sampler {
             OutputWatch::Closed(session.output.clone())
         }
     }
+    /// 保存输出通道预留槽位，后续移交请求；取得槽位不是生成或交付了一个批次。
     pub(super) fn accept_permit(&mut self, permit: mpsc::OwnedPermit<SampleBatch>) {
         if let Some(session) = &mut self.session {
             session.ready_permit = Some(permit);
@@ -288,6 +296,8 @@ impl Sampler {
             .and_modify(|v| *v = (*v).max(until))
             .or_insert(until);
     }
+    /// 停止当前调度并处理已就绪但未发出的预约，跨会话冷却仍保留。
+    /// 等待中的数据库预约与结算不在这里消失；外层仍须驱动 storage_event/flush_storage。
     pub(super) fn stop(&mut self, now: Instant) {
         if let Some(request) = self.durable.as_mut().and_then(|d| d.ready.take()) {
             self.abandon_unsent(request, now);

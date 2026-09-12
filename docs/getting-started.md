@@ -110,6 +110,8 @@ flowchart TD
 | [collector](../src/collector/mod.rs) → [worker](../src/collector/worker.rs) → [lookup](../src/collector/lookup.rs) | Job 与 worker 谁持有？下载期间如何继续推进查找？没有种子和查询后没有 peer 为什么不同？ |
 | [metadata 会话](../src/metadata/session/mod.rs) → [peer-wire](../src/peer_wire/mod.rs) | 扩展 ID 为什么有两个方向？无关消息为什么不能刷新分片期限？ |
 | [任务完成](../src/storage/jobs/mod.rs) → [数据库线程](../src/storage/mod.rs) | 如何防止旧 generation 落库？调用者取消时，命令和预算归谁？ |
+| [metrics](../src/metrics.rs) → [traffic](../src/dht/traffic/mod.rs) | 何时计数、何时清零？出队与实际发送成功有什么区别？ |
+| [schema](../src/storage/schema.rs) → [验收报告](../src/acceptance.rs) | 哪些变更在同一事务中提交？Drop 写报告有哪些保证边界？ |
 | [app/session](../src/app/session/mod.rs) 的 `shutdown_inner` | 为什么先回收采集器，再关闭节点，最后关闭数据库？超时后错误保存在哪里？ |
 
 每次只读一行对应的链路，先尝试回答右栏问题，再运行下面的真实测试。已有的协议注释保留 BEP 名称；不用先背完整协议。

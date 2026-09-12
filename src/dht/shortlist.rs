@@ -1,6 +1,7 @@
 //! 两种迭代查找共用的有效近邻规则；失败项不占 shortlist 名额。
 use crate::{dht::routing::xor_distance, krpc::NodeId};
 
+/// 候选在本轮查找中的状态；仅 Failed 被排除，其他状态仍参与近邻收敛判断。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CandidateState {
     Unqueried,
@@ -9,6 +10,8 @@ pub(crate) enum CandidateState {
     Failed,
 }
 
+/// 按距 target 的 XOR 距离保留最多 limit 个非失败候选；limit 为 0 时为空。
+/// 保留未查询、在途和已成功节点；本函数不去重、不验证地址，也不发出查询。
 pub(crate) fn closest_valid(
     candidates: impl Iterator<Item = (NodeId, CandidateState)>,
     target: NodeId,

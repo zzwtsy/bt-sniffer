@@ -7,12 +7,16 @@ use bytes::Bytes;
 use serde::Serialize;
 use std::fmt;
 
+/// BEP 9 的标准分片字节数，末片可以更短。
 pub(crate) const BLOCK_SIZE: usize = 16384;
+/// 本端向对端声明的接收 ID；发送请求必须使用对端声明的 ID。
 pub(crate) const LOCAL_METADATA_ID: u8 = 1;
 
+/// TCP peer-wire 的 20 字节身份，与 DHT Node ID 独立。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PeerId(pub(crate) [u8; 20]);
 
+/// 字节结构或字段约束错误；网络失败和会话资源限制由上层分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WireError(pub(crate) &'static str);
 impl fmt::Display for WireError {
@@ -76,12 +80,16 @@ fn integer(object: Object<'_, '_>) -> Result<i64, WireError> {
         .map_err(|_| WireError("整数溢出"))
 }
 
+/// 一次扩展握手的增量字段，不能用缺省值覆盖已协商状态。
 #[derive(Debug, Default)]
 pub(crate) struct ExtensionUpdate {
+    /// None 表示未更新；Some(0) 明确禁用，非零值用于向对端发送。
     pub(crate) metadata_id: Option<u8>,
+    /// 本次声明的原始 info 字典字节数；大小上限和后续一致性由会话检查。
     pub(crate) metadata_size: Option<usize>,
 }
 /// 所有握手字段都可省略；返回增量更新，由会话决定何时已有足够信息发请求。
+/// header_limit 限制整个握手的字节数，depth 限制 Bencode 嵌套层数；拒绝尾随字节。
 pub(crate) fn parse_extension(
     bytes: &[u8],
     header_limit: usize,
@@ -132,6 +140,7 @@ pub(crate) fn parse_extension(
     Ok(update)
 }
 
+/// 解析后的消息头与借用载荷；Data 中的切片不能比输入帧活得更久。
 #[derive(Debug)]
 pub(crate) enum MetadataMessage<'a> {
     Request {
@@ -147,6 +156,8 @@ pub(crate) enum MetadataMessage<'a> {
     },
     Unknown,
 }
+/// header_limit 只限制 Bencode 头部字节数，头部之后保留为原始载荷。
+/// 未知消息类型返回 Unknown；分片大小、请求状态及重复内容由会话校验。
 pub(crate) fn parse_metadata(
     bytes: &[u8],
     header_limit: usize,
@@ -209,9 +220,11 @@ pub(crate) fn extended(id: u8, payload: &[u8]) -> Bytes {
     bytes.extend_from_slice(payload);
     bytes.into()
 }
+/// 使用保留的扩展 ID 0 发送握手，声明本端接收 ut_metadata 的 ID 为 1。
 pub(crate) fn extension_handshake() -> Bytes {
     extended(0, b"d1:md11:ut_metadatai1eee")
 }
+/// id 使用对端声明值，piece 从 0 起；调用者负责选择 kind（0 请求、2 拒绝）。
 pub(crate) fn metadata_control(id: u8, kind: u8, piece: usize) -> Bytes {
     #[derive(Serialize)]
     struct Header {

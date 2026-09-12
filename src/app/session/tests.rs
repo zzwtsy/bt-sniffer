@@ -755,6 +755,7 @@ fn fault_notifications_follow_sticky_state_without_consuming_details() {
 
 /// 两个先后收尾阶段各需 20 秒，必须在总计 30 秒时超时，而不是为第二阶段重新计时。
 #[tokio::test(start_paused = true)]
+// 用通道建立阶段先后关系；两段各需 20 秒，但总收尾只能使用同一个 30 秒期限。
 async fn shutdown_stages_share_one_deadline() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();

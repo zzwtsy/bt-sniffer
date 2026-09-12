@@ -1,16 +1,22 @@
-//! 仅供手动验收：每次独立 JSON 报告，panic/中止也保留状态；不随默认测试运行长测。
+//! 手动验收的独立 JSON 报告；默认测试只验证报告逻辑，不启动长测。
+//! 报告在 Drop 执行时尝试写出，普通 unwind 也会经过此路径；强杀、进程 abort
+//! 或写入失败都不保证留存，发送取消通知本身也不会立即生成报告。
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     process::Command,
 };
 
+/// 验收调用者持有的报告；状态先保守记为未验证，完成后由调用者显式判定。
 pub(crate) struct Report {
+    /// 调用者补充的配置、证据和统计；它不是生产日志的 JSON 编码。
     pub(crate) value: Value,
     path: PathBuf,
     start: std::time::Instant,
 }
 impl Report {
+    /// 采集 rustc 版本与源码指纹，预设 environment_blocked，尚不创建报告文件。
+    /// 要求当前目录可读取源码、目标目录已存在；系统时钟或源码读取异常会 panic。
     pub(crate) fn new(kind: &str, directory: &Path, config: Value) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -29,9 +35,11 @@ impl Report {
             value: json!({"kind":kind,"started_unix_ms":timestamp,"status":"environment_blocked","source_sha256":source_sha256,"source_manifest":source_manifest,"toolchain":toolchain,"profile":if cfg!(debug_assertions) {"debug"} else {"release"},"config":config,"verification":[],"statistics":{},"families":{}}),
         }
     }
+    /// 已进入验收流程，先标为 failed，防止未走到 finish 的异常退出被误报成功。
     pub(crate) fn running(&mut self) {
         self.value["status"] = json!("failed");
     }
+    /// 仅更新内存状态，不写文件；未完成优先记 aborted，完成后再按 passed 判断。
     pub(crate) fn finish(&mut self, completed: bool, passed: bool) {
         self.value["status"] = json!(if !completed {
             "aborted"
@@ -45,6 +53,7 @@ impl Report {
 impl Drop for Report {
     fn drop(&mut self) {
         self.value["duration_seconds"] = json!(self.start.elapsed().as_secs_f64());
+        // create_new 防止覆盖已有报告；失败只打印诊断，Drop 无法向调用者返回写入结果。
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let file = std::fs::OpenOptions::new()
                 .write(true)
@@ -56,6 +65,8 @@ impl Drop for Report {
         eprintln!("验收报告 {}: {:?}", self.path.display(), result);
     }
 }
+/// 对 Cargo.toml、Cargo.lock 和 src 下全部 .rs 的排序路径及内容计算指纹。
+/// 不包含独立 tests、文档、Git 状态或构建产物，不能据此证明二进制或运行环境一致。
 fn source_digest() -> (String, String) {
     fn visit(path: &Path, paths: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(path).expect("源码目录") {

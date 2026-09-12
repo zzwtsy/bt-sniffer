@@ -37,15 +37,21 @@ use std::{
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+/// 应用交给协调器的资源边界；只控制采集与接纳，不改变 DHT 的协议配额。
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
+    /// 同时领取并运行的 worker 上限，也是 fetcher 的共享并发上限。
     pub(crate) concurrency: usize,
+    /// pending、running、retry_wait 合计的接纳上限，不限制历史成功记录数。
     pub(crate) max_active: usize,
     pub(crate) sample_backpressure: SampleBackpressure,
+    /// 状态目录软字节预算；接近上限时保留清理空间并暂停新增工作。
     pub(crate) state_max_bytes: u64,
     pub(crate) directory: PathBuf,
     pub(crate) policy: AddressPolicy,
 }
+/// 会话创建并监督的协调器；持有宣布接收端、任务调度状态与共享指标。
+/// 数据库 handle 只提交命令，数据库的最终关闭责任仍属于会话。
 pub(crate) struct Collector {
     metrics: Arc<crate::metrics::Metrics>,
     backpressure: backpressure::Backpressure,
@@ -71,6 +77,8 @@ struct CompletionTotals {
 }
 
 impl Collector {
+    /// 启用任务接纳、恢复磁盘任务并向节点安装宣布入口，尚不运行 worker。
+    /// 中途失败可能已有数据库更新或部分入口安装；调用者须关闭已创建的会话资源。
     pub(crate) async fn new(
         store: StorageHandle,
         handles: Vec<DhtHandle>,
@@ -123,6 +131,7 @@ impl Collector {
             report_error,
         })
     }
+    /// 使用事件观察时间保存提示；接纳确认后才增加 AnnouncesAccepted，拒绝计入丢弃。
     async fn accept_announce(&self, event: AnnounceEvent) -> Result<(), StorageError> {
         if !self
             .store
@@ -135,6 +144,7 @@ impl Collector {
         }
         Ok(())
     }
+    /// 主动采样采用总体背压值；宣布入口只随存储暂停关闭，容量/积压暂停不关闭它。
     async fn pause(&self, paused: bool) -> Result<(), CollectorError> {
         self.ingress
             .paused
@@ -159,6 +169,8 @@ impl Collector {
         (self.report_error)(&error);
         errors.push(error);
     }
+    /// 持续调度直到停止或故障，随后回收 worker、保存可提交结果并输出最终统计。
+    /// 返回 Err 包含收尾期间收集的错误；直接丢弃整个 future 不等于完成该收尾。
     pub(crate) async fn run(self) -> Result<(), Vec<CollectorError>> {
         self.supervise(Workers::default()).await
     }

@@ -1,12 +1,16 @@
 //! 只控制主动采样，不限制已接纳任务处理或宣布入口；硬容量和存储暂停单独保留。
 use crate::storage::jobs::DueStats;
 
+// 两种模式仍保留容量和存储暂停。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Mode {
+    // 在硬容量之外，用到期任务数量和等待时间抑制主动采样积压。
     Freshness,
+    // 只按活跃任务容量迟滞暂停，不判断到期队列的新鲜程度。
     Capacity,
 }
 
+/// 协调器独占的主动采样背压状态；三个暂停原因做 OR，不限制已接纳任务的处理。
 #[derive(Debug)]
 pub(super) struct Backpressure {
     mode: Mode,
@@ -14,7 +18,9 @@ pub(super) struct Backpressure {
     pub(super) capacity: bool,
     pub(super) backlog: bool,
     storage: bool,
+    /// 最近一次持续满足低水位条件的起点，UTC 毫秒；条件被打断后清空。
     recovery_since: Option<i64>,
+    /// 上次累计暂停耗时的观察点，和 update 的 now 使用同一时钟与毫秒单位。
     last_at: Option<i64>,
     pub(super) paused_ms: u64,
     pub(super) resumes: u64,
@@ -46,7 +52,10 @@ impl Backpressure {
         }
         self.last_at = Some(now);
     }
-    /// 每秒检查硬容量，due 仅在每五秒数据库快照完成后传入。
+    /// now 为协调器时钟的 UTC 毫秒；active 为活跃任务数，due 是本次可用的到期快照。
+    /// due=None 表示未刷新快照，不表示队列为空，不重置已有积压与恢复起点。
+    /// 返回总体暂停状态是否变化，单个原因变化但仍暂停时返回 false。
+    /// 调用者每秒检查容量、每五秒提供 due；存储暂停期间保持上次容量判断。
     pub(super) fn update(
         &mut self,
         now: i64,
@@ -58,6 +67,7 @@ impl Backpressure {
         let old = self.paused();
         self.storage = storage;
         if !storage {
+            // 达到上限即暂停，降至 80% 以下才恢复；小容量仍至少保留一个阈值单位。
             self.capacity = if self.capacity {
                 active >= (self.max_active as i64 * 8 / 10).max(1)
             } else {
@@ -67,6 +77,8 @@ impl Backpressure {
         if self.mode == Mode::Freshness
             && let Some(due) = due
         {
+            // 数量达到容量的 10% 或最老等待达到 5 分钟时暂停；恢复要求
+            // 数量不超过 2%、最老等待不超过 1 分钟，并在快照观察中持续至少 30 秒。
             let high = self.max_active.div_ceil(10).max(1) as i64;
             let low = (self.max_active / 50) as i64;
             if !self.backlog {
@@ -86,6 +98,7 @@ impl Backpressure {
         }
         old != self.paused()
     }
+    /// 先累计到 now 的暂停时长再输出；此操作会推进 last_at，不是只读查看。
     pub(super) fn log(&mut self, now: i64) {
         self.account(now);
         tracing::info!(event="sampling_backpressure",schema_version=1u64,mode=?self.mode, capacity=self.capacity, backlog=self.backlog, storage=self.storage,

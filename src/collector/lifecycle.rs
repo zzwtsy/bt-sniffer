@@ -11,6 +11,8 @@ use crate::{
 use std::{collections::HashMap, error::Error, fmt, future::Future};
 use tokio::task::{Id, JoinError, JoinSet};
 
+/// 模块故障来源；只有 Storage 可进入存储暂停路径，其他分支由会话判为致命故障。
+/// Clock 虽包装 StorageError，也不能因此误归为可恢复写入错误。
 #[derive(Debug)]
 pub(crate) enum CollectorError {
     Storage(StorageError),
@@ -22,6 +24,7 @@ pub(crate) enum CollectorError {
     Configuration(MetadataError),
     InspectionTask(JoinError),
     SupervisorClosed,
+    /// JoinSet 返回异常时附回原领取标识，便于继续延期或恢复，不能丢失 generation。
     Worker {
         hash: InfoHashV1,
         generation: i64,
@@ -80,10 +83,13 @@ pub(super) fn already_closed(error: &QueryError) -> bool {
         QueryError::DispatcherClosed | QueryError::ShuttingDown
     )
 }
+/// 协调器拥有的 worker 集合；每个 task ID 必须恰好对应一个 Job 领取副本。
+/// JoinSet 析构只中止任务；正常收尾须逐个 next 回收，并由 collector 处理数据库结果。
 #[derive(Default)]
 pub(super) struct Workers {
     tasks: JoinSet<Outcome>,
     claims: HashMap<Id, Job>,
+    /// 已回收异常 worker、但尚待退出流程处理的领取记录；不是重新启动的任务队列。
     pub(super) interrupted: Vec<Job>,
 }
 impl Workers {
@@ -93,6 +99,7 @@ impl Workers {
     pub(super) fn is_empty(&self) -> bool {
         self.tasks.is_empty()
     }
+    /// 把网络 future 移入 JoinSet 并登记领取副本；返回的 AbortHandle 仅发送中止请求。
     pub(super) fn spawn(
         &mut self,
         job: Job,
@@ -102,6 +109,8 @@ impl Workers {
         self.claims.insert(handle.id(), job);
         handle
     }
+    /// 等待并移出一个任务及其 Job；panic/中止同样返回领取记录，空集合才返回 None。
+    /// 取消本次等待不消费任务；返回后由调用者保存结果或把 Job 放入 interrupted。
     pub(super) async fn next(&mut self) -> Option<(Job, Result<Outcome, CollectorError>)> {
         let result = self.tasks.join_next_with_id().await?;
         let id = match &result {

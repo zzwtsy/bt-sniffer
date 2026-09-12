@@ -337,6 +337,7 @@ async fn address_policy_and_pre_cancelled_tasks() {
 
 /// 握手卡住时可取消；克隆 Fetcher 共用名额，取消后 socket 和名额都必须释放。
 #[tokio::test]
+// 握手写出信号确认连接已被占用；回收任务后检查许可，并等待服务端 EOF 证明 socket 关闭。
 async fn cancellation_and_dropping_future_release_connections_and_permits() {
     for abort in [false, true] {
         let listener = bind(AddressFamily::Ipv4).await.unwrap();
