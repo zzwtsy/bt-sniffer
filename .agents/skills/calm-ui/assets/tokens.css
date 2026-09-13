@@ -1,0 +1,74 @@
+/*
+ * Calm UI — adjustable starting tokens, not Pendant source CSS.
+ * Map these semantic roles into the existing project instead of overriding it.
+ * This file does not implement theme switching or a global stylesheet.
+ * The optional contrast checker supports these two flat selector blocks only.
+ */
+.calm-ui {
+  color-scheme: light;
+  --calm-bg: #F7F4EE;
+  --calm-surface: #FCFBF8;
+  --calm-surface-alt: #F0ECE5;
+  --calm-text: #242320;
+  --calm-text-muted: #68645D;
+  --calm-border-subtle: #E3DED5;
+  --calm-border-control: #857F75;
+  --calm-accent: #4C6B8A;
+  --calm-accent-hover: #405D79;
+  --calm-accent-soft: #E6EDF3;
+  --calm-on-accent: #FFFFFF;
+  --calm-focus: #4C6B8A;
+
+  --calm-font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --calm-text-body: 1rem;
+  --calm-text-list: 0.875rem;
+  --calm-text-meta: 0.8125rem;
+  --calm-text-section: 1.25rem;
+  --calm-text-title: clamp(1.75rem, 1.35rem + 1vw, 2.5rem);
+  --calm-text-hero: clamp(2.25rem, 1.5rem + 2vw, 3.5rem);
+  --calm-leading-body: 1.6;
+  --calm-leading-list: 1.45;
+  --calm-leading-title: 1.25;
+
+  --calm-space-1: 0.25rem;
+  --calm-space-2: 0.5rem;
+  --calm-space-3: 0.75rem;
+  --calm-space-4: 1rem;
+  --calm-space-6: 1.5rem;
+  --calm-space-8: 2rem;
+  --calm-space-12: 3rem;
+  --calm-space-16: 4rem;
+  --calm-space-24: 6rem;
+
+  --calm-width-page: 60rem;
+  --calm-width-reading: 42rem;
+  --calm-width-hero-copy: 32rem;
+  --calm-width-showcase: 56rem;
+  --calm-gutter: clamp(1rem, 3vw, 2rem);
+  --calm-radius-panel: 0.625rem;
+  --calm-radius-control: 0.5rem;
+  --calm-radius-pill: 999px;
+  --calm-control-min-height: 2.25rem;
+  --calm-touch-min-size: 2.75rem;
+  --calm-shadow-product: 0 18px 42px rgb(34 31 25 / 0.16),
+    0 2px 8px rgb(34 31 25 / 0.10);
+}
+
+.calm-ui[data-theme="dark"] {
+  color-scheme: dark;
+  --calm-bg: #1B1B1A;
+  --calm-surface: #252524;
+  --calm-surface-alt: #2D2C29;
+  --calm-text: #EEECE6;
+  --calm-text-muted: #B3AEA5;
+  --calm-border-subtle: #3B3A36;
+  --calm-border-control: #807B73;
+  --calm-accent: #BA8E75;
+  --calm-accent-hover: #CAA38D;
+  --calm-accent-soft: #352B25;
+  --calm-on-accent: #211D1A;
+  --calm-focus: #BA8E75;
+  --calm-shadow-product: 0 18px 42px rgb(0 0 0 / 0.32),
+    0 2px 8px rgb(0 0 0 / 0.18);
+}
