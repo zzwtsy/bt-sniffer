@@ -14,7 +14,6 @@
 - `assets/tokens.css`：浅色/深色语义 tokens 的建议起点，不是完整 UI 组件或主题切换实现。
 - `assets/reference-*.png`：本次提供的六张参考截图，只按当前页面类型查看。
 - `scripts/check_contrast.py`：可选的纯 Python 颜色对比计算；不联网、不修改文件。
-- `VALIDATION.md`：本次实际执行的包检查及其限制。
 
 ## 最小结构是什么
 
