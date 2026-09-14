@@ -3,7 +3,9 @@
 //! 处理入站 get_peers 和 announce_peer；只有通过 token 与地址校验的宣布才能写入 peer store。
 
 use super::runtime::DhtDispatcher;
-use crate::krpc::{CompactPeerAddress, KrpcErrorCode, QueryArgs};
+use crate::dht::krpc::CompactPeerAddress;
+use crate::dht::krpc::KrpcErrorCode;
+use crate::dht::krpc::QueryArgs;
 use serde_bytes::ByteBuf;
 use std::{net::SocketAddr, time::Instant};
 

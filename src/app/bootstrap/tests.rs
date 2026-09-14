@@ -1,14 +1,14 @@
 //! 注入 DNS 结果并使用 loopback 验证引导；真实发包与受控时钟共同检查退避和容量。
 use super::*;
-use crate::{
-    dht::{
-        dispatcher::{DhtDispatcher, DhtDispatcherConfig},
-        routing::{AddressFamily, RoutingTable},
-        transaction::TransactionManager,
-    },
-    krpc::{KrpcMessage, MessageType, NodeId},
-    net::udp::UdpTransport,
-};
+use crate::dht::dispatcher::DhtDispatcher;
+use crate::dht::dispatcher::DhtDispatcherConfig;
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::routing::AddressFamily;
+use crate::dht::routing::RoutingTable;
+use crate::dht::transaction::TransactionManager;
+use crate::dht::udp::UdpTransport;
 
 async fn node(
     capacity: usize,

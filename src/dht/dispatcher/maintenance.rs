@@ -2,7 +2,8 @@
 //!
 //! 由 dispatcher 在每轮事件后推进；候选联系人先查询验证，再进入路由表。
 
-use crate::dht::shortlist::{CandidateState, closest_valid};
+use crate::dht::shortlist::CandidateState;
+use crate::dht::shortlist::closest_valid;
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::net::SocketAddr;
@@ -10,9 +11,10 @@ use std::time::{Duration, Instant};
 
 use super::api::{MaintenanceConfig, RemoteNode};
 use super::runtime::{DhtDispatcher, PendingPurpose};
-use crate::dht::routing::{NodeContact, RoutingTable};
-use crate::krpc::NodeId;
-use crate::krpc::QueryMethod;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::routing::NodeContact;
+use crate::dht::routing::RoutingTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LookupKind {
@@ -331,7 +333,7 @@ impl MaintenanceState {
 /// 公网返回的地址不能驱动本节点访问内网、回环或特殊用途网段。
 #[cfg(test)]
 fn is_public_automatic_address(address: SocketAddr) -> bool {
-    crate::net::address::AddressPolicy::PublicOnly.accepts(address)
+    crate::address::AddressPolicy::PublicOnly.accepts(address)
 }
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
 //! 引导只负责找到一个已验证邻居，后续迭代查找交给 routing maintenance。
 //!
 //! app 持有引导任务；这里通过 DhtHandle 发命令，不直接拥有 UDP socket 或路由表。
-use crate::{
-    dht::dispatcher::{DhtHandle, QueryError, RemoteNode},
-    net::address::AddressPolicy,
-};
+use crate::address::AddressPolicy;
+use crate::dht::dispatcher::DhtHandle;
+use crate::dht::dispatcher::QueryError;
+use crate::dht::dispatcher::RemoteNode;
 use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use rand::RngExt;
 use std::{collections::HashSet, io, net::SocketAddr, time::Duration};
@@ -42,14 +42,27 @@ async fn run_with_resolver(
         let addresses = resolve_addresses(&seeds, status.family, policy, &resolve).await;
         match round(&handle, addresses).await? {
             Round::Connected => {
-                tracing::info!(family = ?status.family, "已验证引导邻居，交由路由维护继续发现节点");
+                tracing::info!(
+                    event = "bootstrap_connected",
+                    schema_version = 1u64,
+                    phase = "bootstrap",
+                    family = ?status.family,
+                    "已验证引导邻居，交由路由维护继续发现节点"
+                );
                 backoff = Duration::from_secs(60);
                 sleep(Duration::from_secs(60)).await;
             }
             Round::Busy => sleep(Duration::from_secs(1)).await,
             Round::Failed => {
                 let delay = retry_delay(backoff, rand::rng().random_range(0..=200));
-                tracing::warn!(family = ?status.family, seconds = delay.as_secs(), "当前没有可用引导邻居，稍后重试");
+                tracing::warn!(
+                    event = "bootstrap_retry_scheduled",
+                    schema_version = 1u64,
+                    phase = "bootstrap",
+                    family = ?status.family,
+                    retry_after_ms = delay.as_millis() as u64,
+                    "当前没有可用引导邻居，稍后重试"
+                );
                 sleep(delay).await;
                 backoff = backoff.saturating_mul(2).min(Duration::from_secs(900));
             }
@@ -81,8 +94,26 @@ async fn resolve_addresses(
                     }
                 }
             }
-            Ok(Err(error)) => tracing::warn!(%seed, "引导 DNS 失败：{error}"),
-            Err(_) => tracing::warn!(%seed, "引导 DNS 等待超过 5 秒"),
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    event = "bootstrap_dns_failed",
+                    schema_version = 1u64,
+                    phase = "dns",
+                    %seed,
+                    %error,
+                    "引导 DNS 失败"
+                )
+            }
+            Err(_) => {
+                tracing::warn!(
+                    event = "bootstrap_dns_timeout",
+                    schema_version = 1u64,
+                    phase = "dns",
+                    %seed,
+                    timeout_ms = 5000u64,
+                    "引导 DNS 等待超时"
+                )
+            }
         }
         if addresses.len() == 8 {
             break;
@@ -115,7 +146,13 @@ async fn round(handle: &DhtHandle, addresses: Vec<SocketAddr>) -> Result<Round, 
                     Ok(_) => connected = true,
                     Err(QueryError::AtCapacity {..}) => busy = true,
                     Err(error @ (QueryError::DispatcherClosed | QueryError::ShuttingDown)) => return Err(error),
-                    Err(error) => tracing::debug!("引导查询失败：{error}"),
+                    Err(error) => tracing::debug!(
+                        event = "bootstrap_query_failed",
+                        schema_version = 1u64,
+                        phase = "query",
+                        %error,
+                        "引导查询失败"
+                    ),
                 }
             }
             _ = sleep_until(next_send), if !connected && next_address.is_some() && pending.len() < 2 => {

@@ -1,13 +1,18 @@
 //! 临时数据库与本机节点验证监督、恢复及共同退出期限，清理失败也必须保留可观察证据。
 use super::*;
-use crate::{
-    krpc::{
-        CompactNodesV4, CompactNodesV6, InfoHashSamples, InfoHashV1, KrpcMessage, MessageType,
-        NodeId, QueryArgs, QueryMethod, ResponseArgs,
-    },
-    net::udp::UdpTransportConfig,
-    storage::SavedContact,
-};
+use crate::dht::krpc::CompactNodesV4;
+use crate::dht::krpc::CompactNodesV6;
+use crate::dht::krpc::InfoHashSamples;
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryArgs;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::ResponseArgs;
+use crate::dht::persistence::DhtStore;
+use crate::dht::persistence::SavedContact;
+use crate::dht::udp::UdpTransportConfig;
+use crate::info_hash::InfoHashV1;
 use serde_bytes::ByteBuf;
 
 // 故障按类型分类，后到的普通写入告警不能覆盖已经记录的致命错误。
@@ -209,7 +214,7 @@ async fn family_udp(family: AddressFamily) -> Option<UdpTransport> {
     .await
     {
         Ok(transport) => Some(transport),
-        Err(crate::net::udp::UdpTransportError::Io(error))
+        Err(crate::dht::udp::UdpTransportError::Io(error))
             if family == AddressFamily::Ipv6
                 && (error.kind() == std::io::ErrorKind::AddrNotAvailable
                     || matches!(error.raw_os_error(), Some(97 | 93))) =>
@@ -226,11 +231,11 @@ async fn recovery_roundtrip(family: AddressFamily) {
         return;
     };
     let store = Storage::open(settings.clone()).await.unwrap();
-    let identity = identity::load_or_create(&store.handle, "node", family, 1)
-        .await
-        .unwrap();
-    store
-        .handle
+    let identity =
+        identity::load_or_create(&DhtStore::new(store.handle.clone()), "node", family, 1)
+            .await
+            .unwrap();
+    DhtStore::new(store.handle.clone())
         .save_contacts(
             identity,
             &[SavedContact {
@@ -346,11 +351,13 @@ async fn recovery_roundtrip(family: AddressFamily) {
     );
     session.shutdown().await.unwrap();
     let store = Storage::open(settings).await.unwrap();
-    let contacts = store.handle.load_contacts(identity).await.unwrap();
+    let contacts = DhtStore::new(store.handle.clone())
+        .load_contacts(identity)
+        .await
+        .unwrap();
     assert_eq!(contacts.len(), 1);
     assert!(contacts[0].responded_at > 1);
-    let restored = store
-        .handle
+    let restored = DhtStore::new(store.handle.clone())
         .restore_cooldowns(identity, unix_millis(SystemTime::now()).unwrap())
         .await
         .unwrap();
@@ -378,77 +385,21 @@ fn find_query() -> KrpcMessage {
     }
 }
 
-// 第二个分段写失败时保留精确进度；重试不会漏数据，也不会重复累计观察次数。
-#[tokio::test]
-async fn failed_collection_retains_batch_and_resume_offset() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
-    store.handle.call(|c| {
-        c.execute_batch("CREATE TRIGGER fail_zero BEFORE INSERT ON infohashes WHEN NEW.hash=zeroblob(20) BEGIN SELECT RAISE(ABORT,'test failure'); END;")?;
-        Ok(())
-    }).await.unwrap();
-    let (tx, rx) = mpsc::channel(1);
-    let mut samples = vec![InfoHashV1([1; 20]); 1024];
-    samples.extend([InfoHashV1([0; 20]); 10]);
-    tx.send(SampleBatch {
-        responder: crate::dht::dispatcher::DiscoveredNode {
-            id: NodeId([7; 20]),
-            address: "127.0.0.1:1".parse().unwrap(),
-        },
-        target: NodeId([0; 20]),
-        received_at: std::time::Instant::now(),
-        observed_at: std::time::UNIX_EPOCH + Duration::from_secs(1),
-        interval: Duration::from_secs(300),
-        num: 2,
-        samples,
-    })
-    .await
-    .unwrap();
-    drop(tx);
-    let mut state = Collection {
-        receiver: rx,
-        current: None,
-        offset: 0,
-        error: None,
-    };
-    assert!(collect(&store.handle, &mut state).await.is_err());
-    assert_eq!(state.offset, 1024);
-    assert!(state.current.is_some());
-    store
-        .handle
-        .call(|c| {
-            c.execute_batch("DROP TRIGGER fail_zero;")?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    collect(&store.handle, &mut state).await.unwrap();
-    assert!(state.current.is_none());
-    assert_eq!(
-        store
-            .handle
-            .call(
-                |c| Ok(c.query_row("SELECT count(*) FROM infohashes", [], |r| r
-                    .get::<_, i64>(0))?)
-            )
-            .await
-            .unwrap(),
-        2
-    );
-    store.shutdown().await.unwrap();
-}
-
 // 公网模式不自动联系磁盘里的 loopback 地址；策略过滤发生在恢复队列入口。
 #[tokio::test]
 async fn recovery_respects_public_address_policy() {
     let dir = tempfile::tempdir().unwrap();
     let settings = StorageConfig::new(dir.path());
     let store = Storage::open(settings.clone()).await.unwrap();
-    let id = identity::load_or_create(&store.handle, "node", AddressFamily::Ipv4, 1)
-        .await
-        .unwrap();
-    store
-        .handle
+    let id = identity::load_or_create(
+        &DhtStore::new(store.handle.clone()),
+        "node",
+        AddressFamily::Ipv4,
+        1,
+    )
+    .await
+    .unwrap();
+    DhtStore::new(store.handle.clone())
         .save_contacts(
             id,
             &[SavedContact {
@@ -482,11 +433,15 @@ async fn recovery_rejects_unexpected_identity() {
     let settings = StorageConfig::new(dir.path());
     let peer = udp().await;
     let store = Storage::open(settings.clone()).await.unwrap();
-    let id = identity::load_or_create(&store.handle, "node", AddressFamily::Ipv4, 1)
-        .await
-        .unwrap();
-    store
-        .handle
+    let id = identity::load_or_create(
+        &DhtStore::new(store.handle.clone()),
+        "node",
+        AddressFamily::Ipv4,
+        1,
+    )
+    .await
+    .unwrap();
+    DhtStore::new(store.handle.clone())
         .save_contacts(
             id,
             &[SavedContact {
@@ -609,16 +564,20 @@ async fn shutdown_preserves_unverified_candidates() {
     let settings = StorageConfig::new(dir.path());
     let peer = udp().await;
     let store = Storage::open(settings.clone()).await.unwrap();
-    let identity = identity::load_or_create(&store.handle, "node", AddressFamily::Ipv4, 1)
-        .await
-        .unwrap();
+    let identity = identity::load_or_create(
+        &DhtStore::new(store.handle.clone()),
+        "node",
+        AddressFamily::Ipv4,
+        1,
+    )
+    .await
+    .unwrap();
     let saved = SavedContact {
         id: NodeId([7; 20]),
         address: peer.local_addr().unwrap(),
         responded_at: 1,
     };
-    store
-        .handle
+    DhtStore::new(store.handle.clone())
         .save_contacts(identity, std::slice::from_ref(&saved))
         .await
         .unwrap();
@@ -637,7 +596,10 @@ async fn shutdown_preserves_unverified_candidates() {
     session.shutdown().await.unwrap();
     let store = Storage::open(settings).await.unwrap();
     assert_eq!(
-        store.handle.load_contacts(identity).await.unwrap(),
+        DhtStore::new(store.handle.clone())
+            .load_contacts(identity)
+            .await
+            .unwrap(),
         vec![saved]
     );
     store.shutdown().await.unwrap();
@@ -692,7 +654,7 @@ async fn timeout_preserves_faults_from_unfinished_cleanup_task() {
 /// collector 回调返回前已经保存原始诊断并发布故障；同一存储错误在时钟边界仍属致命错误。
 #[test]
 fn fault_callbacks_record_synchronously_and_preserve_classification() {
-    use crate::collector::CollectorError;
+    use crate::collection::CollectorError;
     for error in [
         CollectorError::Storage(StorageError::Capacity),
         CollectorError::Clock(StorageError::Capacity),
@@ -793,10 +755,9 @@ async fn shutdown_stages_share_one_deadline() {
 async fn cancelled_fault_handling_keeps_detail_unread() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
-    let identity =
-        identity::load_or_create(&session.test_store(), "paused", AddressFamily::Ipv4, 1)
-            .await
-            .unwrap();
+    let identity = identity::load_or_create(&session.dht_store, "paused", AddressFamily::Ipv4, 1)
+        .await
+        .unwrap();
     let table = RoutingTable::new(
         identity.node_id,
         AddressFamily::Ipv4,
@@ -836,9 +797,30 @@ async fn cancelled_fault_handling_keeps_detail_unread() {
     assert!(session.shutdown().await.is_err());
 }
 
-/// 使用实际 collect 和 shutdown 路径验证旧 target；只访问临时 SQLite 和临时日志文件。
+/// 使用实际消费和 shutdown 路径验证模块 target；只访问临时 SQLite 和临时日志文件。
 #[tokio::test]
-async fn moved_session_logs_keep_target_and_fields() {
+async fn session_logs_use_module_targets_and_fields() {
+    // 同一日志 callsite 还会被其他会话测试并发调用。隔离进程验证本地 subscriber，
+    // 避免 tracing 全局 callsite/filter 缓存让目标字段断言受其他测试时序影响。
+    const CHILD: &str = "BT_SNIFFER_SESSION_LOG_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "app::session::tests::session_logs_use_module_targets_and_fields",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     use tracing::instrument::WithSubscriber;
     let dir = tempfile::tempdir().unwrap();
     let session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
@@ -847,7 +829,7 @@ async fn moved_session_logs_keep_target_and_fields() {
     let subscriber = tracing_subscriber::fmt()
         .json()
         .with_ansi(false)
-        .with_env_filter("off,bt_sniffer::persistence=debug,bt_sniffer::app::session=off")
+        .with_env_filter("off,bt_sniffer::collection::ingest=debug,bt_sniffer::app::session=info")
         .with_writer(move || writer.try_clone().unwrap())
         .finish();
     let dispatch = tracing::Dispatch::new(subscriber);
@@ -868,13 +850,9 @@ async fn moved_session_logs_keep_target_and_fields() {
         .await
         .unwrap();
     drop(sender);
-    let mut collection = Collection {
-        receiver,
-        current: None,
-        offset: 0,
-        error: None,
-    };
-    collect(&session.test_store(), &mut collection)
+    let mut collection = SampleIngest::new(receiver, crate::clock::Clock::default());
+    collection
+        .run(&session.test_store())
         .with_subscriber(dispatch.clone())
         .await
         .unwrap();
@@ -884,12 +862,17 @@ async fn moved_session_logs_keep_target_and_fields() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(events.len(), 2);
-    for event in &events {
-        assert_eq!(event["target"], "bt_sniffer::persistence");
-    }
+    assert_eq!(events.len(), 2, "{text}");
+    assert_eq!(events[0]["target"], "bt_sniffer::collection::ingest");
+    assert_eq!(events[1]["target"], "bt_sniffer::app::session");
     assert_eq!(events[0]["level"], "DEBUG");
-    assert_eq!(events[0]["fields"]["message"], "保存已验证采样批次");
+    assert_eq!(events[0]["fields"]["message"], "开始保存已验证采样批次");
+    assert_eq!(events[0]["fields"]["event"], "sample_batch_save_started");
+    assert_eq!(events[0]["fields"]["schema_version"].as_u64(), Some(1));
+    assert_eq!(events[0]["fields"]["phase"], "persist");
+    assert_eq!(events[0]["fields"]["observed_at_ms"].as_i64(), Some(1000));
+    assert_eq!(events[0]["fields"]["interval_secs"].as_u64(), Some(300));
+    assert_eq!(events[0]["fields"]["confirmed_offset"].as_u64(), Some(0));
     assert_eq!(events[0]["fields"]["count"], 1);
     assert_eq!(events[0]["fields"]["num"], 1);
     assert_eq!(events[1]["level"], "INFO");

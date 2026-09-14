@@ -6,7 +6,10 @@ use std::{
 
 fn command(directory: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_bt-sniffer"));
-    command.current_dir(directory);
+    command
+        .current_dir(directory)
+        .env_remove("RUST_LOG")
+        .env_remove("NO_COLOR");
     command
 }
 
@@ -35,6 +38,26 @@ fn log_text(directory: &Path) -> String {
 
 fn stderr(output: &Output) -> &str {
     std::str::from_utf8(&output.stderr).unwrap()
+}
+
+/// 两端、后台线程和退出阶段必须使用同一个非空运行标识。
+fn assert_run_id(file: &str, stderr: &str) {
+    let mut ids = std::collections::HashSet::new();
+    for line in file.lines() {
+        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+        let id = event["run_id"].as_str().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        ids.insert(id.to_owned());
+    }
+    for line in stderr.lines() {
+        let id = line
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("run_id="))
+            .expect("文本事件缺少 run_id");
+        ids.insert(id.to_owned());
+    }
+    assert_eq!(ids.len(), 1);
 }
 
 #[test]
@@ -79,12 +102,22 @@ fn final_application_error_reaches_both_outputs() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(!stderr(&output).contains("监听失败"), "{}", stderr(&output));
-    for text in [stderr(&output).to_owned(), log_text(directory.path())] {
+    assert_run_id(&log_text(directory.path()), stderr(&output));
+    {
+        let text = stderr(&output);
         assert!(text.contains("application_failed"));
         assert!(text.contains("schema_version=1"));
         assert!(!text.contains('\u{1b}'));
-        assert!(!text.contains("logging_queue"));
+        assert!(text.contains("logging_queue"));
     }
+    let events = json_events(directory.path());
+    let failure = events
+        .iter()
+        .position(|e| e["fields"]["event"] == "application_failed")
+        .unwrap();
+    assert_eq!(events[failure]["fields"]["schema_version"], 1);
+    assert_eq!(events[failure]["fields"]["phase"], "exit");
+    assert_final_queues(&events[failure + 1..]);
 }
 
 #[cfg(unix)]
@@ -109,6 +142,7 @@ fn sigterm_keeps_final_snapshot_and_shutdown_logs() {
     let directory = tempfile::tempdir().unwrap();
     let mut child = Process(
         local_command(directory.path())
+            .args(["--sample", "--fetch"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -132,7 +166,7 @@ fn sigterm_keeps_final_snapshot_and_shutdown_logs() {
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .expect("等待真实节点启动日志超时或进程提前退出");
         assert!(!line.contains("application_failed"), "{line}");
-        if line.contains("节点正在监听") {
+        if line.contains("first_attempt_backlog") {
             break;
         }
     }
@@ -163,14 +197,189 @@ fn sigterm_keeps_final_snapshot_and_shutdown_logs() {
         .read_to_string(&mut stdout)
         .unwrap();
     assert!(stdout.is_empty());
-    for text in [stderr, log_text(directory.path())] {
+    assert_run_id(&log_text(directory.path()), &stderr);
+    {
+        let text = stderr;
+        let startup = text
+            .lines()
+            .find(|line| line.contains("application_start"))
+            .unwrap();
+        // --allow-local 必须反映在有效配置中，不能误报默认 PublicOnly。
+        assert!(startup.contains("address_policy=LocalUnicast"), "{startup}");
+        assert!(startup.contains("schema_version=3"));
+        assert!(startup.contains("log_contract_version=3"));
+        assert!(startup.contains("fetch_timeout_ms=120000"));
+        assert!(!startup.contains("metadata_config="));
+        assert!(startup.contains("admission_policy_version=2"));
+        assert!(startup.contains("scheduling_policy_version=2"));
+        assert!(startup.contains("extension_handshake_policy_version=2"));
+        assert!(
+            text.lines()
+                .any(|line| line.contains("extension_compatibility_summary")
+                    && line.contains("final_snapshot=true"))
+        );
+        assert!(text.contains("backpressure_basis=\"first_attempt_waiting\""));
+        let sampler = text
+            .lines()
+            .find(|line| line.contains("sampler_diagnostic"))
+            .unwrap();
+        for field in [
+            "collector_paused=",
+            "candidates=",
+            "in_flight=",
+            "successful=",
+            "failed=",
+            "unsupported=",
+            "pause=",
+        ] {
+            assert!(sampler.contains(field), "{sampler}");
+        }
+        assert!(text.lines().any(
+            |line| line.contains("admission_backfill") && line.contains("final_snapshot=true")
+        ));
+        assert!(text.lines().any(|line| line.contains("collector_summary")
+            && line.contains("final_snapshot=true")
+            && line.contains("running_workers=0")));
+
+        for event in [
+            "bencode_sample_summary",
+            "attempt_summary",
+            "connect_history_summary",
+        ] {
+            assert!(
+                text.lines().any(|line| line.contains(event)
+                    && line.contains("final_snapshot=true")
+                    && line.contains("schema_version=1")),
+                "{text}"
+            );
+        }
+        assert!(text.contains("first_attempt_backlog"));
         assert!(text.contains("session_shutdown"), "{text}");
         assert!(text.contains("success=true"));
         assert!(text.contains("schema_version=1"));
-        assert!(!text.contains("logging_queue"));
+        assert!(text.contains("logging_queue"));
         assert!(!text.contains('\u{1b}'));
     }
+    let events = json_events(directory.path());
+    let fields: Vec<_> = events.iter().map(|event| &event["fields"]).collect();
+    let startup = fields
+        .iter()
+        .find(|f| f["event"] == "application_start")
+        .unwrap();
+    assert_eq!(startup["address_policy"], "LocalUnicast");
+    assert_eq!(startup["schema_version"], 3);
+    assert_eq!(startup["log_contract_version"], 3);
+    assert_eq!(startup["log_filter"], "warn,bt_sniffer=info");
+    assert_eq!(startup["fetch_timeout_ms"], 120000);
+    assert!(startup.get("metadata_config").is_none());
+    for policy in [
+        "admission_policy_version",
+        "scheduling_policy_version",
+        "extension_handshake_policy_version",
+    ] {
+        assert_eq!(startup[policy], 2);
+    }
+    assert_eq!(startup["backpressure_basis"], "first_attempt_waiting");
+    let sampler = fields
+        .iter()
+        .find(|f| f["event"] == "sampler_diagnostic")
+        .unwrap();
+    for field in [
+        "collector_paused",
+        "candidates",
+        "in_flight",
+        "successful",
+        "failed",
+        "unsupported",
+        "pause",
+    ] {
+        assert!(sampler.get(field).is_some(), "{sampler}");
+    }
+    for name in [
+        "extension_compatibility_summary",
+        "admission_backfill",
+        "bencode_sample_summary",
+        "attempt_summary",
+        "connect_history_summary",
+    ] {
+        assert!(
+            fields.iter().any(|f| f["event"] == name
+                && f["final_snapshot"] == true
+                && f["schema_version"] == 1),
+            "{name}"
+        );
+    }
+    assert!(fields.iter().any(|f| f["event"] == "collector_summary"
+        && f["final_snapshot"] == true
+        && f["running_workers"] == 0));
+    assert!(fields.iter().any(|f| f["event"] == "first_attempt_backlog"));
+    let shutdown = events
+        .iter()
+        .position(|e| e["fields"]["event"] == "session_shutdown")
+        .unwrap();
+    assert_eq!(events[shutdown]["fields"]["success"], true);
+    assert_eq!(events[shutdown]["fields"]["schema_version"], 1);
+    assert_final_queues(&events[shutdown + 1..]);
     assert!(directory.path().join("state/state.sqlite3").exists());
     assert!(!directory.path().join("state/state.sqlite3-wal").exists());
     assert!(!directory.path().join("state/state.sqlite3-shm").exists());
+}
+
+fn json_events(directory: &Path) -> Vec<serde_json::Value> {
+    log_text(directory)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+fn assert_final_queues(events: &[serde_json::Value]) {
+    for sink in ["file", "stderr"] {
+        let queues: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event["fields"]["event"] == "logging_queue"
+                    && event["fields"]["sink"] == sink
+                    && event["fields"]["final_snapshot"] == true
+            })
+            .collect();
+        assert_eq!(queues.len(), 1);
+        let fields = &queues[0]["fields"];
+        assert_eq!(fields["schema_version"], 1);
+        assert_eq!(fields["queue_capacity"], 4096);
+        assert_eq!(fields["dropped_total"], 0);
+        assert_eq!(fields["dropped_since_last_report"], 0);
+    }
+}
+
+#[test]
+fn invalid_environment_fails_before_resources_but_not_help() {
+    let mut values = vec![std::ffi::OsString::from("bt_sniffer=invalid")];
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        values.push(std::ffi::OsString::from_vec(vec![255]));
+    }
+    for value in values {
+        let dir = tempfile::tempdir().unwrap();
+        let failed = local_command(dir.path())
+            .env("RUST_LOG", &value)
+            .output()
+            .unwrap();
+        assert!(!failed.status.success());
+        assert!(stderr(&failed).contains("日志初始化失败"));
+        assert!(stderr(&failed).contains("RUST_LOG"));
+        assert!(failed.stdout.is_empty());
+        for arg in ["--help", "--version"] {
+            assert!(
+                command(dir.path())
+                    .arg(arg)
+                    .env("RUST_LOG", &value)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 }

@@ -1,5 +1,6 @@
 //! 两种迭代查找共用的有效近邻规则；失败项不占 shortlist 名额。
-use crate::{dht::routing::xor_distance, krpc::NodeId};
+use crate::dht::krpc::NodeId;
+use crate::dht::routing::xor_distance;
 
 /// 候选在本轮查找中的状态；仅 Failed 被排除，其他状态仍参与近邻收敛判断。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

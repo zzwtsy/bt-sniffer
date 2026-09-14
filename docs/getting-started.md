@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TD
-    discovery[主动采样、合法宣布或历史 hash] --> jobs[storage::jobs 创建任务]
+    discovery[主动采样、合法宣布或历史 hash] --> jobs[collection::jobs 创建任务]
     jobs --> claim[collector 领取任务]
     claim --> lookup[查找 peer 并获取 metadata]
     lookup --> verify[校验原始字节与 info-hash]
@@ -21,10 +21,10 @@ flowchart TD
 
 ## 2. 动手运行一个测试
 
-在仓库根目录打开 [任务测试](../src/storage/jobs/tests.rs)，找到 `dedup_capacity_recovery_and_stale_generation`，运行：
+在仓库根目录打开 [任务测试](../src/collection/jobs/tests.rs)，找到 `dedup_capacity_recovery_and_stale_generation`，运行：
 
 ```sh
-cargo test --locked storage::jobs::tests::dedup_capacity_recovery_and_stale_generation -- --exact
+cargo test --locked collection::jobs::tests::dedup_capacity_recovery_and_stale_generation -- --exact
 ```
 
 第一次运行需要已安装的 Rust 工具链和项目依赖，Cargo 可能下载依赖并编译。当前项目使用 edition 2024，未声明最低 Rust 版本；若工具链不满足依赖要求，先处理 Cargo 给出的版本错误。
@@ -34,7 +34,7 @@ cargo test --locked storage::jobs::tests::dedup_capacity_recovery_and_stale_gene
 预期输出包含：
 
 ```text
-test storage::jobs::tests::dedup_capacity_recovery_and_stale_generation ... ok
+test collection::jobs::tests::dedup_capacity_recovery_and_stale_generation ... ok
 test result: ok. 1 passed; 0 failed;
 ```
 
@@ -52,7 +52,7 @@ test result: ok. 1 passed; 0 failed;
 | 用首次领取提交失败 | 返回 `Ok(UpdateResult::Stale)`，新任务仍是 running | 旧 worker 的迟到结果被忽略 |
 | 当前领取反复失败 | 每次返回 `Ok(UpdateResult::Applied)`，最终休眠，另一个 hash 可以进入 | Applied 表示重试或休眠状态已提交；退避和休眠控制重试与容量 |
 
-接着打开 [任务实现](../src/storage/jobs/mod.rs)，依次阅读 `claim_job`、`retry_job` 和 `recover_jobs`。测试中的整数时间是 UTC 毫秒，用于安排数据库里的期限；实际采集通过注入的 `Clock` 取得时间，不依靠等待真实分钟来测试退避。
+接着打开 [领取实现](../src/collection/jobs/claim.rs) 阅读生产入口 `claim_class`，再到 [状态变更](../src/collection/jobs/transitions.rs) 阅读 `retry_job` 和 `recover_jobs`。`claim_job` 是测试夹具的简化入口。测试中的整数时间是 UTC 毫秒，用于安排数据库里的期限；实际采集通过注入的 `Clock` 取得时间，不依靠等待真实分钟来测试退避。
 
 这里先掌握三个 Rust 机制：
 
@@ -79,15 +79,15 @@ test result: ok. 1 passed; 0 failed;
 ```mermaid
 flowchart TD
     main[main：参数、信号、runtime] --> app[app：绑定 socket、组装会话]
-    app --> session[persistence：身份、恢复、任务监督]
+    app --> session[app/session：组装、任务监督、退出]
     session --> dispatcher[dispatcher：UDP 事件循环]
     bootstrap[bootstrap：引导与重试] --> dispatcher
-    dispatcher --> protocol[net / krpc：收发与编解码]
+    dispatcher --> protocol[dht/udp / krpc：收发与编解码]
     dispatcher --> routing[transaction / routing：匹配响应、验证联系人]
     dispatcher --> sampler[sampler：选择、预约、采样、结算]
     dispatcher --> announce[token / peer_store：合法宣布]
     sampler --> hashes[storage：保存 hash、创建任务]
-    announce --> jobs[storage::jobs：发现、领取、重试]
+    announce --> jobs[collection::jobs：发现、领取、重试]
     hashes --> jobs
     jobs --> collector[collector：持有领取、回收 worker]
     collector --> worker[worker：交替推进查找与下载]
@@ -95,22 +95,22 @@ flowchart TD
     worker --> metadata[metadata / peer_wire：握手、分片、原始字节校验]
     worker --> result[Outcome：返回已校验结果或重试原因]
     result --> collector
-    collector --> complete[storage::jobs：原子保存与完成]
+    collector --> complete[collection::jobs：原子保存与完成]
     session --> shutdown[shutdown：停产、回收、保存快照、关闭数据库]
 ```
 
 | 阅读位置 | 本步需要回答的问题 |
 | --- | --- |
-| [main](../src/main.rs) → [config](../src/config.rs) → [app](../src/app/mod.rs) | 参数什么时候生效？谁创建 runtime 和 socket？启动失败后谁回收已创建的资源？ |
-| [bootstrap](../src/app/bootstrap/mod.rs) → [身份](../src/identity.rs) → [恢复](../src/dht/dispatcher/recovery.rs) | 引导与磁盘联系人有什么不同？为什么恢复联系人仍要验证？ |
-| [UDP](../src/net/udp/mod.rs) → [KRPC](../src/krpc/mod.rs) → [事件循环](../src/dht/dispatcher/runtime/mod.rs) | 谁检查字节、谁检查业务字段、谁决定下一次唤醒？ |
+| [main](../src/main.rs) → [config](../src/app/config.rs) → [app](../src/app/mod.rs) | 参数什么时候生效？谁创建 runtime 和 socket？启动失败后谁回收已创建的资源？ |
+| [bootstrap](../src/app/bootstrap/mod.rs) → [身份](../src/dht/persistence/identity.rs) → [恢复](../src/dht/dispatcher/recovery.rs) | 引导与磁盘联系人有什么不同？为什么恢复联系人仍要验证？ |
+| [UDP](../src/dht/udp/mod.rs) → [KRPC](../src/dht/krpc/mod.rs) → [事件循环](../src/dht/dispatcher/runtime/mod.rs) | 谁检查字节、谁检查业务字段、谁决定下一次唤醒？ |
 | [transaction](../src/dht/transaction/mod.rs) → [response](../src/dht/dispatcher/response.rs) → [routing](../src/dht/routing/mod.rs) | 为什么先登记再发包？为什么第三方响应不能消耗在途请求？ |
 | [token](../src/dht/token/mod.rs) → [peer 查询](../src/dht/dispatcher/peer_queries/mod.rs) | 收到 announce 为什么还不能立即写入？成功 ACK 是否代表采集任务已经落盘？ |
 | [sampler](../src/dht/dispatcher/sampler/mod.rs) → [durable](../src/dht/dispatcher/sampler/durable/mod.rs) | 输出许可、磁盘预约、真正发包分别发生在何时？旧会话确认如何收尾？ |
-| [collector](../src/collector/mod.rs) → [worker](../src/collector/worker.rs) → [lookup](../src/collector/lookup.rs) | Job 与 worker 谁持有？下载期间如何继续推进查找？没有种子和查询后没有 peer 为什么不同？ |
-| [metadata 会话](../src/metadata/session/mod.rs) → [peer-wire](../src/peer_wire/mod.rs) | 扩展 ID 为什么有两个方向？无关消息为什么不能刷新分片期限？ |
-| [任务完成](../src/storage/jobs/mod.rs) → [数据库线程](../src/storage/mod.rs) | 如何防止旧 generation 落库？调用者取消时，命令和预算归谁？ |
-| [metrics](../src/metrics.rs) → [traffic](../src/dht/traffic/mod.rs) | 何时计数、何时清零？出队与实际发送成功有什么区别？ |
+| [collector](../src/collection/mod.rs) → [worker](../src/collection/worker.rs) → [lookup](../src/collection/lookup.rs) | Job 与 worker 谁持有？下载期间如何继续推进查找？没有种子和查询后没有 peer 为什么不同？ |
+| [metadata 会话](../src/collection/peer/session/mod.rs) → [peer-wire](../src/collection/peer/wire/mod.rs) | 扩展 ID 为什么有两个方向？无关消息为什么不能刷新分片期限？ |
+| [任务完成](../src/collection/jobs/transitions.rs) → [数据库线程](../src/storage/mod.rs) | 如何防止旧 generation 落库？调用者取消时，命令和预算归谁？ |
+| [metrics](../src/collection/diagnostics/metrics.rs) → [traffic](../src/dht/traffic/mod.rs) | 何时计数、何时清零？出队与实际发送成功有什么区别？ |
 | [schema](../src/storage/schema.rs) → [验收报告](../src/acceptance.rs) | 哪些变更在同一事务中提交？Drop 写报告有哪些保证边界？ |
 | [app/session](../src/app/session/mod.rs) 的 `shutdown_inner` | 为什么先回收采集器，再关闭节点，最后关闭数据库？超时后错误保存在哪里？ |
 
@@ -136,10 +136,10 @@ flowchart TD
 
 ## 6. 跑通从采样到入库
 
-打开 [collector 测试](../src/collector/tests.rs)，运行：
+打开 [collector 测试](../src/collection/tests.rs)，运行：
 
 ```sh
-cargo test --locked collector::tests::sample_to_metadata_v4 -- --exact
+cargo test --locked collection::tests::sample_to_metadata_v4 -- --exact
 ```
 
 预期目标测试显示 `ok` 和 `1 passed`。它在 loopback 模拟 UDP 节点与 TCP peer，用临时 SQLite 验证采样、get_peers、下载、原始字节保存及重启后不重复领取。测试会显式回收模拟 peer 和会话；不启动公网采集。
@@ -152,10 +152,10 @@ cargo test --locked collector::tests::sample_to_metadata_v4 -- --exact
 
 ## 7. 验证原始字节，不能只看传输完成
 
-打开 [metadata 测试](../src/metadata/tests.rs)，运行：
+打开 [metadata 测试](../src/collection/peer/tests.rs)，运行：
 
 ```sh
-cargo test --locked metadata::tests::final_verification_rejects_untrusted_metadata -- --exact
+cargo test --locked collection::peer::tests::final_verification_rejects_untrusted_metadata -- --exact
 ```
 
 预期 `1 passed`，表示三个非法输入均被拒绝：hash 不符、根不是字典、字典后有尾随字节。模拟 peer 的标准握手会声明目标 hash，后续仍必须独立检查收到的正文。
@@ -195,10 +195,10 @@ cargo test --locked app::tests::graceful_shutdown_releases_state_directory -- --
 只改任务逻辑时，先运行：
 
 ```sh
-cargo test --locked storage::jobs::tests::
+cargo test --locked collection::jobs::tests::
 ```
 
-涉及命令、取消或关闭边界时，再运行相应的 `storage::tests::`、`collector::tests::`、`app::session::tests::`。后两组包含本机 socket 测试；环境禁止创建 socket 时，记录阻塞，不能把它当作通过。
+涉及命令、取消或关闭边界时，再运行相应的 `storage::tests::`、`collection::tests::`、`app::session::tests::`。后两组包含本机 socket 测试；环境禁止创建 socket 时，记录阻塞，不能把它当作通过。
 
 提交改动供审查前执行 [README 的验证命令](../README.md#验证)。内部文档可用以下命令生成：
 
@@ -207,3 +207,7 @@ cargo doc --locked --no-deps --document-private-items
 ```
 
 这是文档构建，不是内部代码片段的 doctest。示例行为以实际测试为证。性能优化的证据要求见 [Rust 开发约束](rust-development.md#性能取舍)；不要把测试通过理解为已经测量了性能。
+
+采样分段的确认与恢复从 [SampleIngest](../src/collection/ingest/mod.rs) 阅读；其测试可用 `cargo test --locked --workspace collection::ingest::tests` 执行。查询节奏位于 lookup，同 IP 许可位于 [tcp_limits](../src/collection/tcp_limits.rs)，二者都由 worker 所属的共享资源持有。
+
+日志定位使用实际模块 target。配置从 `application_start` 的具名字段读取；任务成本看 attempt 系列，完整握手看 `peer_handshake_diagnostic`。字段与统计口径详见[日志契约版本 3](logging.md#日志契约版本-3)。

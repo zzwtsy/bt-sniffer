@@ -1,0 +1,1506 @@
+{
+  "source_sha256": "5bfffb4adaaf07d8aba8fe24119d8605b0666a12391de048a5270f9dff751986",
+  "source_manifest": "1b98a914ec893f2f45b9ac7369761c12047d77a2ab8a4e92412408aaaeff34ed  Cargo.lock\nbbbff102aa2d639d6fd5bdf79b84834bb4255e52fb9534a48908a61800c0d711  Cargo.toml\nd6b7fad7c87c831106de0792593cbac86b9e180205ce539817b1458de342ea18  src/acceptance.rs\nc107e78d03a5fa7455bf2a9c1c1b69c2d47a3181a516fd6555b9d6756b620db3  src/app/bootstrap/mod.rs\n0852a0bb533e8859219e36eee1ae7dccf363dd271ede61f06fc452dc3832d46c  src/app/bootstrap/tests.rs\nda46a40e8585c019719b99ef034da2047470c09c2c817411c76bca5d1f93e4c8  src/app/mod.rs\n2f7b789b4d2c6396da84a7ff8345bd63b9f75c1d9bed2ae65e0263de51bb40d6  src/app/session/mod.rs\n552d65a9b0535672b0e4d42090032fceab7e9e6bb0c28ec9042b21e1662df0e7  src/app/session/tests.rs\na34b466cb1a394f2e2a6a828acb1914c94520cf8e205900623db75eaf1d469a4  src/app/sockets.rs\n3693614b002b63af15f26ca07b9d96c543ea0ac528c9c71c4918525df3980b9b  src/app/tests.rs\n20606c9537f9623b52fc41c8993d3870cdc08195e8d41407670df875232ac042  src/collector/backpressure.rs\n6eba14836f8a9a23ad21d3ce852436850540d9b1e0e54b9a1b7cd6cf5004044d  src/collector/comparison.rs\n9eb471642f5a7e19655a91d531cc8d7f30d4be0ca9a9de30c88084ff254752c4  src/collector/lifecycle.rs\ncc80c085f830bfcdf68a07ffd1bfc49297ff042b3ae782c985435ead282f2e42  src/collector/lookup.rs\n73800e5715ff194e8e627a94d73288dd86f2838187a48d0c3786a571524208f6  src/collector/mod.rs\n15d9e3a6309fe0b0d8c5a862c9c27118b98a881bf3715bb0d02dc494250c58e7  src/collector/tests.rs\nf0dcfa4a031cb5534ce5a059a16ec7c522e842e3d0cf1211c0e9ca35b96f5186  src/collector/worker.rs\nca9d98ba24abbd7afbc76a237a8a8764498ea9860da477c764e00fcd3f5474b7  src/config.rs\n2e0ba8c6fcd18cd686153107141ccb0fc8be51d773a3d3adda2920f2f0fb6513  src/dht/dispatcher/api.rs\n31cd5313fadb833c1bf1a7116ce6069df41c06ffce4a7d1df599bc3eb662b2f8  src/dht/dispatcher/fetch.rs\n4a0923459fd80f31c2200b385fcaecc9cf11848b57c4ba5e27ac36ed1546665d  src/dht/dispatcher/maintenance.rs\n36f9690b4f4b501f09183481f60b52433ceb546976c3e7d81de4d70c48a500d0  src/dht/dispatcher/mod.rs\n5acec6d82991511d8eee7e8c2cfd5c38133c43d95e57f71f1c358d161ac2b220  src/dht/dispatcher/peer_queries/mod.rs\n1f60c98c87c1a439f612344fd0677b705f6f045e806db7ed8fcee6823787e3e4  src/dht/dispatcher/peer_queries/tests/mod.rs\n22a3016fbee333e70d79cf517c06f84b011fb99d46a0a37ed6fc2f031493b502  src/dht/dispatcher/peer_queries/tests/sampler.rs\n45b5f62e8fad3da14449fd549ecb94e8e55c60b956c247d01f88fdb4b5293666  src/dht/dispatcher/peer_queries/tests/sampling.rs\ndcc136cab048ab95e1fe759993f0d25548899b7558fbb2b0bde15cbb7ff13b2e  src/dht/dispatcher/query.rs\n8d7f76fc82a9b6d8c9979f8fdde6ffc4e988cf219c9c9bfb4795eaac90da91c1  src/dht/dispatcher/recovery.rs\n4f198b595fa0f96793b1086b9d80c489a593fef58e3a1bd3ce2ba072fdf0c269  src/dht/dispatcher/response.rs\nb0a0efc6f9ab115532c43278d828949bdcccf2247912997bc3e2f795a9d49508  src/dht/dispatcher/runtime/mod.rs\n6a5960bb693d5e913cdd8ba8515750062eb354fbca2a4ffc53f688d704c6c872  src/dht/dispatcher/runtime/tests.rs\na4ff2f57f1e71fb5c569811ad783e8ef4972c7fe2417b948df80fd082816fefa  src/dht/dispatcher/sampler/api.rs\nb48e356a4a6bfbdb5b775bf68fad917361783cc52222f1b8277faf8c5c48a823  src/dht/dispatcher/sampler/durable/mod.rs\ne73e63763c3f5ae8010008582deacd8bb3fa7eddd494fa72d6bca2658168d522  src/dht/dispatcher/sampler/durable/tests.rs\n2a17325023dda9b87273bc6c4b5d50939ae5b7768d19d2747b11add82c90aed9  src/dht/dispatcher/sampler/mod.rs\nd2064cc9ddfcef84a958e09d9d216cacef1ed057d8263d45c55f5514db82f3cf  src/dht/dispatcher/sampler/tests.rs\n28deda34235193bea7ec9b0fc69d9cd19dce6ea8f18eb2bbf3a9dcf3983383fe  src/dht/dispatcher/sampling/mod.rs\nc114dec9ae3726ed460fcac24b88b2dce0803b134a7ca6130a59b23d20df372d  src/dht/dispatcher/sampling/tests.rs\n34ed269daee6ed883c3bbe4b5f625b6bcbe4b496286d24ced5c23230c94a4ded  src/dht/dispatcher/tests.rs\n475b6089deb54aa9eb4ff34c8522e6e4bea55ba63e074fe955163fc4231b9d1d  src/dht/dispatcher/traffic.rs\n1aca733135c4f0bd70fcc470ec9600556c087c23347bc8b3866fa659bfee3bae  src/dht/mod.rs\na9289eb060cb68c48e54594843808d80482952fe746e42174ba628bc5bfc7d68  src/dht/peer_store/mod.rs\nf220406dd1fd3c52e1c5d82643c21c614c83de24778062f606f5d8936caef6f8  src/dht/peer_store/tests.rs\n43bdc98fa55f25d8ec1d7aac7a1b38096c9810ddd7c363cc1a3b06052fc59ca5  src/dht/routing/mod.rs\n0ddbf20a17fb38c890e9f67bb3a0ca9e8ee7d6fa5634f94ebef5e95bf85739f0  src/dht/routing/tests.rs\n7e29c5d14f13136c2700f6941ab2b212f0e66b0e26de1cecaf1a74a29c2877f0  src/dht/shortlist.rs\n4a42b711d19cef6e427a9b72d4ab671d351f69bd47a353cb3533590dc7109049  src/dht/token/mod.rs\n96797a2ccdf4d2de9adfdc3cc1bc23e0119422d770ffc60f79cdbfde8e874e0e  src/dht/token/tests.rs\naa925a1083c24cb29effbf8a10323cd3d81230409ddce1eac25613bf2206813e  src/dht/traffic/mod.rs\n903bebd57f5852308ee97b62d0b92119ab92289a48b6227e05b8cbab5ec76928  src/dht/traffic/tests.rs\n596bd7f614e46b275ed52d26d2b6b0be64b07a1b96db1203408e9619ec041277  src/dht/transaction/mod.rs\nce2c65aee31de2bdfa67cab8a0180f2326148eed4d903ecc83759082f32e4ce4  src/dht/transaction/tests.rs\n4b741718b5ff8673c38cee2349b527961e587f3841659a5b35de3665ece6c826  src/dht/transaction/udp_tests.rs\naa509eaa4e7ec6ae03d00a00c9d9ff29883b117bee18083d92081f6a1a17697c  src/diagnostics.rs\n5370c9c422481f6724e9be9b4fe629e9744c3e2c8f15550187147703f7f90e9d  src/identity.rs\n5c6a28620826249491fa37e6677ae6d10e829cd2d431d3bd9558e5d8a30e2461  src/krpc/compact.rs\n019e74dc512b811aeca6e19b45a8adc1ca3fc6478920eaac8281495b30391ef8  src/krpc/message.rs\ncdc55d3711d1f7bb7f09cb265160e5787fe84290c8720ad18d5e869fe8153ac2  src/krpc/mod.rs\n06640dc720c09ad7ade292906f08f9d0a1e70b91f2507cda02f78e42555417af  src/krpc/tests.rs\n3e044af8dd18f563d537a3cddc2fbdfae87647805d3a091d4ece3960f917f5f2  src/logging.rs\n11016fc190406e6682274807f06ce72445f4e0228f9951869cf1c6fcab991f9f  src/main.rs\n622f380b14af54a9137336070c08aec2f3a9ddf833cac5027ce32427207ccadb  src/metadata/mod.rs\nad506a676d0c15849d1602418c549ebee56b128177915a41a83bbd109b900a57  src/metadata/session/mod.rs\nd31f2228b90d44aebc643e6eb7ee5c528b8791bed995314e47b8e402d7c70acc  src/metadata/session/tests.rs\n77b1ef783647522cdfa9eff99c2430f0aa7063038781065c34c90691bb2e9201  src/metadata/tests.rs\n58e83ed3161520a66814e8c90a0812cfe290794a845e1e6de8a384661dbfa15d  src/metrics.rs\na11f206f95e2d18f79e1576fd597780e6d6d8cf11178e13e4c760268ea6c7483  src/net/address.rs\n0122f8a069f68abc2d099eec67dac885fdd627bc3e9605966e37bfdbcba0c572  src/net/mod.rs\n82f8aabd0d49a23b88c4a6fc95ad8245fe8a6ad3346c19a8149efb23b8000c07  src/net/udp/mod.rs\n2462c50033e5551c76fbcfc4a8db93facb44434a1ca1ec918d110ae3f024a26e  src/net/udp/ordering.rs\n61aa3c40fd48798e92c7cdcf0ccd60b5a9aacdd3ba9aed36eea83509428c9432  src/net/udp/tests.rs\n9fb8a72e40f5c59329a504a9d12f0f059bd4b889c4cdac1e0c023bc41101efb3  src/peer_wire/mod.rs\n74cfbb7952f6d1dd1eb6ff45b1b76b30725e0d775a467a4342475e742b9fbd08  src/peer_wire/tests.rs\n9cb2b7e92c0f8941d9f8e76f1369a98c2d3c690d4313866f6f3dff8209a508a8  src/storage/cooldown.rs\n66bd21a27a5dfd846249d4fe9949c1ca8f1ff642d05e806c9782e30239e35994  src/storage/jobs/admission.rs\nb5d1ae1e0707e7a141d2c31405f1ecfe841800c166fbe173d0c4e49705a3b04b  src/storage/jobs/mod.rs\n02e1cc3e68571572615819f1bb96b8821d2bf9f1b0d80666c51518d5d678032d  src/storage/jobs/optimization_tests.rs\n0c839a77d9cb91e4903f8e7fc53ccbc7e6cffc62f854d48018de469d85da0824  src/storage/jobs/scheduling_tests.rs\nbb5b885037cac127b1eaecd6c6cd3ab4a8dfb5a023f020c89d54c5a7c14a4376  src/storage/jobs/tests.rs\n9459182eefe4eb1485fa11e6f9b5cbb03c8fa8636d1666a449c722e11e610940  src/storage/mod.rs\n911e935da8fe392351a6f2211f5f1c9154786e3318ec8421ed645057edaa1c26  src/storage/records.rs\n9b77b58cd29c9fc0d434bd98e5aa5ebb9d20a809c7a80a1f72961d99a839460c  src/storage/schema.rs\nc0bc6d9fa5eaebaa02c03100e6bcdf685275f982e700b37ddbc91438edd0bb75  src/storage/tests.rs\n",
+  "binary_sha256": "a0db8e06865474d7217261b1ed5d5add800ea1388109bc9cf772e0a539e09181",
+  "integration_test_sha256": "0cd9aeb9e7dbbe20226d6912105ce14ceb086bfb100d5a946acb26fd4768f704",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+  "status": "passed",
+  "validation": {
+    "fmt": "passed",
+    "check": "passed",
+    "clippy_strict": "passed",
+    "unit_tests": {
+      "passed": 307,
+      "ignored": 7
+    },
+    "cli_tests": {
+      "passed": 4
+    }
+  },
+  "backlog": [
+    {
+      "config": {
+        "arrival_per_second": 4,
+        "history": 9000,
+        "horizon_seconds": 600,
+        "optimized": false,
+        "service_ms": 5000,
+        "workers": 4
+      },
+      "duration_seconds": 1.691057324,
+      "families": {},
+      "kind": "backlog-simulation",
+      "profile": "release",
+      "started_unix_ms": 1789294007342,
+      "statistics": {
+        "claim_call_p95_us": 1915,
+        "claims_by_class": [
+          121,
+          0,
+          0,
+          359
+        ],
+        "hashes": 11400,
+        "metadata_committed": 138,
+        "optimized": false,
+        "peak_active": 10000,
+        "recent_age_p95_ms": null
+      },
+      "status": "passed",
+      "verification": []
+    },
+    {
+      "config": {
+        "arrival_per_second": 4,
+        "history": 9000,
+        "horizon_seconds": 600,
+        "optimized": true,
+        "service_ms": 5000,
+        "workers": 4
+      },
+      "duration_seconds": 9.131135536,
+      "families": {},
+      "kind": "backlog-simulation",
+      "profile": "release",
+      "started_unix_ms": 1789294009047,
+      "statistics": {
+        "claim_call_p95_us": 3706,
+        "claims_by_class": [
+          134,
+          21,
+          199,
+          126
+        ],
+        "hashes": 11400,
+        "metadata_committed": 70,
+        "optimized": true,
+        "peak_active": 9016,
+        "recent_age_p95_ms": 20000
+      },
+      "status": "passed",
+      "verification": []
+    }
+  ],
+  "loopback": [
+    {
+      "config": {
+        "concurrency": 4,
+        "duration_seconds": 120,
+        "families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "jobs": 1000,
+        "repetition": 1,
+        "slow_handshake_seconds": 6,
+        "successful_stage_delay_ms": 100
+      },
+      "duration_seconds": 120.020543416,
+      "families": {},
+      "kind": "optimization-loopback",
+      "profile": "release",
+      "started_unix_ms": 1789294043055,
+      "statistics": {
+        "concurrency": 4,
+        "cpu_seconds": 0.51,
+        "dht_packets": [
+          140,
+          2,
+          0,
+          0
+        ],
+        "dht_queue_p95": {
+          "exceeds_ms": null,
+          "upper_bound_ms": 1
+        },
+        "directory": "/tmp/bt-optimization-loopback-zER8VV",
+        "elapsed_seconds": 120.00227035,
+        "metadata_per_second": 0.5499895944260358,
+        "metrics": {
+          "claims": 70,
+          "connect_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 1
+          },
+          "diagnostics": {
+            "peers": [
+              {
+                "count": 104,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 32,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 5044
+              },
+              {
+                "count": 50,
+                "deadline": "Stage",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 250041
+              },
+              {
+                "count": 4,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 7370
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 1614
+              },
+              {
+                "count": 16,
+                "deadline": "Stage",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 80012
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 5053
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 1617
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              }
+            ]
+          },
+          "handshake_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 10000
+          },
+          "metadata": 66,
+          "peer_attempts": 136,
+          "peer_phases": [
+            [
+              136,
+              0,
+              0
+            ],
+            [
+              66,
+              66,
+              4
+            ],
+            [
+              66,
+              0,
+              0
+            ],
+            [
+              66,
+              0,
+              0
+            ]
+          ]
+        },
+        "repetition": 1,
+        "rss_peak_kib": 12508,
+        "shutdown_ok": true,
+        "storage_stats_call_p95_us": 432,
+        "validated_v4": 71,
+        "validated_v6": 71
+      },
+      "status": "passed",
+      "verification": []
+    },
+    {
+      "config": {
+        "concurrency": 8,
+        "duration_seconds": 120,
+        "families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "jobs": 1000,
+        "repetition": 1,
+        "slow_handshake_seconds": 6,
+        "successful_stage_delay_ms": 100
+      },
+      "duration_seconds": 120.018584018,
+      "families": {},
+      "kind": "optimization-loopback",
+      "profile": "release",
+      "started_unix_ms": 1789294163091,
+      "statistics": {
+        "concurrency": 8,
+        "cpu_seconds": 0.57,
+        "dht_packets": [
+          188,
+          2,
+          0,
+          0
+        ],
+        "dht_queue_p95": {
+          "exceeds_ms": null,
+          "upper_bound_ms": 1
+        },
+        "directory": "/tmp/bt-optimization-loopback-8uhZCy",
+        "elapsed_seconds": 120.002077333,
+        "metadata_per_second": 0.7166542605871241,
+        "metrics": {
+          "claims": 94,
+          "connect_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 1
+          },
+          "diagnostics": {
+            "peers": [
+              {
+                "count": 138,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 39,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 6867
+              },
+              {
+                "count": 68,
+                "deadline": "Stage",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 340050
+              },
+              {
+                "count": 2,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 6610
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 1814
+              },
+              {
+                "count": 20,
+                "deadline": "Stage",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 100018
+              },
+              {
+                "count": 1,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 2898
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 6870
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 1817
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              }
+            ]
+          },
+          "handshake_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 10000
+          },
+          "metadata": 86,
+          "peer_attempts": 177,
+          "peer_phases": [
+            [
+              177,
+              0,
+              0
+            ],
+            [
+              86,
+              88,
+              3
+            ],
+            [
+              86,
+              0,
+              0
+            ],
+            [
+              86,
+              0,
+              0
+            ]
+          ]
+        },
+        "repetition": 1,
+        "rss_peak_kib": 12804,
+        "shutdown_ok": true,
+        "storage_stats_call_p95_us": 465,
+        "validated_v4": 95,
+        "validated_v6": 95
+      },
+      "status": "passed",
+      "verification": []
+    },
+    {
+      "config": {
+        "concurrency": 4,
+        "duration_seconds": 120,
+        "families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "jobs": 1000,
+        "repetition": 2,
+        "slow_handshake_seconds": 6,
+        "successful_stage_delay_ms": 100
+      },
+      "duration_seconds": 120.01907246,
+      "families": {},
+      "kind": "optimization-loopback",
+      "profile": "release",
+      "started_unix_ms": 1789294283124,
+      "statistics": {
+        "concurrency": 4,
+        "cpu_seconds": 0.5,
+        "dht_packets": [
+          140,
+          2,
+          0,
+          0
+        ],
+        "dht_queue_p95": {
+          "exceeds_ms": null,
+          "upper_bound_ms": 1
+        },
+        "directory": "/tmp/bt-optimization-loopback-jHWVwT",
+        "elapsed_seconds": 120.001182977,
+        "metadata_per_second": 0.5499945780755334,
+        "metrics": {
+          "claims": 70,
+          "connect_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 1
+          },
+          "diagnostics": {
+            "peers": [
+              {
+                "count": 104,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 32,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 5046
+              },
+              {
+                "count": 50,
+                "deadline": "Stage",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 250043
+              },
+              {
+                "count": 4,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 7375
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 1616
+              },
+              {
+                "count": 16,
+                "deadline": "Stage",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 80011
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 5050
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 1622
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              }
+            ]
+          },
+          "handshake_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 10000
+          },
+          "metadata": 66,
+          "peer_attempts": 136,
+          "peer_phases": [
+            [
+              136,
+              0,
+              0
+            ],
+            [
+              66,
+              66,
+              4
+            ],
+            [
+              66,
+              0,
+              0
+            ],
+            [
+              66,
+              0,
+              0
+            ]
+          ]
+        },
+        "repetition": 2,
+        "rss_peak_kib": 12824,
+        "shutdown_ok": true,
+        "storage_stats_call_p95_us": 451,
+        "validated_v4": 71,
+        "validated_v6": 71
+      },
+      "status": "passed",
+      "verification": []
+    },
+    {
+      "config": {
+        "concurrency": 8,
+        "duration_seconds": 120,
+        "families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "jobs": 1000,
+        "repetition": 2,
+        "slow_handshake_seconds": 6,
+        "successful_stage_delay_ms": 100
+      },
+      "duration_seconds": 120.019640976,
+      "families": {},
+      "kind": "optimization-loopback",
+      "profile": "release",
+      "started_unix_ms": 1789294403158,
+      "statistics": {
+        "concurrency": 8,
+        "cpu_seconds": 0.59,
+        "dht_packets": [
+          188,
+          2,
+          0,
+          0
+        ],
+        "dht_queue_p95": {
+          "exceeds_ms": null,
+          "upper_bound_ms": 1
+        },
+        "directory": "/tmp/bt-optimization-loopback-GleHAC",
+        "elapsed_seconds": 120.001186671,
+        "metadata_per_second": 0.7166595796738328,
+        "metrics": {
+          "claims": 94,
+          "connect_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 1
+          },
+          "diagnostics": {
+            "peers": [
+              {
+                "count": 138,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 39,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 6873
+              },
+              {
+                "count": 68,
+                "deadline": "Stage",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 340053
+              },
+              {
+                "count": 2,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 6607
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 1819
+              },
+              {
+                "count": 20,
+                "deadline": "Stage",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 100016
+              },
+              {
+                "count": 1,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 2897
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 6876
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 1821
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              }
+            ]
+          },
+          "handshake_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 10000
+          },
+          "metadata": 86,
+          "peer_attempts": 177,
+          "peer_phases": [
+            [
+              177,
+              0,
+              0
+            ],
+            [
+              86,
+              88,
+              3
+            ],
+            [
+              86,
+              0,
+              0
+            ],
+            [
+              86,
+              0,
+              0
+            ]
+          ]
+        },
+        "repetition": 2,
+        "rss_peak_kib": 12836,
+        "shutdown_ok": true,
+        "storage_stats_call_p95_us": 447,
+        "validated_v4": 95,
+        "validated_v6": 95
+      },
+      "status": "passed",
+      "verification": []
+    },
+    {
+      "config": {
+        "concurrency": 4,
+        "duration_seconds": 120,
+        "families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "jobs": 1000,
+        "repetition": 3,
+        "slow_handshake_seconds": 6,
+        "successful_stage_delay_ms": 100
+      },
+      "duration_seconds": 120.019333487,
+      "families": {},
+      "kind": "optimization-loopback",
+      "profile": "release",
+      "started_unix_ms": 1789294523193,
+      "statistics": {
+        "concurrency": 4,
+        "cpu_seconds": 0.51,
+        "dht_packets": [
+          140,
+          2,
+          0,
+          0
+        ],
+        "dht_queue_p95": {
+          "exceeds_ms": null,
+          "upper_bound_ms": 1
+        },
+        "directory": "/tmp/bt-optimization-loopback-vX4nCd",
+        "elapsed_seconds": 120.002204144,
+        "metadata_per_second": 0.5499898978588881,
+        "metrics": {
+          "claims": 70,
+          "connect_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 1
+          },
+          "diagnostics": {
+            "peers": [
+              {
+                "count": 104,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 32,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 5055
+              },
+              {
+                "count": 50,
+                "deadline": "Stage",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 250041
+              },
+              {
+                "count": 4,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 10564
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 1617
+              },
+              {
+                "count": 16,
+                "deadline": "Stage",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 80012
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 5052
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 1620
+              },
+              {
+                "count": 50,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              },
+              {
+                "count": 16,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              }
+            ]
+          },
+          "handshake_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 10000
+          },
+          "metadata": 66,
+          "peer_attempts": 136,
+          "peer_phases": [
+            [
+              136,
+              0,
+              0
+            ],
+            [
+              66,
+              66,
+              4
+            ],
+            [
+              66,
+              0,
+              0
+            ],
+            [
+              66,
+              0,
+              0
+            ]
+          ]
+        },
+        "repetition": 3,
+        "rss_peak_kib": 12712,
+        "shutdown_ok": true,
+        "storage_stats_call_p95_us": 436,
+        "validated_v4": 71,
+        "validated_v6": 71
+      },
+      "status": "passed",
+      "verification": []
+    },
+    {
+      "config": {
+        "concurrency": 8,
+        "duration_seconds": 120,
+        "families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "jobs": 1000,
+        "repetition": 3,
+        "slow_handshake_seconds": 6,
+        "successful_stage_delay_ms": 100
+      },
+      "duration_seconds": 120.01829721,
+      "families": {},
+      "kind": "optimization-loopback",
+      "profile": "release",
+      "started_unix_ms": 1789294643227,
+      "statistics": {
+        "concurrency": 8,
+        "cpu_seconds": 0.57,
+        "dht_packets": [
+          188,
+          2,
+          0,
+          0
+        ],
+        "dht_queue_p95": {
+          "exceeds_ms": null,
+          "upper_bound_ms": 1
+        },
+        "directory": "/tmp/bt-optimization-loopback-pVIftT",
+        "elapsed_seconds": 120.000825855,
+        "metadata_per_second": 0.716661734511027,
+        "metrics": {
+          "claims": 94,
+          "connect_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 1
+          },
+          "diagnostics": {
+            "peers": [
+              {
+                "count": 138,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 39,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Connect",
+                "sum_ms": 0
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 6861
+              },
+              {
+                "count": 68,
+                "deadline": "Stage",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 340058
+              },
+              {
+                "count": 2,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 6610
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 1819
+              },
+              {
+                "count": 20,
+                "deadline": "Stage",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 10000,
+                "result": "Timeout",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 100020
+              },
+              {
+                "count": 1,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 5000,
+                "result": "Cancelled",
+                "source": "Dht",
+                "stage": "StandardHandshake",
+                "sum_ms": 2895
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "ExtensionHandshake",
+                "sum_ms": 0
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 6873
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 500,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Transfer",
+                "sum_ms": 1818
+              },
+              {
+                "count": 68,
+                "deadline": "None",
+                "ipv6": false,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              },
+              {
+                "count": 18,
+                "deadline": "None",
+                "ipv6": true,
+                "p95_exceeds_ms": null,
+                "p95_upper_bound_ms": 1,
+                "result": "Success",
+                "source": "Dht",
+                "stage": "Verify",
+                "sum_ms": 0
+              }
+            ]
+          },
+          "handshake_p95": {
+            "exceeds_ms": null,
+            "upper_bound_ms": 10000
+          },
+          "metadata": 86,
+          "peer_attempts": 177,
+          "peer_phases": [
+            [
+              177,
+              0,
+              0
+            ],
+            [
+              86,
+              88,
+              3
+            ],
+            [
+              86,
+              0,
+              0
+            ],
+            [
+              86,
+              0,
+              0
+            ]
+          ]
+        },
+        "repetition": 3,
+        "rss_peak_kib": 12944,
+        "shutdown_ok": true,
+        "storage_stats_call_p95_us": 429,
+        "validated_v4": 95,
+        "validated_v6": 95
+      },
+      "status": "passed",
+      "verification": []
+    }
+  ],
+  "limitations": [
+    "仅限固定 loopback 输入，不代表公网收益；默认并发仍为 4",
+    "旧策略基线保留原 3:1 SQL 与接纳，共享观察输入，不模拟旧主动采样暂停",
+    "CPU/RSS 为测试进程整体，包含本机模拟服务和 SQLite；六组顺序共享进程及分配器，RSS 每秒采样",
+    "量化时间使用毫秒直方图，亚毫秒 sum_ms 可能为零，P95 是桶上界",
+    "吞吐分母为约 120 秒服务窗口；分子在取消并等待 collector 退出后读取，允许边界已完成结果提交",
+    "未运行公网及 30 分钟、两小时手工验收"
+  ],
+  "medians": {
+    "4": {
+      "metadata_per_second": 0.5499898978588881,
+      "cpu_seconds": 0.51,
+      "rss_peak_kib": 12712,
+      "storage_stats_call_p95_us": 436,
+      "metadata": 66,
+      "success_standard_mean_ms": 100.93939393939394,
+      "dht_queue_p95_upper_bound_ms": 1,
+      "connect_success_p95_upper_bound_ms": 1
+    },
+    "8": {
+      "metadata_per_second": 0.7166595796738328,
+      "cpu_seconds": 0.57,
+      "rss_peak_kib": 12836,
+      "storage_stats_call_p95_us": 447,
+      "metadata": 86,
+      "success_standard_mean_ms": 100.94186046511628,
+      "dht_queue_p95_upper_bound_ms": 1,
+      "connect_success_p95_upper_bound_ms": 1
+    }
+  },
+  "throughput_delta_percent": 30.30413512389776
+}

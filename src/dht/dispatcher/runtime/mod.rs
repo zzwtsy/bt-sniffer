@@ -8,17 +8,28 @@ use std::net::SocketAddr;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
 
+#[cfg(test)]
+use super::api::FindNodeResponse;
 use super::api::{
-    Command, DhtDispatcherConfig, DhtHandle, DispatcherCreateError, DispatcherError,
-    FindNodeResponse, PingResponse, QueryError, RemoteNode,
+    Command, DhtDispatcherConfig, DhtHandle, DispatcherCreateError, DispatcherError, PingResponse,
+    QueryError, RemoteNode,
 };
 use super::maintenance::MaintenanceState;
 use super::sampling::SampleCache;
-use crate::dht::routing::{AddressFamily, NodeContact, RoutingTable};
-use crate::dht::transaction::{TransactionError, TransactionId, TransactionManager};
-use crate::dht::{peer_store::PeerStore, token::TokenManager};
-use crate::krpc::{MessageType, NodeId, QueryMethod};
-use crate::net::udp::{ReceivedMessage, UdpTransport, UdpTransportError};
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::peer_store::PeerStore;
+use crate::dht::routing::AddressFamily;
+use crate::dht::routing::NodeContact;
+use crate::dht::routing::RoutingTable;
+use crate::dht::token::TokenManager;
+use crate::dht::transaction::TransactionError;
+use crate::dht::transaction::TransactionId;
+use crate::dht::transaction::TransactionManager;
+use crate::dht::udp::ReceivedMessage;
+use crate::dht::udp::UdpTransport;
+use crate::dht::udp::UdpTransportError;
 
 /// transaction manager 之外，dispatcher 完成请求所需的业务上下文。
 ///
@@ -50,6 +61,7 @@ pub(super) enum PendingPurpose {
         cancel: tokio_util::sync::CancellationToken,
     },
     /// 由程序内部的 `find_node` 接口发起，需要解析并返回候选节点。
+    #[cfg(test)]
     UserFindNode {
         reply: oneshot::Sender<Result<FindNodeResponse, QueryError>>,
         cancel: tokio_util::sync::CancellationToken,
@@ -78,14 +90,14 @@ pub(super) enum PendingPurpose {
 /// 单个 UDP socket 对应的 DHT 状态所有者与消息分派器。
 #[derive(Debug)]
 pub(crate) struct DhtDispatcher {
-    pub(crate) budget: std::sync::Arc<crate::dht::traffic::Budget>,
+    pub(super) budget: std::sync::Arc<crate::dht::traffic::Budget>,
     pub(super) queued: std::collections::VecDeque<super::traffic::Queued>,
     /// 待发队列下次需要推进的最早时间；None 表示无需为该队列设置定时唤醒。
     pub(super) queue_deadline: Option<Instant>,
     pub(super) fetch_ingress: Option<super::fetch::FetchIngress>,
     pub(super) sampling_paused: bool,
-    pub(super) automatic_policy: crate::net::address::AddressPolicy,
-    pub(super) clock: crate::storage::Clock,
+    pub(super) automatic_policy: crate::address::AddressPolicy,
+    pub(super) clock: crate::clock::Clock,
     pub(super) recovery: super::recovery::Recovery,
     /// 负责编解码并收发 KRPC UDP 数据报。
     pub(super) transport: UdpTransport,
@@ -136,11 +148,29 @@ impl DhtDispatcher {
     ///
     /// 一个实例只服务一种地址族。构造时立即检查 socket 与 routing table，可以让
     /// 配置错误在联网前暴露，而不是运行后悄悄丢弃节点。
+    #[cfg(test)]
     pub(crate) fn with_config(
         transport: UdpTransport,
         routing: RoutingTable,
         transactions: TransactionManager,
         config: DhtDispatcherConfig,
+    ) -> Result<(Self, DhtHandle), DispatcherCreateError> {
+        Self::with_budget(
+            transport,
+            routing,
+            transactions,
+            config,
+            std::sync::Arc::default(),
+        )
+    }
+
+    /// 接收会话共享预算；每个地址族只拥有自己的协议状态。
+    pub(crate) fn with_budget(
+        transport: UdpTransport,
+        routing: RoutingTable,
+        transactions: TransactionManager,
+        config: DhtDispatcherConfig,
+        budget: std::sync::Arc<crate::dht::traffic::Budget>,
     ) -> Result<(Self, DhtHandle), DispatcherCreateError> {
         if config.command_capacity == 0 {
             return Err(DispatcherCreateError::EmptyCommandQueue);
@@ -182,7 +212,7 @@ impl DhtDispatcher {
         let maintenance = MaintenanceState::new(maintenance, current_time());
         Ok((
             Self {
-                budget: std::sync::Arc::new(crate::dht::traffic::Budget::default()),
+                budget,
                 queued: Default::default(),
                 queue_deadline: None,
                 fetch_ingress: None,
@@ -201,7 +231,7 @@ impl DhtDispatcher {
                 samples: SampleCache::default(),
                 sampler: super::sampler::Sampler::default(),
                 recovery: super::recovery::Recovery::default(),
-                clock: crate::storage::Clock::default(),
+                clock: crate::clock::Clock::default(),
             },
             DhtHandle { commands: sender },
         ))
@@ -227,8 +257,10 @@ impl DhtDispatcher {
                 .chain(self.queued.iter().map(|q| &q.purpose))
                 .filter_map(|purpose| match purpose {
                     PendingPurpose::Fetch { cancel, .. }
-                    | PendingPurpose::UserPing { cancel, .. }
-                    | PendingPurpose::UserFindNode { cancel, .. } => Some(cancel.clone()),
+                    | PendingPurpose::UserPing { cancel, .. } => Some(cancel.clone()),
+                    #[cfg(test)]
+                    #[cfg(test)]
+                    PendingPurpose::UserFindNode { cancel, .. } => Some(cancel.clone()),
                     _ => None,
                 })
                 .collect();
@@ -385,8 +417,12 @@ impl DhtDispatcher {
             }
             #[cfg(test)]
             Command::SamplingStatus { reply } => {
-                let _ = reply.send(self.sampler.status());
+                let _ = reply.send(super::sampler::SamplerStatus {
+                    collector_paused: self.sampling_paused,
+                    ..self.sampler.status()
+                });
             }
+            #[cfg(test)]
             Command::Ping {
                 remote,
                 reply,
@@ -440,9 +476,13 @@ impl DhtDispatcher {
                     recovery_queued,
                     recovery_active,
                     pending: self.occupied(),
-                    sampler: self.sampler.status(),
+                    sampler: super::sampler::SamplerStatus {
+                        collector_paused: self.sampling_paused,
+                        ..self.sampler.status()
+                    },
                 });
             }
+            #[cfg(test)]
             Command::FindNode {
                 cancel,
                 remote,
@@ -565,6 +605,7 @@ impl DhtDispatcher {
             PendingPurpose::UserPing { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
+            #[cfg(test)]
             PendingPurpose::UserFindNode { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
@@ -609,6 +650,7 @@ impl DhtDispatcher {
                 PendingPurpose::UserPing { reply, .. } => {
                     let _ = reply.send(Err(QueryError::ShuttingDown));
                 }
+                #[cfg(test)]
                 PendingPurpose::UserFindNode { reply, .. } => {
                     let _ = reply.send(Err(QueryError::ShuttingDown));
                 }

@@ -6,7 +6,7 @@
 //!
 //! response 处理器验证并更新联系人；maintenance 依据本表的距离、状态和期限安排探测与刷新。
 
-use crate::krpc::NodeId;
+use crate::dht::krpc::NodeId;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -206,7 +206,7 @@ impl RoutingTable {
         &self,
         now: Instant,
         wall: std::time::SystemTime,
-    ) -> Result<Vec<crate::storage::SavedContact>, crate::storage::StorageError> {
+    ) -> Result<Vec<crate::dht::persistence::SavedContact>, crate::storage::StorageError> {
         self.buckets
             .iter()
             .flat_map(|b| &b.nodes)
@@ -218,10 +218,10 @@ impl RoutingTable {
                 let at = wall
                     .checked_sub(age)
                     .ok_or(crate::storage::StorageError::Invalid("路由时间换算溢出"))?;
-                Ok(crate::storage::SavedContact {
+                Ok(crate::dht::persistence::SavedContact {
                     id: n.id,
                     address: n.address,
-                    responded_at: crate::storage::unix_millis(at)?,
+                    responded_at: crate::clock::unix_millis(at)?,
                 })
             })
             .collect()

@@ -3,8 +3,11 @@
 //! 此处服务远端的采样请求；本机主动发起采样的状态由相邻 sampler 模块持有。
 
 use super::runtime::DhtDispatcher;
+use crate::dht::krpc::InfoHashSamples;
+use crate::dht::krpc::KrpcErrorCode;
+use crate::dht::krpc::QueryArgs;
 use crate::dht::peer_store::PeerStore;
-use crate::krpc::{InfoHashSamples, InfoHashV1, KrpcErrorCode, QueryArgs};
+use crate::info_hash::InfoHashV1;
 use rand::{Rng, seq::SliceRandom};
 use serde_bytes::ByteBuf;
 use std::{

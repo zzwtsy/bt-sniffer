@@ -1,8 +1,14 @@
 //! UDP transport 与 transaction manager 的组合测试。
 
 use super::TransactionManager;
-use crate::krpc::{KrpcMessage, MessageType, NodeId, QueryArgs, QueryMethod, ResponseArgs};
-use crate::net::udp::{UdpTransport, UdpTransportConfig};
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryArgs;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::ResponseArgs;
+use crate::dht::udp::UdpTransport;
+use crate::dht::udp::UdpTransportConfig;
 use std::time::{Duration, Instant};
 
 /// 模拟一次完整 ping，确认请求、响应和 transaction 匹配能够串联工作。

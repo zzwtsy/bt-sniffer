@@ -1,10 +1,9 @@
 //! 使用真实临时 SQLite 验证预约、确认与结算；线程完成靠消息确认，不靠推进虚拟时间。
 use super::*;
-use crate::{
-    dht::routing::AddressFamily,
-    identity::load_or_create,
-    storage::{Storage, StorageConfig},
-};
+use crate::dht::persistence::identity::load_or_create;
+use crate::dht::persistence::test_storage::TestStorage as Storage;
+use crate::dht::routing::AddressFamily;
+use crate::storage::StorageConfig;
 
 /// 保留目录、数据库和会话的独立所有权，测试按原顺序显式关闭数据库。
 struct Fixture {

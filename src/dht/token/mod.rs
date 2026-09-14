@@ -2,7 +2,7 @@
 //!
 //! announce_peer 校验的是此前向同一 IP 发放的 token；token 不证明远端确实持有文件内容。
 
-use crate::krpc::Token;
+use crate::dht::krpc::Token;
 use hmac::{Hmac, KeyInit, Mac};
 use rand::TryRng;
 use sha2::Sha256;

@@ -3,7 +3,7 @@
 //! dispatcher 写入合法宣布并按期清理；get_peers 读取这些地址，metadata 下载不会反向写入。
 
 use super::routing::AddressFamily;
-use crate::krpc::InfoHashV1;
+use crate::info_hash::InfoHashV1;
 use rand::{Rng, seq::IteratorRandom};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) use crate::net::address::AddressPolicy as PeerAddressPolicy;
+pub(crate) use crate::address::AddressPolicy as PeerAddressPolicy;
 
 /// 默认值是本程序的资源策略，不是 BEP 规定的固定数值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

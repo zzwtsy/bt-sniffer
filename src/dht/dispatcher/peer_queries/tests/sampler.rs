@@ -1,7 +1,10 @@
 //! 主动采样 UDP 集成测试：只使用 loopback，并通过结果流和控制接口观察行为。
 use super::*;
-use crate::dht::dispatcher::{SamplerConfig, SamplerError};
-use crate::krpc::{CompactNodesV4, CompactNodesV6, InfoHashSamples};
+use crate::dht::dispatcher::SamplerConfig;
+use crate::dht::dispatcher::SamplerError;
+use crate::dht::krpc::CompactNodesV4;
+use crate::dht::krpc::CompactNodesV6;
+use crate::dht::krpc::InfoHashSamples;
 
 fn config() -> SamplerConfig {
     SamplerConfig {
@@ -373,13 +376,14 @@ async fn discovered_contact_is_followed_but_not_trusted_before_reply() {
     dispatcher.advance_sampler(now).await;
     let request = receive(&seed).await.message;
     let mut message = sample_response(request.t, false);
-    message.r.as_mut().unwrap().nodes = Some(CompactNodesV4(vec![crate::krpc::CompactNodeV4 {
-        id: NodeId([3; 20]),
-        address: match discovered.local_addr().unwrap() {
-            SocketAddr::V4(address) => address,
-            _ => unreachable!(),
-        },
-    }]));
+    message.r.as_mut().unwrap().nodes =
+        Some(CompactNodesV4(vec![crate::dht::krpc::CompactNodeV4 {
+            id: NodeId([3; 20]),
+            address: match discovered.local_addr().unwrap() {
+                SocketAddr::V4(address) => address,
+                _ => unreachable!(),
+            },
+        }]));
     dispatcher
         .handle_response(
             ReceivedMessage {

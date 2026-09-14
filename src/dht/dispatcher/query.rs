@@ -8,12 +8,20 @@ use std::time::Instant;
 
 use super::api::RemoteNode;
 use super::runtime::{DhtDispatcher, PendingPurpose};
-use crate::dht::routing::{AddressFamily, BUCKET_SIZE, QueryObservation};
-use crate::krpc::{
-    CompactNodeV4, CompactNodeV6, CompactNodesV4, CompactNodesV6, KrpcErrorCode, KrpcMessage,
-    MessageType, NodeId, QueryMethod, ResponseArgs,
-};
-use crate::net::udp::ReceivedMessage;
+use crate::dht::krpc::CompactNodeV4;
+use crate::dht::krpc::CompactNodeV6;
+use crate::dht::krpc::CompactNodesV4;
+use crate::dht::krpc::CompactNodesV6;
+use crate::dht::krpc::KrpcErrorCode;
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::ResponseArgs;
+use crate::dht::routing::AddressFamily;
+use crate::dht::routing::BUCKET_SIZE;
+use crate::dht::routing::QueryObservation;
+use crate::dht::udp::ReceivedMessage;
 
 impl DhtDispatcher {
     /// 校验并处理远端发来的查询。

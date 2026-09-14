@@ -5,12 +5,14 @@ use super::{
     api::{Command, QueryError, RemoteNode},
     runtime::{DhtDispatcher, PendingPurpose},
 };
-use crate::{
-    identity::LocalIdentity,
-    krpc::{NodeId, QueryMethod},
-    net::address::AddressPolicy,
-    storage::{RestoredCooldown, SavedContact, StorageError, StorageHandle},
-};
+use crate::address::AddressPolicy;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::persistence::DhtStore;
+use crate::dht::persistence::RestoredCooldown;
+use crate::dht::persistence::SavedContact;
+use crate::dht::persistence::identity::LocalIdentity;
+use crate::storage::StorageError;
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
@@ -59,7 +61,7 @@ impl DhtDispatcher {
     /// 校验身份并挂接冷却存储，将过滤后的磁盘联系人放入恢复队列，不直接加入路由表。
     pub(crate) fn attach_storage(
         &mut self,
-        storage: StorageHandle,
+        storage: DhtStore,
         identity: LocalIdentity,
         contacts: Vec<SavedContact>,
         cooldowns: Vec<RestoredCooldown>,

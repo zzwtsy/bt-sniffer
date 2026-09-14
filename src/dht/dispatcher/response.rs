@@ -7,10 +7,14 @@ use std::time::Instant;
 
 use super::api::{DiscoveredNode, FindNodeResponse, PingResponse, QueryError, RemoteNode};
 use super::runtime::{DhtDispatcher, PendingDispatch, PendingPurpose};
-use crate::dht::routing::{AddressFamily, InsertOutcome, NodeStatus};
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::ResponseArgs;
+use crate::dht::routing::AddressFamily;
+use crate::dht::routing::InsertOutcome;
+use crate::dht::routing::NodeStatus;
 use crate::dht::transaction::TransactionError;
-use crate::krpc::{NodeId, QueryMethod, ResponseArgs};
-use crate::net::udp::ReceivedMessage;
+use crate::dht::udp::ReceivedMessage;
 
 /// 方法级校验完成后才产生的结果，避免为每个新方法增加一个可选参数。
 enum ValidatedResponse {
@@ -103,10 +107,12 @@ impl DhtDispatcher {
                     return;
                 }
             }
-        } else if matches!(
-            &pending.purpose,
-            PendingPurpose::UserFindNode { .. } | PendingPurpose::MaintenanceLookup { .. }
-        ) {
+        } else if match &pending.purpose {
+            PendingPurpose::MaintenanceLookup { .. } => true,
+            #[cfg(test)]
+            PendingPurpose::UserFindNode { .. } => true,
+            _ => false,
+        } {
             match self.decode_find_node_response(&response) {
                 Ok(response) => ValidatedResponse::Nodes(response),
                 Err(error) => {
@@ -176,6 +182,7 @@ impl DhtDispatcher {
             PendingPurpose::UserPing { reply, .. } => {
                 let _ = reply.send(Ok(PingResponse { responder_id }));
             }
+            #[cfg(test)]
             PendingPurpose::UserFindNode { reply, .. } => {
                 let response = decoded.nodes();
                 let _ = reply.send(Ok(response));
@@ -351,6 +358,7 @@ impl DhtDispatcher {
                 }
                 let _ = reply.send(Err(error));
             }
+            #[cfg(test)]
             PendingPurpose::UserFindNode { reply, .. } => {
                 if !remote_replied_with_error {
                     self.record_expected_failure(pending.remote, now);

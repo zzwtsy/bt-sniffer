@@ -1,6 +1,7 @@
 //! 用可控 RNG 和暂停的时钟检查缓存，不把“随机结果必须改变”当作正确性条件。
 use super::*;
-use crate::dht::peer_store::{PeerAddressPolicy, PeerStoreConfig};
+use crate::dht::peer_store::PeerAddressPolicy;
+use crate::dht::peer_store::PeerStoreConfig;
 use crate::dht::routing::AddressFamily;
 use rand::{SeedableRng, rngs::StdRng};
 

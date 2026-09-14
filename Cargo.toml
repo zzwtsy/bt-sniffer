@@ -16,17 +16,15 @@ futures-util = { version = "0.3", features = ["sink"] }
 bytes = "1"
 sha1 = "0.11"
 serde_bytes = "0.11"
-rusqlite = { version = "0.40.2", features = ["bundled", "backup", "functions"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "functions"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-appender = "0.2"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+serde_json = "1"
 socket2 = "0.6"
 directories = "6"
 governor = { version = "0.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-# JSON 和可选过滤仅供事件契约测试使用，生产入口固定文本与 Targets。
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-serde_json = "1"
 tempfile = "3"

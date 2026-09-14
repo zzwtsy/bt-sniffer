@@ -1,12 +1,24 @@
 //! 全部数据报仅发往 loopback；本地地址策略必须由测试显式开启。
 
 use super::*;
-use crate::dht::dispatcher::{DhtDispatcherConfig, DhtHandle, MaintenanceConfig};
-use crate::dht::peer_store::{PeerAddressPolicy, PeerStoreConfig};
-use crate::dht::routing::{AddressFamily, RoutingTable};
+use crate::dht::dispatcher::DhtDispatcherConfig;
+use crate::dht::dispatcher::DhtHandle;
+use crate::dht::dispatcher::MaintenanceConfig;
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::Token;
+use crate::dht::peer_store::PeerAddressPolicy;
+use crate::dht::peer_store::PeerStoreConfig;
+use crate::dht::routing::AddressFamily;
+use crate::dht::routing::RoutingTable;
 use crate::dht::transaction::TransactionManager;
-use crate::krpc::{InfoHashV1, KrpcMessage, MessageType, NodeId, QueryMethod, Token};
-use crate::net::udp::{ReceivedMessage, UdpTransport, UdpTransportConfig, UdpTransportError};
+use crate::dht::udp::ReceivedMessage;
+use crate::dht::udp::UdpTransport;
+use crate::dht::udp::UdpTransportConfig;
+use crate::dht::udp::UdpTransportError;
+use crate::info_hash::InfoHashV1;
 use std::time::Duration;
 
 const HASH: InfoHashV1 = InfoHashV1([9; 20]);

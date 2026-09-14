@@ -1,7 +1,9 @@
 //! 状态机测试不访问公网；用固定的路由节点、显式时间验证预算与冷却。
 use super::*;
-use crate::dht::{peer_store::PeerAddressPolicy, routing::AddressFamily};
-use crate::krpc::{CompactNodesV4, InfoHashSamples};
+use crate::dht::krpc::CompactNodesV4;
+use crate::dht::krpc::InfoHashSamples;
+use crate::dht::peer_store::PeerAddressPolicy;
+use crate::dht::routing::AddressFamily;
 
 fn config() -> SamplerConfig {
     SamplerConfig {

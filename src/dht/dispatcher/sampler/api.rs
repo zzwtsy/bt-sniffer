@@ -5,10 +5,9 @@ use super::super::{
     api::{Command, DhtHandle, DiscoveredNode},
     sampler::PauseReason,
 };
-use crate::{
-    dht::peer_store::PeerAddressPolicy,
-    krpc::{InfoHashV1, NodeId},
-};
+use crate::dht::krpc::NodeId;
+use crate::dht::peer_store::PeerAddressPolicy;
+use crate::info_hash::InfoHashV1;
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -120,6 +119,8 @@ impl std::error::Error for SamplerError {}
 /// pause 表示当前等待原因，是否真正存储失败要同时检查 storage_error。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SamplerStatus {
+    /// collector 暂停独立于采样器内部等待原因。
+    pub(crate) collector_paused: bool,
     pub(crate) storage_error: Option<crate::storage::StorageError>,
     pub(crate) running: bool,
     pub(crate) in_flight: usize,

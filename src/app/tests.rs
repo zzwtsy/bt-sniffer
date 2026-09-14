@@ -1,7 +1,13 @@
 //! 从应用入口验证启动、地址族和关闭；默认用临时目录，公网长时间场景单独忽略。
 use super::*;
-use crate::net::udp::UdpTransportConfig;
+use crate::collection::store::CollectionStore;
+use crate::dht::udp::UdpTransportConfig;
 use clap::Parser;
+
+/// 应用测试使用独立诊断计数，不安装进程全局日志设施。
+async fn run(config: Cli, shutdown: impl Future<Output = ()>) -> Result<(), Vec<String>> {
+    super::run(config, shutdown, &mut logging::test_diagnostics()).await
+}
 
 fn local_cli(dir: &std::path::Path) -> Cli {
     Cli::try_parse_from([
@@ -69,9 +75,15 @@ async fn partial_startup_failure_is_cleaned_up() {
         );
     }
     assert!(
-        start_nodes(&mut session, &local_cli(dir.path()), sockets, &mut handles)
-            .await
-            .is_err()
+        start_nodes(
+            &mut session,
+            &local_cli(dir.path()),
+            &CollectionSettings::new(&local_cli(dir.path())),
+            sockets,
+            &mut handles
+        )
+        .await
+        .is_err()
     );
     session.shutdown().await.unwrap();
     let storage = crate::storage::Storage::open(StorageConfig::new(dir.path()))
@@ -215,7 +227,10 @@ async fn public_collection_two_hours() {
     let storage = crate::storage::Storage::open(StorageConfig::new(&dir))
         .await
         .unwrap();
-    let stats = storage.handle.fetch_stats().await.unwrap();
+    let stats = CollectionStore::new(storage.handle.clone())
+        .fetch_stats()
+        .await
+        .unwrap();
     report.value["statistics"]["storage"] = serde_json::json!(stats);
     eprintln!("public acceptance final: {stats:?}");
     let count = storage
@@ -231,7 +246,7 @@ async fn public_collection_two_hours() {
                 let info: Vec<u8> = row.get(1)?;
                 assert_eq!(Sha1::digest(&info).as_slice(), hash.as_slice());
                 assert_eq!(
-                    crate::peer_wire::dictionary_prefix(&info, 64).unwrap(),
+                    crate::collection::peer::wire::dictionary_prefix(&info, 64).unwrap(),
                     info.as_slice()
                 );
                 count += 1;
@@ -250,4 +265,119 @@ async fn public_collection_two_hours() {
     report.finish(completed, count > 0);
     assert!(completed, "公网验收已正常提前停止，未完成两小时验收");
     assert!(count > 0, "公网两小时没有获取 metadata，互操作闭环尚未通过");
+}
+
+/// 四种运行模式读取同一有效设置，并发和候选上限来自实际控制者。
+#[test]
+fn effective_collection_settings_match_execution() {
+    for (sample, fetch) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut cli = Cli::try_parse_from(["bt-sniffer"]).unwrap();
+        cli.sample = sample;
+        cli.fetch = fetch;
+        let settings = CollectionSettings::new(&cli);
+        assert_eq!(cli.fetch_concurrency, 4);
+        assert_eq!(
+            settings.backpressure,
+            if sample && fetch {
+                crate::collection::SampleBackpressure::Freshness
+            } else {
+                crate::collection::SampleBackpressure::Capacity
+            }
+        );
+        assert_eq!(settings.metadata.task_timeout.as_millis(), 120_000);
+        assert_eq!(settings.metadata.peer_timeout.as_millis(), 30_000);
+        assert_eq!(settings.metadata.connect_timeout.as_millis(), 5_000);
+        assert_eq!(settings.metadata.handshake_timeout.as_millis(), 5_000);
+        assert_eq!(settings.metadata.piece_timeout.as_millis(), 10_000);
+        assert_eq!(crate::collection::MAX_PEER_ATTEMPTS, 8);
+        assert_eq!(settings.metadata.address_policy, cli.policy());
+    }
+}
+
+/// 捕获实际启动事件，验证四种启用组合的具名数值字段与执行配置一致。
+#[tokio::test]
+async fn startup_fields_are_typed_and_match_all_modes() {
+    // 启动 callsite 也会被其他应用测试并发执行；子进程隔离 subscriber 的过滤缓存。
+    const CHILD: &str = "BT_SNIFFER_STARTUP_FIELDS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "app::tests::startup_fields_are_typed_and_match_all_modes",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env_remove("RUST_LOG")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use tracing::instrument::WithSubscriber;
+    for (sample, fetch) in [(false, false), (false, true), (true, false), (true, true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let writer = log.reopen().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_ansi(false)
+            .with_writer(move || writer.try_clone().unwrap())
+            .finish();
+        let mut cli = local_cli(directory.path());
+        cli.sample = sample;
+        cli.fetch = fetch;
+        cli.fetch_concurrency = 7;
+        // 已就绪的退出信号阻止业务资源创建，但仍经过生产启动日志入口。
+        run(cli, async {})
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
+        let text = std::fs::read_to_string(log.path()).unwrap();
+        let event: serde_json::Value = text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|event| event["fields"]["event"] == "application_start")
+            .unwrap();
+        assert_eq!(event["target"], "bt_sniffer::app");
+        let fields = &event["fields"];
+        assert_eq!(fields["schema_version"], 3);
+        assert_eq!(fields["log_contract_version"], 3);
+        assert_eq!(fields["log_filter"], logging::DEFAULT_FILTER);
+        assert!(fields.get("metadata_config").is_none());
+        assert_eq!(fields["sample"], sample);
+        assert_eq!(fields["fetch"], fetch);
+        assert_eq!(fields["concurrency"], 7);
+        assert_eq!(
+            fields["backpressure_basis"],
+            if sample && fetch {
+                "first_attempt_waiting"
+            } else {
+                "capacity"
+            }
+        );
+        for (name, expected) in [
+            ("max_peer_attempts", 8),
+            ("fetch_timeout_ms", 120_000),
+            ("peer_timeout_ms", 30_000),
+            ("connect_timeout_ms", 5_000),
+            ("handshake_timeout_ms", 5_000),
+            ("piece_timeout_ms", 10_000),
+            ("request_window", 4),
+            ("max_metadata_size_bytes", 4 * 1024 * 1024),
+            ("max_frame_size_bytes", 64 * 1024),
+            ("max_header_size_bytes", 4096),
+            ("max_received_bytes", 16 * 1024 * 1024),
+            ("max_depth", 64),
+            ("max_received_frames", 4096),
+        ] {
+            assert_eq!(fields[name].as_u64(), Some(expected), "{name}");
+        }
+        assert_eq!(fields["address_policy"], "LocalUnicast");
+        assert!(!directory.path().join("state.sqlite3").exists());
+    }
 }

@@ -7,10 +7,13 @@ use super::{
     api::{DiscoveredNode, QueryError, RemoteNode},
     runtime::{DhtDispatcher, PendingPurpose},
 };
-use crate::{
-    dht::routing::{NodeStatus, RoutingTable, xor_distance},
-    krpc::{InfoHashV1, NodeId, QueryMethod, ResponseArgs},
-};
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::ResponseArgs;
+use crate::dht::routing::NodeStatus;
+use crate::dht::routing::RoutingTable;
+use crate::dht::routing::xor_distance;
+use crate::info_hash::InfoHashV1;
 pub(crate) use api::{SampleBatch, SamplerConfig, SamplerError, SamplerStatus};
 use std::{
     collections::{HashMap, HashSet},
@@ -102,7 +105,7 @@ pub(super) struct Request {
     /// 采样启停代数，拒绝旧会话的迟到结果；不同于 SQLite 任务领取 generation。
     generation: u64,
     /// 可选磁盘冷却预约；预留成功不代表请求已发出，结束时按发送确定性结算。
-    lease: Option<crate::storage::CooldownLease>,
+    lease: Option<crate::dht::persistence::CooldownLease>,
     pub(super) node: DiscoveredNode,
     pub(super) target: NodeId,
     pub(super) kind: RequestKind,
@@ -542,7 +545,7 @@ impl Sampler {
         {
             Ok(value) => value.unwrap_or_else(std::time::SystemTime::now),
             Err(error) => {
-                self.mark_storage_fault(error);
+                self.mark_storage_fault(error.into());
                 return;
             }
         };

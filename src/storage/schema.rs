@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 /// 新库顺序执行 v1 和 v2，旧库只执行缺少的版本；迁移提交后再补领取索引。
 /// 已是 v2 的数据库也会补索引；该步失败会返回错误，已有数据和版本迁移仍保留。
-pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
+pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version > 2 {
         return Err(StorageError::Invalid("数据库由更新版本程序创建"));
@@ -93,6 +93,13 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
 
 /// 仅补充索引，不改变 schema 版本、记录或已有 metadata。
 fn claim_index(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS infohash_first_seen ON infohashes(first_seen,hash);",
+    )?;
     connection.execute_batch("CREATE INDEX IF NOT EXISTS fetch_claim_due ON fetch_jobs(due_at,hash) WHERE state IN ('pending','retry_wait');")?;
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS fetch_retry_due ON fetch_jobs(due_at,hash)
+         WHERE state IN ('pending','retry_wait') AND generation > 0;",
+    )?;
     Ok(())
 }

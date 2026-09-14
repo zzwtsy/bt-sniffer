@@ -4,6 +4,10 @@
 //!
 //! dispatcher 串行驱动路由、transaction 和采样；上层仅持有控制句柄，避免共享可变协议状态。
 
+pub(crate) mod krpc;
+pub(crate) mod persistence;
+pub(crate) mod udp;
+pub(crate) use krpc::NodeId;
 pub(crate) mod dispatcher;
 pub(crate) mod peer_store;
 pub(crate) mod routing;

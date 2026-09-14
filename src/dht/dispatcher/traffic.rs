@@ -4,10 +4,11 @@ use super::{
     fetch::Outbound,
     runtime::{DhtDispatcher, PendingPurpose},
 };
-use crate::{
-    dht::traffic::Class,
-    krpc::{KrpcMessage, MessageType, NodeId, QueryArgs},
-};
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryArgs;
+use crate::dht::traffic::Class;
 use std::time::{Duration, Instant};
 
 /// 尚未登记 transaction 的待发意图；持有业务上下文、统计票据及本地排队期限。
@@ -32,6 +33,7 @@ impl PendingPurpose {
         match self {
             Self::Fetch { cancel, reply, .. } => cancel.is_cancelled() || reply.is_closed(),
             Self::UserPing { reply, cancel } => reply.is_closed() || cancel.is_cancelled(),
+            #[cfg(test)]
             Self::UserFindNode { reply, cancel } => reply.is_closed() || cancel.is_cancelled(),
             _ => false,
         }
@@ -72,10 +74,12 @@ impl DhtDispatcher {
         mut purpose: PendingPurpose,
         now: Instant,
     ) {
-        let reserve = if matches!(
-            purpose,
-            PendingPurpose::UserPing { .. } | PendingPurpose::UserFindNode { .. }
-        ) {
+        let reserve = if match purpose {
+            PendingPurpose::UserPing { .. } => true,
+            #[cfg(test)]
+            PendingPurpose::UserFindNode { .. } => true,
+            _ => false,
+        } {
             0
         } else {
             self.maintenance.config.reserved_user_transactions.max(1)
@@ -131,7 +135,7 @@ impl DhtDispatcher {
                     queued.record.finish(3);
                     self.finish_start_error(
                         queued.purpose,
-                        QueryError::Transport(crate::net::udp::UdpTransportError::Encode(error)),
+                        QueryError::Transport(crate::dht::udp::UdpTransportError::Encode(error)),
                         now,
                     );
                     continue;

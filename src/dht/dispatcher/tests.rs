@@ -7,13 +7,22 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 
-use crate::dht::routing::{AddressFamily, BUCKET_SIZE, GOOD_FOR, RoutingTable};
+use crate::dht::krpc::CompactNodeV4;
+use crate::dht::krpc::CompactNodesV4;
+use crate::dht::krpc::CompactNodesV6;
+use crate::dht::krpc::KrpcErrorCode;
+use crate::dht::krpc::KrpcMessage;
+use crate::dht::krpc::MessageType;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryArgs;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::routing::AddressFamily;
+use crate::dht::routing::BUCKET_SIZE;
+use crate::dht::routing::GOOD_FOR;
+use crate::dht::routing::RoutingTable;
 use crate::dht::transaction::TransactionManager;
-use crate::krpc::{
-    CompactNodeV4, CompactNodesV4, CompactNodesV6, KrpcErrorCode, KrpcMessage, MessageType, NodeId,
-    QueryArgs, QueryMethod,
-};
-use crate::net::udp::{UdpTransport, UdpTransportError};
+use crate::dht::udp::UdpTransport;
+use crate::dht::udp::UdpTransportError;
 
 /// 创建一个 IPv4 dispatcher，并返回它的查询入口、监听地址和后台任务。
 async fn start_ipv4_dispatcher(
@@ -66,7 +75,7 @@ async fn start_ipv4_maintenance_dispatcher(
         maintenance,
         // 维护测试明确使用本机单播，不依赖公网可达性。
         peer_store: crate::dht::peer_store::PeerStoreConfig {
-            address_policy: crate::net::address::AddressPolicy::LocalUnicast,
+            address_policy: crate::address::AddressPolicy::LocalUnicast,
             ..Default::default()
         },
         ..DhtDispatcherConfig::default()
@@ -727,7 +736,7 @@ async fn pending_limit_is_exposed_as_query_error() {
 async fn send_failure_cancels_registered_transaction() {
     let transport = UdpTransport::bind(
         "127.0.0.1:0",
-        crate::net::udp::UdpTransportConfig {
+        crate::dht::udp::UdpTransportConfig {
             max_message_size: 1,
         },
     )
@@ -1176,7 +1185,7 @@ async fn maintenance_reserves_capacity_for_user_queries() {
 async fn ipv6_maintenance_uses_nodes6() {
     let peer = match UdpTransport::bind("[::1]:0", Default::default()).await {
         Ok(peer) => peer,
-        Err(crate::net::udp::UdpTransportError::Io(error))
+        Err(crate::dht::udp::UdpTransportError::Io(error))
             if error.kind() == std::io::ErrorKind::AddrNotAvailable
                 || matches!(error.raw_os_error(), Some(93 | 97)) =>
         {
@@ -1194,7 +1203,7 @@ async fn ipv6_maintenance_uses_nodes6() {
     routing.observe_response(peer_id, peer.local_addr().unwrap(), now);
     let transactions = TransactionManager::new(Duration::from_secs(1), 8);
     let mut config = DhtDispatcherConfig::default();
-    config.peer_store.address_policy = crate::net::address::AddressPolicy::LocalUnicast;
+    config.peer_store.address_policy = crate::address::AddressPolicy::LocalUnicast;
     let (dispatcher, handle) =
         DhtDispatcher::with_config(transport, routing, transactions, config).unwrap();
     let task = tokio::spawn(dispatcher.run());
@@ -1226,7 +1235,7 @@ async fn unsorted_bootstrap_response_completes_on_both_families() {
                 ..Default::default()
             },
             peer_store: crate::dht::peer_store::PeerStoreConfig {
-                address_policy: crate::net::address::AddressPolicy::LocalUnicast,
+                address_policy: crate::address::AddressPolicy::LocalUnicast,
                 ..Default::default()
             },
             ..Default::default()

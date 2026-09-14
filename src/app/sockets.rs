@@ -1,10 +1,9 @@
 //! 两个 socket 分别负责一种地址族，避免 IPv6 socket 抢占 IPv4 端口。
 //!
 //! 绑定完成后将 socket 所有权交给 app，再由每个 dispatcher 独占其地址族的收发。
-use crate::{
-    config::Cli,
-    net::udp::{UdpTransport, UdpTransportConfig},
-};
+use crate::app::config::Cli;
+use crate::dht::udp::UdpTransport;
+use crate::dht::udp::UdpTransportConfig;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{io, net::SocketAddr};
 
@@ -31,7 +30,14 @@ pub(super) fn bind(config: &Cli) -> Result<Vec<UdpTransport>, String> {
             Err(error)
                 if config.listen_v6.is_none() && !config.ipv6_only && ipv6_unavailable(&error) =>
             {
-                tracing::warn!("环境不支持默认 IPv6 监听，继续 IPv4：{error}");
+                tracing::warn!(
+                    event = "ipv6_listen_unavailable",
+                    schema_version = 1u64,
+                    phase = "startup",
+                    action = "continue_ipv4",
+                    %error,
+                    "环境不支持默认 IPv6 监听，继续 IPv4"
+                );
             }
             Err(error) => return Err(format!("IPv6 监听失败：{error}")),
         }

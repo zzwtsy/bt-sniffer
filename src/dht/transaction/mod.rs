@@ -12,7 +12,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use crate::krpc::QueryMethod;
+use crate::dht::krpc::QueryMethod;
 
 /// 本节点生成的 transaction ID 固定为 4 字节。
 const TRANSACTION_ID_SIZE: usize = 4;
@@ -22,7 +22,7 @@ const TRANSACTION_ID_SIZE: usize = 4;
 pub(crate) struct TransactionId([u8; TRANSACTION_ID_SIZE]);
 
 impl TransactionId {
-    /// 返回适合写入 [`crate::krpc::KrpcMessage::t`] 的字节串。
+    /// 返回适合写入 [`crate::dht::krpc::KrpcMessage::t`] 的字节串。
     pub(super) fn to_byte_buf(self) -> ByteBuf {
         ByteBuf::from(self.0.to_vec())
     }

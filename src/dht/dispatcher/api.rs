@@ -9,11 +9,11 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::dht::krpc::NodeId;
 use crate::dht::peer_store::PeerStoreConfig;
 use crate::dht::routing::AddressFamily;
 use crate::dht::transaction::TransactionError;
-use crate::krpc::NodeId;
-use crate::net::udp::UdpTransportError;
+use crate::dht::udp::UdpTransportError;
 
 /// 默认最多缓存的上层命令数量。
 ///
@@ -193,11 +193,10 @@ impl fmt::Display for QueryError {
             Self::Transaction(error) => write!(formatter, "transaction 操作失败：{error}"),
             Self::Transport(error) => write!(formatter, "查询发送失败：{error}"),
             Self::Timeout => write!(formatter, "DHT 查询等待响应超时"),
-            Self::Remote { code, message } => write!(
-                formatter,
-                "远端返回 KRPC 错误 {code}：{}",
-                String::from_utf8_lossy(message)
-            ),
+            Self::Remote { code, message } => {
+                write!(formatter, "远端返回 KRPC 错误 {code}：")?;
+                write_remote_message(formatter, message)
+            }
             Self::InvalidResponse(reason) => write!(formatter, "KRPC 响应不合法：{reason}"),
             Self::UnexpectedNodeId { expected, actual } => write!(
                 formatter,
@@ -206,6 +205,26 @@ impl fmt::Display for QueryError {
             ),
         }
     }
+}
+
+/// 远端说明只用于诊断：控制字符转义后最多 256 字符，超长追加省略号。
+/// 不切断 UTF-8 或转义序列，不改变 Remote 中保存的原始字节及错误分类。
+fn write_remote_message(formatter: &mut fmt::Formatter<'_>, message: &[u8]) -> fmt::Result {
+    let mut characters = 0;
+    for ch in String::from_utf8_lossy(message).chars() {
+        let escaped = if ch.is_control() {
+            ch.escape_default().to_string()
+        } else {
+            ch.to_string()
+        };
+        let count = escaped.chars().count();
+        if characters + count > 256 {
+            return formatter.write_str("…");
+        }
+        formatter.write_str(&escaped)?;
+        characters += count;
+    }
+    Ok(())
 }
 
 impl Error for QueryError {
@@ -291,10 +310,7 @@ impl DhtHandle {
     ///
     /// 返回成功只说明目标地址给出了合法响应；是否能够加入 routing table 仍由
     /// dispatcher 根据 Node ID、地址族和 bucket 状态决定。
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "保留显式 RPC，自动引导使用独立命令")
-    )]
+    #[cfg(test)]
     pub(crate) async fn ping(&self, remote: RemoteNode) -> Result<PingResponse, QueryError> {
         let cancel = tokio_util::sync::CancellationToken::new();
         let _guard = cancel.clone().drop_guard();
@@ -313,10 +329,7 @@ impl DhtHandle {
     /// 向一个节点发送 find_node，并等待它返回当前地址族的节点列表。
     ///
     /// 返回的 [`DiscoveredNode`] 只是待验证候选，不会在这里自动加入 routing table。
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "保留显式 RPC，自动维护由状态机发包")
-    )]
+    #[cfg(test)]
     pub(crate) async fn find_node(
         &self,
         remote: RemoteNode,
@@ -369,13 +382,13 @@ pub(crate) struct DhtStatus {
 pub(super) enum Command {
     GetPeers {
         remote: RemoteNode,
-        hash: crate::krpc::InfoHashV1,
+        hash: crate::info_hash::InfoHashV1,
         progress: std::sync::Arc<RpcProgress>,
         cancel: tokio_util::sync::CancellationToken,
         reply: oneshot::Sender<Result<super::fetch::GetPeersResponse, QueryError>>,
     },
     FetchSeeds {
-        hash: crate::krpc::InfoHashV1,
+        hash: crate::info_hash::InfoHashV1,
         reply: oneshot::Sender<Vec<DiscoveredNode>>,
     },
     FetchIngress {
@@ -396,7 +409,7 @@ pub(super) enum Command {
     },
     RoutingSnapshot {
         reply: oneshot::Sender<
-            Result<Vec<crate::storage::SavedContact>, crate::storage::StorageError>,
+            Result<Vec<crate::dht::persistence::SavedContact>, crate::storage::StorageError>,
         >,
     },
     StoragePause {
@@ -417,14 +430,14 @@ pub(super) enum Command {
         reply: oneshot::Sender<super::sampler::SamplerStatus>,
     },
     /// 上层请求主动探测一个节点是否可达。
-    #[cfg_attr(not(test), allow(dead_code, reason = "由保留的显式 RPC 接口提交"))]
+    #[cfg(test)]
     Ping {
         cancel: tokio_util::sync::CancellationToken,
         remote: RemoteNode,
         reply: oneshot::Sender<Result<PingResponse, QueryError>>,
     },
     /// 上层请求查找与 `target` 接近的节点。
-    #[cfg_attr(not(test), allow(dead_code, reason = "由保留的显式 RPC 接口提交"))]
+    #[cfg(test)]
     FindNode {
         cancel: tokio_util::sync::CancellationToken,
         remote: RemoteNode,

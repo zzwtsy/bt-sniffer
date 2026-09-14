@@ -163,7 +163,7 @@ impl Drop for QueueRecord {
         let elapsed = self.start.elapsed();
         state.update(|s| {
             s.queue_finished[self.class as usize][self.outcome] += 1;
-            s.queue_wait[self.class as usize].record(elapsed, false);
+            s.queue_wait[self.class as usize].record(elapsed);
             if self.outcome == 2 {
                 s.queue_timeouts += 1;
             }
@@ -195,7 +195,7 @@ pub(crate) struct Stats {
     pub(crate) queued: [u64; 4],
     /// 每类按出队发送、取消、超时、本地拒绝排列。
     pub(crate) queue_finished: [[u64; 4]; 4],
-    pub(crate) queue_wait: [crate::metrics::Histogram; 4],
+    pub(crate) queue_wait: [crate::histogram::Histogram; 4],
     /// 每请求每原因至多一次：类别、IP、字节、IP 表。
     pub(crate) blocked: [[u64; 4]; 4],
     pub(crate) inflight_cancelled: [u64; 4],
@@ -489,7 +489,7 @@ impl Budget {
                         "DHT 待发限制"
                     );
                 }
-                stats.queue_wait[i].log(scope, "dht_queue", class, false);
+                log_histogram(&stats.queue_wait[i], scope, "dht_queue", class);
             }
         }
         for (class, current) in ["collector", "control", "sampling", "verification"]
@@ -554,3 +554,26 @@ impl State {
 }
 #[cfg(test)]
 mod tests;
+
+/// 本切片拥有日志契约；固定桶算法只返回数值，不引用任何业务模块。
+fn log_histogram(histogram: &crate::histogram::Histogram, scope: &str, timing: &str, class: &str) {
+    let p50 = histogram.quantile(50);
+    let p95 = histogram.quantile(95);
+    let p99 = histogram.quantile(99);
+    tracing::info!(
+        event = "duration_histogram",
+        schema_version = 1u64,
+        scope,
+        timing,
+        class,
+        count = histogram.count(),
+        overflow = histogram.overflow(),
+        p50_upper_bound_ms = p50.upper_bound_ms,
+        p50_exceeds_ms = p50.exceeds_ms,
+        p95_upper_bound_ms = p95.upper_bound_ms,
+        p95_exceeds_ms = p95.exceeds_ms,
+        p99_upper_bound_ms = p99.upper_bound_ms,
+        p99_exceeds_ms = p99.exceeds_ms,
+        "固定桶耗时"
+    );
+}

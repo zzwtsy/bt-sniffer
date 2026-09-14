@@ -2,10 +2,12 @@
 //!
 //! Sampler 长期持有预约和结算 future；事件循环取消一次等待不会撤销已接纳的数据库命令。
 use super::*;
-use crate::{
-    identity::LocalIdentity,
-    storage::{Clock, CooldownLease, RestoredCooldown, StorageError, StorageHandle},
-};
+use crate::clock::Clock;
+use crate::dht::persistence::CooldownLease;
+use crate::dht::persistence::DhtStore;
+use crate::dht::persistence::RestoredCooldown;
+use crate::dht::persistence::identity::LocalIdentity;
+use crate::storage::StorageError;
 use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
 #[cfg(test)]
 mod tests;
@@ -20,7 +22,7 @@ pub(super) struct ReservationResult {
 pub(super) struct Durable {
     report: Option<Box<dyn Fn(StorageError) + Send + Sync>>,
     pub(super) clock: Clock,
-    storage: StorageHandle,
+    storage: DhtStore,
     identity: LocalIdentity,
     /// 至多一个待确认预约，future 同时持有原请求；None 表示当前没有等待预约。
     pub(super) reserving: Option<BoxFuture<'static, ReservationResult>>,
@@ -40,7 +42,7 @@ impl Sampler {
     /// 仅在未运行且未挂接时安装持久化状态，将剩余 UTC 毫秒恢复为当前单调期限。
     pub(in crate::dht::dispatcher) fn attach_storage(
         &mut self,
-        storage: StorageHandle,
+        storage: DhtStore,
         identity: LocalIdentity,
         restored: Vec<RestoredCooldown>,
     ) -> Result<(), StorageError> {
@@ -118,7 +120,7 @@ impl Sampler {
         let at = match durable.clock.millis_at(now) {
             Ok(at) => at,
             Err(error) => {
-                self.mark_storage_fault(error);
+                self.mark_storage_fault(error.into());
                 return None;
             }
         };
@@ -178,7 +180,7 @@ impl Sampler {
         let at = match durable.clock.millis_at(now) {
             Ok(at) => at,
             Err(error) => {
-                self.mark_storage_fault(error);
+                self.mark_storage_fault(error.into());
                 return;
             }
         };
@@ -219,7 +221,7 @@ impl Sampler {
                     .push(Box::pin(async move { store.abandon_sampling(lease).await }));
             }
         }
-        // 保持原有发送间隔，防止本地容量不足导致热循环。
+        // 下一次发送至少等待 1 秒，防止本地容量不足导致热循环。
         if let Some(s) = &mut self.session {
             s.next_send = s.next_send.max(now + Duration::from_secs(1));
             self.deadline = Some(s.next_send);

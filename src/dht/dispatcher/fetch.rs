@@ -2,7 +2,11 @@
 //!
 //! collector 经控制句柄查找 peer；dispatcher 持有对应 transaction，取消后负责撤销登记。
 use super::{api::*, runtime::DhtDispatcher};
-use crate::krpc::{CompactPeerAddress, InfoHashV1, NodeId, QueryMethod, ResponseArgs};
+use crate::dht::krpc::CompactPeerAddress;
+use crate::dht::krpc::NodeId;
+use crate::dht::krpc::QueryMethod;
+use crate::dht::krpc::ResponseArgs;
+use crate::info_hash::InfoHashV1;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::HashSet,

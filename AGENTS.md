@@ -12,7 +12,11 @@
 
 rust-readable-apps 是主工作流；[rust-best-practices](.agents/skills/rust-best-practices/SKILL.md) 保留为通用参考，不默认重复加载。涉及任务生命周期、取消、背压或阻塞边界时，按需查阅 [rust-async-patterns](.agents/skills/rust-async-patterns/SKILL.md) 的相关章节。项目协议、数据库、故障恢复及运行边界见 [Rust 开发约束](docs/rust-development.md)，不能因工作流统一而删除这些约束。
 
+编写或审查 README、当前使用说明及 Rust 注释时，发现会话引用、变更叙述或实施阶段残留，可按需使用 [trim-authoring-residue](.agents/skills/trim-authoring-residue/SKILL.md)。默认只检查当前任务涉及的内容；全项目审查须由用户明确要求。历史报告不按当前态文档改写，必要的设计理由、协议版本与运行时状态说明应保留。
+
 遵守适用的指令层级和用户当前任务。保留项目明确的协议、数据兼容、安全及运行约束；不能借“保持简单”绕过它们。历史文档与本文件出现风格冲突时，在任务范围内统一；涉及行为或数据兼容的冲突，先说明影响，不静默删除旧能力。不要声称普通文档能够覆盖更高优先级指令。
+
+涉及日志设计、实现、审查或消费者迁移时，采用 [bt-sniffer-logging](.agents/skills/bt-sniffer-logging/SKILL.md) 专项约定；Rust 主工作流仍为 rust-readable-apps。
 
 ## 必须保持的代码风格
 

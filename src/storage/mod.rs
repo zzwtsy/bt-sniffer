@@ -5,15 +5,11 @@
 //! 命令数和载荷字节分别限制；关闭命令按队列顺序执行，连接和目录锁释放后才确认完成。
 //!
 //! Storage 持有线程生命周期，StorageHandle 只提交有界命令；等待者取消不会提前释放命令的载荷预算。
-mod cooldown;
-pub(crate) mod jobs;
-mod records;
-mod schema;
+pub(crate) mod address;
+pub(crate) mod schema;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use cooldown::{CooldownLease, RestoredCooldown};
-pub(crate) use records::SavedContact;
 use rusqlite::Connection;
 use std::{
     fmt,
@@ -97,10 +93,6 @@ pub(crate) struct StorageHandle {
     sender: mpsc::Sender<StorageCommand>,
     bytes: Arc<Semaphore>,
     byte_capacity: usize,
-    /// 进程内采集接纳上限，0 表示尚未启用；不是数据库中当前任务数量。
-    fetch_limit: Arc<std::sync::atomic::AtomicUsize>,
-    /// 已观察采样 hash 数，可能重复；不代表新增任务或成功下载数。
-    sample_observations: Arc<std::sync::atomic::AtomicU64>,
 }
 impl fmt::Debug for StorageHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -161,8 +153,6 @@ impl Storage {
                 sender,
                 bytes: Arc::new(Semaphore::new(config.byte_capacity)),
                 byte_capacity: config.byte_capacity,
-                fetch_limit: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-                sample_observations: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             },
             finished,
         })
@@ -209,7 +199,7 @@ impl StorageHandle {
         self.sender.closed().await;
     }
     /// 在复制大载荷之前申请预算；预算直到线程处理完该命令才释放。
-    async fn budget(&self, bytes: usize) -> Result<OwnedSemaphorePermit, StorageError> {
+    pub(crate) async fn budget(&self, bytes: usize) -> Result<OwnedSemaphorePermit, StorageError> {
         if bytes > self.byte_capacity {
             return Err(StorageError::Capacity);
         }
@@ -221,7 +211,7 @@ impl StorageHandle {
     }
     // 'static 要求操作不借用可能提前失效的栈数据，不表示操作会永久运行。
     // oneshot 返回一次执行结果；接收者取消等待后，已入队的操作仍会执行。
-    async fn submit<T: Send + 'static>(
+    pub(crate) async fn submit<T: Send + 'static>(
         &self,
         permit: OwnedSemaphorePermit,
         operation: impl FnOnce(&mut Connection) -> Result<T, StorageError> + Send + 'static,
@@ -240,75 +230,16 @@ impl StorageHandle {
     /// 小型操作使用零字节预算，捕获的输入须有独立大小约束；仍占用有界命令队列。
     /// 携带较大复制数据的入口须先 budget 再 submit，不能经本入口绕过载荷限制。
     /// Closed 可能发生在入队前，也可能只是结果通道关闭，不能据此断定事务未提交。
-    pub(super) async fn call<T: Send + 'static>(
+    pub(crate) async fn call<T: Send + 'static>(
         &self,
         operation: impl FnOnce(&mut Connection) -> Result<T, StorageError> + Send + 'static,
     ) -> Result<T, StorageError> {
         self.submit(self.budget(0).await?, operation).await
     }
-    /// 备份目标必须不存在，防止误覆盖已有备份或数据库。
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "保留在线备份能力，尚无运维子命令")
-    )]
-    pub(crate) async fn backup(&self, destination: PathBuf) -> Result<(), StorageError> {
-        self.call(move |connection| {
-            let file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&destination)?;
-            drop(file);
-            connection.backup("main", &destination, None)?;
-            Ok(())
-        })
-        .await
-    }
 }
 
-/// UTC 毫秒只用于磁盘；进程内的 deadline 仍用 Instant。
-pub(crate) fn unix_millis(time: std::time::SystemTime) -> Result<i64, StorageError> {
-    let millis = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| StorageError::Invalid("时间早于 Unix epoch"))?
-        .as_millis();
-    i64::try_from(millis).map_err(|_| StorageError::Invalid("时间溢出"))
-}
-
-/// 一次运行内以单调时钟推进 UTC，避免系统校时改变已经安排好的协议期限。
-#[derive(Debug, Clone)]
-pub(crate) struct Clock {
-    monotonic: std::time::Instant,
-    wall: std::time::SystemTime,
-}
-impl Default for Clock {
-    fn default() -> Self {
-        Self::new(
-            tokio::time::Instant::now().into_std(),
-            std::time::SystemTime::now(),
-        )
-    }
-}
-impl Clock {
-    pub(crate) fn new(monotonic: std::time::Instant, wall: std::time::SystemTime) -> Self {
-        Self { monotonic, wall }
-    }
-    pub(crate) fn wall_at(
-        &self,
-        now: std::time::Instant,
-    ) -> Result<std::time::SystemTime, StorageError> {
-        let elapsed = now
-            .checked_duration_since(self.monotonic)
-            .ok_or(StorageError::Invalid("单调时间回退"))?;
-        self.wall
-            .checked_add(elapsed)
-            .ok_or(StorageError::Invalid("UTC 时间溢出"))
-    }
-    pub(crate) fn millis_at(&self, now: std::time::Instant) -> Result<i64, StorageError> {
-        // 冷却时间向上取整，不能因毫秒精度损失而比远端允许的时间早发包。
-        let wall = self
-            .wall_at(now)?
-            .checked_add(Duration::from_nanos(999_999))
-            .ok_or(StorageError::Invalid("UTC 时间溢出"))?;
-        unix_millis(wall)
+impl From<crate::clock::ClockError> for StorageError {
+    fn from(error: crate::clock::ClockError) -> Self {
+        Self::Invalid(error.label())
     }
 }
