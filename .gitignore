@@ -30,4 +30,5 @@ rustc-ice-*.txt
 *.swo
 
 /docs/bittorrent.org
+/docs/plans
 state/

@@ -132,6 +132,6 @@ fn scheduling_release_comparison() {
         "same release binary and fixed input",
         "simulated completion and claim wait only; no network throughput claim"
     ]);
-    report.finish(true, true);
+    report.finish(true, true).expect("验收报告必须成功保存");
     eprintln!("{}", report.value);
 }

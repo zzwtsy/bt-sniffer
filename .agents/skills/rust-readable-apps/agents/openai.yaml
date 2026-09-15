@@ -1,6 +1,6 @@
 interface:
   display_name: "Rust 可读应用开发"
   short_description: "为 Rust 命令行与后端编写职责清楚、中文注释准确的直接实现"
-  default_prompt: "请使用 $rust-readable-apps 完成当前 Rust 任务：只实现当前需求，明确职责，单文件模块用 .rs、多文件模块用目录及 mod.rs，提供准确中文注释，并验证相关行为。"
+  default_prompt: "请使用 $rust-readable-apps 完成当前 Rust 任务：只实现当前需求，明确职责，按项目源码目录设计定位模块与测试，提供准确中文注释，并验证相关行为。"
 policy:
   allow_implicit_invocation: true

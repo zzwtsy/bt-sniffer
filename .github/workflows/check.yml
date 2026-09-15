@@ -1,0 +1,32 @@
+name: checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  local-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: lychee@0.20.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/docs/package-lock.json
+      - name: Install documentation tools
+        run: npm ci --prefix tools/docs
+      - name: Complete offline checks
+        run: python3 scripts/check.py all
+      - name: Upload failed check evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-evidence
+          path: target/checks/
+          if-no-files-found: warn

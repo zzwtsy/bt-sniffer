@@ -251,7 +251,7 @@ async fn first_attempt_buffer_comparison() {
             assert!(gap[2] <= 10 && gap[3] <= 10);
         }
         let scan = s.backfill_counters.lock().unwrap().total;
-        // backfill_scanned_inserted 数组顺序用于对照 docs/reports/first-attempt-buffer-2026-09-13.json。
+        // 回填比较依次记录近期扫描/插入、历史扫描/插入，以及四类延期计数。
         let scan = [
             scan.recent_scanned,
             scan.recent_inserted,

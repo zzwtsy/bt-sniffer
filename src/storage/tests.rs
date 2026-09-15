@@ -1,6 +1,37 @@
 //! 临时目录隔离事务、预算、恢复和目录锁测试；进程崩溃场景使用专门子进程。
 use super::*;
 
+#[tokio::test]
+async fn directory_lock_is_exclusive_and_released_before_shutdown_returns() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = StorageConfig::new(directory.path());
+    let first = Storage::open(config.clone()).await.unwrap();
+    assert!(matches!(
+        Storage::open(config.clone()).await,
+        Err(StorageError::Locked)
+    ));
+    first.shutdown().await.unwrap();
+    // 不重试、不等待；关闭确认之后必须可以立即重新取得锁。
+    Storage::open(config)
+        .await
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+}
+
+#[test]
+fn non_contention_lock_errors_preserve_system_reason() {
+    let error = std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "test permission denied",
+    );
+    let result = lock_error(std::fs::TryLockError::Error(error));
+    assert!(
+        matches!(result, StorageError::Io(message) if message.contains("test permission denied"))
+    );
+}
+
 // 较新 schema 不允许旧程序修改；迁移中的冲突也必须回滚已创建的表。
 #[tokio::test]
 async fn schema_version_and_failed_migration_are_safe() {

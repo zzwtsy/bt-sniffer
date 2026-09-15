@@ -1,0 +1,11 @@
+{
+  "name": "bt-sniffer-doc-checks",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": "24.x"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.18.1"
+  }
+}

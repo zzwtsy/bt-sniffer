@@ -371,7 +371,9 @@ async fn run_group(concurrency: usize, repetition: usize) -> serde_json::Value {
     });
     assert!(dht.validated_v4 > 0 && dht.validated_v6 > 0);
     report.value["statistics"] = value.clone();
-    report.finish(completed, true);
+    report
+        .finish(completed, true)
+        .expect("验收报告必须成功保存");
     println!("LOOPBACK_GROUP={value}");
     assert!(completed, "用户中止，未完成验收");
     value

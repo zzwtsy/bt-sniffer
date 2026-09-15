@@ -545,7 +545,7 @@ async fn backlog_release_comparison() {
         storage.shutdown().await.unwrap();
         assert!(!dir.join("state.sqlite3-wal").exists());
         report.value["statistics"] = value.clone();
-        report.finish(true, true);
+        report.finish(true, true).expect("验收报告必须成功保存");
         results.push(value);
     }
     assert!(

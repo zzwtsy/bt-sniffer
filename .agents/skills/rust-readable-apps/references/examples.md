@@ -164,7 +164,7 @@ collector 又依赖 session 的错误处理与任务管理定义
 
 同一个状态所有者的私有实现有时可以分布在几个文件中，但如果所有文件都操作几十个共享字段，仅文件数量变多并没有降低理解成本。先确认职责和不变量，再决定是否需要内部小结构体。
 
-单文件模块（包括测试辅助模块）使用 `foo.rs`；模块需要两个及以上文件时使用 `foo/mod.rs`，不保留仅含 `mod.rs` 的目录。Cargo 识别的独立入口如 `tests/smoke.rs`、`examples/demo.rs` 不因此机械改名。大型模块测试可以组织为 `tests/mod.rs` 及职责明确的子模块，小型 `#[cfg(test)] mod tests { ... }` 可保留。多文件模块使用 `mod.rs` 是本项目偏好，不是 Rust 唯一合法布局。
+具体项目应在一个位置维护模块与测试布局规则。bt-sniffer 采用[源码目录设计](../../../../docs/architecture/repository-layout.md)，本例只展示职责判断，不重复定义项目布局。
 
 语言依据：[Rust 模块文件布局](https://doc.rust-lang.org/book/ch07-05-separating-modules-into-different-files.html)、[Cargo 编译目标布局](https://doc.rust-lang.org/cargo/guide/project-layout.html)。
 

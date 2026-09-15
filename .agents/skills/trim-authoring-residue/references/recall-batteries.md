@@ -21,7 +21,7 @@ residue_options=(
   --glob '!vendor/**' --glob '!node_modules/**'
   --glob '!.git/**' --glob '!target/**' --glob '!state/**'
   --glob '!.agents/notes/archived/**'
-  --glob '!docs/reports/**' --glob '!docs/reliability-implementation.md'
+  --glob '!docs/plans/**' --glob '!docs/bittorrent.org/**'
   --glob '!.agents/skills/trim-authoring-residue/**'
 )
 ```

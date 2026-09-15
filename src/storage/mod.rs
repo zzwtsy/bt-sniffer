@@ -177,7 +177,7 @@ fn open_database(directory: &Path) -> Result<(Connection, File), StorageError> {
         .read(true)
         .write(true)
         .open(directory.join("instance.lock"))?;
-    lock.try_lock().map_err(|_| StorageError::Locked)?;
+    lock.try_lock().map_err(lock_error)?;
     if rusqlite::version_number() < 3_051_003 {
         return Err(StorageError::Invalid("SQLite 必须包含 WAL-reset 修复"));
     }
@@ -192,6 +192,16 @@ fn open_database(directory: &Path) -> Result<(Connection, File), StorageError> {
     )?;
     schema::migrate(&mut connection)?;
     Ok((connection, lock))
+}
+
+/// 只把真实锁竞争解释为实例占用；系统错误保留原因，便于区分权限或文件系统故障。
+fn lock_error(error: std::fs::TryLockError) -> StorageError {
+    match error {
+        std::fs::TryLockError::WouldBlock => StorageError::Locked,
+        std::fs::TryLockError::Error(error) => {
+            StorageError::Io(format!("获取状态目录锁失败：{error}"))
+        }
+    }
 }
 impl StorageHandle {
     /// 数据库线程退出会关闭接收端；不消费 shutdown 所需的最终结果。

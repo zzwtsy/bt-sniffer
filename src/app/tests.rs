@@ -262,7 +262,9 @@ async fn public_collection_two_hours() {
         "all_metadata_sha1",
         "all_metadata_complete_dictionary"
     ]);
-    report.finish(completed, count > 0);
+    report
+        .finish(completed, count > 0)
+        .expect("验收报告必须成功保存");
     assert!(completed, "公网验收已正常提前停止，未完成两小时验收");
     assert!(count > 0, "公网两小时没有获取 metadata，互操作闭环尚未通过");
 }
