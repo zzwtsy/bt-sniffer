@@ -44,7 +44,9 @@ freshness 观察近期未首试集合 Q：不含 running、有效提示和 gener
 
 ## 网络轮次与原始字节
 
-worker 每轮最多尝试 8 个 peer，整轮 180 秒。metadata 获取配置的任务期限为 120 秒、peer 30 秒，连接与握手各 5 秒、分片 10 秒；较早到达的外层期限仍能终止内层操作。同 IP TCP 并发限制为 1；get_peers 的采集限制为全局 10/s、每 IP 1/s，还受 DHT 共享预算约束。
+[CandidateSelector](../../src/collection/candidate_selector/mod.rs) 持有每轮的两组 hints 和已选地址集合。worker 先按地址策略和启用地址族过滤 hints，过滤后的前两个条目优先，即使重复也占优先槽；随后每次先取一个当前可读 DHT 候选，DHT 暂无可读结果时才取剩余 hint。优先 hints 存在时不读取 DHT，当前无候选不表示 lookup 已结束。selector 不缓存 DHT 结果、不执行网络操作、不输出事件。
+
+worker 保留逐次地址策略、地址族和去重检查，以及串行 peer 执行、lookup 与下载交叠、取消和期限管理。去重键是完整 SocketAddr，同 IP 不同端口分别计数。已选数在等待 TCP 许可前增加，不代表已建连、下载成功或数据库失败 attempts；非法和重复地址不占名额。worker 每轮最多选择 8 个不同合法地址，整轮 180 秒。metadata 获取配置的任务期限为 120 秒、peer 30 秒，连接与握手各 5 秒、分片 10 秒；较早到达的外层期限仍能终止内层操作。同 IP TCP 并发限制为 1；get_peers 的采集限制为全局 10/s、每 IP 1/s，还受 DHT 共享预算约束。
 
 BEP 9 分片组装后，对原始 info 字节计算 SHA1，并检查一个完整 Bencode 字典和无尾随字节；大小上限 4 MiB。不能重新编码后计算 hash，也不能用扩展握手兼容解析放宽 info 校验。扩展握手只在严格解析遇到 InvalidDictionary 时尝试乱序兼容，边界为 4096 字节、64 层，并拒绝重复键。
 

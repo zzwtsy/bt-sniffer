@@ -6,6 +6,7 @@
 //!
 //! 入口由 app::session 创建并监督；worker 执行单任务，lookup 负责查找，lifecycle 配对退出与领取记录。
 pub(crate) mod backpressure;
+mod candidate_selector;
 #[cfg(test)]
 mod comparison;
 pub(crate) mod diagnostics;

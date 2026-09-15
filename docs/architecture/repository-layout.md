@@ -32,6 +32,7 @@ src/
 ├── collection/             从发现到 metadata 提交
 │   ├── scheduler.rs        领取与 worker 调度
 │   ├── worker.rs           单轮采集和结果处理
+│   ├── candidate_selector/ 同步候选顺序与每轮已选地址集合
 │   ├── lookup.rs           DHT peer 查找
 │   ├── lifecycle.rs        worker 取消、回收及故障处理
 │   ├── jobs/               接纳、领取、提示、状态转换和查询
@@ -98,7 +99,7 @@ src/
 | --- | --- | --- |
 | 增加 CLI 参数 | `app/config.rs` → `app/mod.rs` 或 `collection_config.rs` → 状态所有者 | `app::config::tests`；[运行](../operations/running.md)，有启动字段时核对事件 |
 | 增加 DHT 行为 | `krpc` / `udp` 校验 → dispatcher → transaction / traffic | 相邻 DHT 测试；[DHT](../domains/dht.md) |
-| 调整采集策略 | `jobs/admission.rs`、`jobs/policy`、`claim.rs`、`transitions.rs` → scheduler / worker | jobs 测试和 `collection/tests/recovery.rs`；[采集](../domains/collection.md) |
+| 调整采集策略 | `jobs/admission.rs`、`jobs/policy`、`claim.rs`、`transitions.rs`、`candidate_selector` → scheduler / worker | jobs 测试和 `collection/tests/recovery.rs`；[采集](../domains/collection.md) |
 | 增加存储操作 | 所属 Store 与事务实现；改变结构才修改 `storage/schema.rs` | Store 和 storage 测试；[存储](../domains/storage.md) |
 | 增加日志事件 | 业务事件所有者；输出机制才改 `app/logging` | 事件类型测试、Python 消费者；[事件参考](../domains/log-events.md) |
 

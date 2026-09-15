@@ -3,6 +3,7 @@
 //! run_job 持有查找 future、当前 peer 的 attempt、阶段与进度；不写数据库、不另起查找任务。
 //! 先看候选选择，再看两段 select：等待候选时推进查找，下载期间继续推进同一个查找。
 //! 外层取消或总超时丢弃整段工作，连同查询和连接许可一起收尾；结果由协调器提交。
+use super::candidate_selector::{CandidateSelector, PeerCandidate};
 use super::lookup;
 use crate::address::AddressPolicy;
 use crate::collection::diagnostics::Source;
@@ -86,16 +87,13 @@ pub(super) async fn run_job(
     });
     let dht_active = AtomicBool::new(true);
     let work = async {
-        let mut tried = std::collections::HashSet::new();
         let mut last = None;
-        let mut hints: std::collections::VecDeque<_> = job
+        let eligible_hints = job
             .peers
             .iter()
             .copied()
-            .filter(|p| policy.accepts(*p) && families.iter().any(|f| f.accepts(*p)))
-            .collect();
-        let mut first_hints: std::collections::VecDeque<_> =
-            hints.drain(..hints.len().min(2)).collect();
+            .filter(|p| policy.accepts(*p) && families.iter().any(|f| f.accepts(*p)));
+        let mut selector = CandidateSelector::new(eligible_hints);
         let (sender, mut peers) = mpsc::channel(32);
         let mut lookup = Box::pin(lookup::stream(
             &handles,
@@ -106,12 +104,8 @@ pub(super) async fn run_job(
             progress.clone(),
         ));
         let mut summary = None;
-        while tried.len() < MAX_PEER_ATTEMPTS {
-            let mut next = first_hints
-                .pop_front()
-                .map(|p| (p, Source::Announce))
-                .or_else(|| peers.try_recv().ok().map(|p| (p, Source::Dht)))
-                .or_else(|| hints.pop_front().map(|p| (p, Source::Announce)));
+        while selector.selected_count() < MAX_PEER_ATTEMPTS {
+            let mut next = selector.next_ready(|| peers.try_recv().ok());
             while next.is_none() && summary.is_none() {
                 *stage.lock().expect("执行阶段锁") = ExecutionStage::Dht;
                 tokio::select! {
@@ -120,19 +114,23 @@ pub(super) async fn run_job(
                         dht_active.store(false, Ordering::Relaxed);
                         if let Some(error) = result.fault { return Outcome::Control(error); }
                         summary = Some(result);
-                        next = peers.try_recv().ok().map(|p|(p,Source::Dht));
+                        next = peers.try_recv().ok().map(|address| PeerCandidate { address, source: Source::Dht });
                     }
-                    peer = peers.recv() => { next = peer.map(|p|(p,Source::Dht)); }
+                    peer = peers.recv() => { next = peer.map(|address| PeerCandidate { address, source: Source::Dht }); }
                 }
             }
-            let Some((peer, source)) = next else {
+            let Some(PeerCandidate {
+                address: peer,
+                source,
+            }) = next
+            else {
                 break;
             };
             let rejected = if !policy.accepts(peer) {
                 Some("address_policy")
             } else if !families.iter().any(|f| f.accepts(peer)) {
                 Some("address_family")
-            } else if !tried.insert(peer) {
+            } else if !selector.select_once(peer) {
                 Some("duplicate")
             } else {
                 None
