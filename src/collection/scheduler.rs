@@ -76,7 +76,7 @@ impl Collector {
         ));
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        let mut claim_turn = 0u8;
+        let mut claim_policy = jobs::ClaimPolicy::new();
         let mut cycles = 0u64;
         let mut observed_pause = (false, false, false);
         let mut totals = CompletionTotals::default();
@@ -109,7 +109,7 @@ impl Collector {
                     self.apply_running_outcome(job, result, &mut totals).await?;
                     if !self.storage_paused && !self.stop.is_cancelled() {
                         self.claim_workers(
-                            workers, work_cancel, &resources, &families, &mut claim_turn,
+                            workers, work_cancel, &resources, &families, &mut claim_policy,
                         ).await?;
                     }
                 }
@@ -133,7 +133,7 @@ impl Collector {
                         }
                         backfill_cursor = self.store.backfill_page(self.now()?, backfill_cursor).await?;
                         self.claim_workers(
-                            workers, work_cancel, &resources, &families, &mut claim_turn,
+                            workers, work_cancel, &resources, &families, &mut claim_policy,
                         ).await?;
                         self.update_sampling_backpressure(cycles.is_multiple_of(5)).await?;
                     }
@@ -208,16 +208,12 @@ impl Collector {
         work_cancel: &CancellationToken,
         resources: &Arc<WorkerResources>,
         families: &[crate::dht::routing::AddressFamily],
-        claim_turn: &mut u8,
+        claim_policy: &mut jobs::ClaimPolicy,
     ) -> Result<(), CollectorError> {
         while workers.len() < self.config.concurrency {
             let Some(claim) = self
                 .store
-                .claim_class(
-                    self.now()?,
-                    Some(jobs::ClaimClass::ROTATION[*claim_turn as usize]),
-                    self.config.policy,
-                )
+                .claim_by_order(self.now()?, claim_policy.order(), self.config.policy)
                 .await?
             else {
                 break;
@@ -250,7 +246,7 @@ impl Collector {
                 },
                 1,
             );
-            *claim_turn = (*claim_turn + 1) % 8;
+            claim_policy.on_claimed();
             let observation = job.clone();
             let work = run_job(
                 job,

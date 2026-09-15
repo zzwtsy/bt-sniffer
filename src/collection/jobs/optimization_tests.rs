@@ -49,7 +49,17 @@ async fn four_classes_rotate_and_recovery_remains_retry() {
     let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
     let s = &storage.handle;
     s.enable_fetch(100);
-    for (n, class) in ClaimClass::ROTATION.into_iter().enumerate() {
+    let expected = [
+        ClaimClass::Hint,
+        ClaimClass::Recent,
+        ClaimClass::Retry,
+        ClaimClass::Hint,
+        ClaimClass::History,
+        ClaimClass::Recent,
+        ClaimClass::Retry,
+        ClaimClass::Hint,
+    ];
+    for (n, class) in expected.into_iter().enumerate() {
         let h = hash(n as u32);
         s.save_hashes(&[h], if class == ClaimClass::History { 0 } else { NOW })
             .await
@@ -71,27 +81,16 @@ async fn four_classes_rotate_and_recovery_remains_retry() {
             .unwrap();
         }
     }
-    assert_eq!(
-        ClaimClass::ROTATION,
-        [
-            ClaimClass::Hint,
-            ClaimClass::Recent,
-            ClaimClass::Retry,
-            ClaimClass::Hint,
-            ClaimClass::History,
-            ClaimClass::Recent,
-            ClaimClass::Retry,
-            ClaimClass::Hint,
-        ]
-    );
     let mut first = 0;
     let mut repeat = 0;
-    for class in ClaimClass::ROTATION {
+    let mut policy = ClaimPolicy::new();
+    for class in expected {
         let claim = s
-            .claim_class(NOW, Some(class), AddressPolicy::PublicOnly)
+            .claim_by_order(NOW, policy.order(), AddressPolicy::PublicOnly)
             .await
             .unwrap()
             .unwrap();
+        policy.on_claimed();
         assert_eq!(claim.job.class, class);
         assert!(claim.due_at <= NOW);
         match claim.job.attempt_kind() {
@@ -257,7 +256,12 @@ fn production_queries_use_due_and_recent_indexes() {
     let mut c = Connection::open_in_memory().unwrap();
     crate::storage::schema::migrate(&mut c).unwrap();
     install_peer_policy(&c, AddressPolicy::PublicOnly).unwrap();
-    for class in ClaimClass::ROTATION {
+    for class in [
+        ClaimClass::Hint,
+        ClaimClass::Recent,
+        ClaimClass::Retry,
+        ClaimClass::History,
+    ] {
         let mut q = c
             .prepare(&format!("EXPLAIN QUERY PLAN {}", schedule_sql(Some(class))))
             .unwrap();
@@ -421,6 +425,7 @@ async fn backlog_release_comparison() {
         }
         let mut active: Vec<(Claim, i64)> = Vec::new();
         let mut turn = 0usize;
+        let mut policy = ClaimPolicy::new();
         let mut counts = [0u64; 4];
         let mut waits = Vec::new();
         let mut successes = 0;
@@ -485,13 +490,9 @@ async fn backlog_release_comparison() {
             while active.len() < 4 {
                 let at = std::time::Instant::now();
                 let claim = if optimized {
-                    s.claim_class(
-                        now,
-                        Some(ClaimClass::ROTATION[turn % 8]),
-                        AddressPolicy::PublicOnly,
-                    )
-                    .await
-                    .unwrap()
+                    s.claim_by_order(now, policy.order(), AddressPolicy::PublicOnly)
+                        .await
+                        .unwrap()
                 } else {
                     baseline_claim(s, now, turn).await
                 };
@@ -500,6 +501,9 @@ async fn backlog_release_comparison() {
                     break;
                 };
                 turn += 1;
+                if optimized {
+                    policy.on_claimed();
+                }
                 counts[claim.job.class as usize] += 1;
                 if claim.job.class == ClaimClass::Recent {
                     waits.push(now - claim.first_seen);
@@ -862,5 +866,191 @@ async fn repeat_hints_preserve_due_time_and_frozen_claim() {
     assert_eq!(repeat.job.failed_attempts_before, 1);
     assert_eq!(frozen.class, ClaimClass::Hint);
     assert_eq!(frozen.attempt_kind(), AttemptKind::First);
+    storage.shutdown().await.unwrap();
+}
+
+/// 独立固定输入覆盖四种首选及所有可用类别组合，同时冻结领取字段和最终状态。
+#[tokio::test]
+async fn claim_orders_preserve_fixed_database_facts() {
+    use ClaimClass::{Hint, History, Recent, Retry};
+    let orders = [
+        [Hint, Recent, History, Retry],
+        [Recent, Hint, History, Retry],
+        [Retry, Hint, Recent, History],
+        [History, Hint, Recent, Retry],
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
+    let s = &storage.handle;
+    s.enable_fetch(100);
+    for order in orders {
+        for mask in 0..16u8 {
+            s.call(|c| {
+                c.execute("DELETE FROM peer_hints", [])?;
+                c.execute("DELETE FROM fetch_jobs", [])?;
+                c.execute("DELETE FROM infohashes", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+            for class in [Hint, Recent, Retry, History] {
+                if mask & (1 << class as u8) == 0 {
+                    continue;
+                }
+                for offset in [1, 0] {
+                    let h = hash(class as u32 * 2 + offset);
+                    s.save_hashes(&[h], if class == History { 0 } else { NOW })
+                        .await
+                        .unwrap();
+                    if matches!(class, Hint | Retry) {
+                        s.discover_peer(h, "8.8.8.8:6881".parse().unwrap(), NOW)
+                            .await
+                            .unwrap();
+                    }
+                    s.call(move |c| {
+                        c.execute("UPDATE fetch_jobs SET due_at=?2, generation=?3, attempts=?4 WHERE hash=?1",
+                            params![h.0.as_slice(), NOW - 10, if class == Retry { 7 } else { 0 }, if class == Retry { 2 } else { 0 }])?;
+                        Ok(())
+                    }).await.unwrap();
+                }
+            }
+            // 未到期任务不得影响本轮选择。
+            let future = hash(99);
+            s.save_hashes(&[future], NOW + 1).await.unwrap();
+            let expected = order
+                .into_iter()
+                .find(|class| mask & (1 << *class as u8) != 0);
+            let claim = s
+                .claim_by_order(NOW, order, AddressPolicy::PublicOnly)
+                .await
+                .unwrap();
+            if let Some(class) = expected {
+                let claim = claim.unwrap();
+                assert_eq!(claim.job.hash, hash(class as u32 * 2));
+                assert_eq!(claim.job.class, class);
+                assert_eq!(claim.job.generation, if class == Retry { 8 } else { 1 });
+                assert_eq!(
+                    claim.job.failed_attempts_before,
+                    if class == Retry { 2 } else { 0 }
+                );
+                assert_eq!(claim.due_at, NOW - 10);
+                assert_eq!(claim.first_seen, if class == History { 0 } else { NOW });
+                assert_eq!(claim.job.had_valid_hint, matches!(class, Hint | Retry));
+                let peers = if matches!(class, Hint | Retry) {
+                    vec!["8.8.8.8:6881".parse().unwrap()]
+                } else {
+                    vec![]
+                };
+                assert_eq!(claim.job.peers, peers);
+            } else {
+                assert!(claim.is_none());
+            }
+            s.call(move |c| {
+                let mut q =
+                    c.prepare("SELECT hash,state,generation FROM fetch_jobs ORDER BY hash")?;
+                let rows = q.query_map([], |r| {
+                    Ok((
+                        r.get::<_, Vec<u8>>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (bytes, state, generation) = row?;
+                    let selected = expected.is_some_and(|class| bytes == hash(class as u32 * 2).0);
+                    let retry = bytes == hash(4).0 || bytes == hash(5).0;
+                    assert_eq!(state, if selected { "running" } else { "pending" });
+                    assert_eq!(generation, i64::from(retry) * 7 + i64::from(selected));
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+    }
+    storage.shutdown().await.unwrap();
+}
+
+/// 命中首选后不能再准备后续类别查询；故意移除 Retry 索引使多余查询必然失败。
+#[tokio::test]
+async fn claim_stops_querying_after_first_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
+    let s = &storage.handle;
+    s.enable_fetch(10);
+    s.discover_peer(hash(1), "8.8.8.8:6881".parse().unwrap(), NOW)
+        .await
+        .unwrap();
+    s.call(|c| {
+        c.execute_batch("DROP INDEX fetch_retry_due")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let claim = s
+        .claim_by_order(NOW, ClaimPolicy::new().order(), AddressPolicy::PublicOnly)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.job.hash, hash(1));
+    assert_eq!(claim.job.class, ClaimClass::Hint);
+    // 首选和中间类别都空时确实会访问 Retry，夹具不是无效的失败条件。
+    assert!(
+        s.claim_by_order(NOW, ClaimPolicy::new().order(), AddressPolicy::PublicOnly)
+            .await
+            .is_err()
+    );
+    storage.shutdown().await.unwrap();
+}
+
+/// AFTER UPDATE 的 FAIL 保留语句已做的修改，必须依靠外层事务回滚恢复状态。
+#[tokio::test]
+async fn failed_claim_rolls_back_generation_and_emits_no_applied_fact() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
+    let observer = crate::observation::Observer::new("claim-rollback".into());
+    storage.handle.observer = observer.clone();
+    let s = &storage.handle;
+    s.enable_fetch(10);
+    s.save_hashes(&[hash(1)], NOW).await.unwrap();
+    s.call(|c| {
+        c.execute_batch(
+            "CREATE TRIGGER fail_claim AFTER UPDATE ON fetch_jobs
+            WHEN NEW.state='running' BEGIN SELECT RAISE(FAIL, 'claim fixture'); END;",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(
+        s.claim_by_order(NOW, ClaimPolicy::new().order(), AddressPolicy::PublicOnly)
+            .await
+            .is_err()
+    );
+    s.call(|c| {
+        let row: (String, i64, i64) = c.query_row(
+            "SELECT state,generation,updated_at FROM fetch_jobs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(row, ("pending".into(), 0, NOW));
+        c.execute_batch("DROP TRIGGER fail_claim")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(
+        !observer
+            .page(0, 100, &Default::default())
+            .events
+            .iter()
+            .any(|e| e["step"] == "claim" && e["result"] == "applied")
+    );
+    let claim = s
+        .claim_by_order(NOW, ClaimPolicy::new().order(), AddressPolicy::PublicOnly)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.job.generation, 1);
     storage.shutdown().await.unwrap();
 }

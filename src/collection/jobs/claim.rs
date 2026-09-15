@@ -14,12 +14,34 @@ impl CollectionStore {
             .await
             .map(|claim| claim.map(|claim| claim.job))
     }
-    /// 在同一事务中按类别领取；空类按提示、近期、历史、重试借用。
-    /// None 仅表示按到期时间领取，不改变分类；未到期任务始终不可领取。
-    pub(crate) async fn claim_class(
+    /// 按调用方提供的完整类别顺序原子领取，首个命中即停止查询。
+    /// now_ms 为 UTC 毫秒；空队列返回 None，只有提交后才返回领取事实。
+    pub(in crate::collection) async fn claim_by_order(
+        &self,
+        now_ms: i64,
+        order: [ClaimClass; 4],
+        policy: crate::address::AddressPolicy,
+    ) -> Result<Option<Claim>, StorageError> {
+        self.claim_order(now_ms, Some(order), policy).await
+    }
+
+    /// 测试兼容入口：None 保留全局 due_at/hash 顺序，不采用类别轮转。
+    #[cfg(test)]
+    pub(in crate::collection) async fn claim_class(
         &self,
         now_ms: i64,
         preference: Option<ClaimClass>,
+        policy: crate::address::AddressPolicy,
+    ) -> Result<Option<Claim>, StorageError> {
+        self.claim_order(now_ms, preference.map(super::policy::order_for), policy)
+            .await
+    }
+
+    /// 两种选择方式共用同一事务，分类、版本与提示均来自事务事实。
+    async fn claim_order(
+        &self,
+        now_ms: i64,
+        order: Option<[ClaimClass; 4]>,
         policy: crate::address::AddressPolicy,
     ) -> Result<Option<Claim>, StorageError> {
         let observer = self.observer.clone();
@@ -49,22 +71,18 @@ impl CollectionStore {
                         )
                         .optional()?)
                 };
-            let mut candidate = select(preference)?;
-            if candidate.is_none() && preference.is_some() {
-                for class in [
-                    ClaimClass::Hint,
-                    ClaimClass::Recent,
-                    ClaimClass::History,
-                    ClaimClass::Retry,
-                ] {
-                    if Some(class) != preference {
-                        candidate = select(Some(class))?;
-                    }
+            let candidate = if let Some(order) = order {
+                let mut candidate = None;
+                for class in order {
+                    candidate = select(Some(class))?;
                     if candidate.is_some() {
                         break;
                     }
                 }
-            }
+                candidate
+            } else {
+                select(None)?
+            };
             let Some((hash_bytes, generation, due_at, class, first_seen, failed_attempts_before)) =
                 candidate
             else {

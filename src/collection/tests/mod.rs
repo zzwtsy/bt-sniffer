@@ -256,6 +256,7 @@ async fn verified() -> VerifiedMetadata {
 }
 
 mod acceptance;
+mod claim_policy;
 mod discovery;
 mod limits;
 mod pipeline;

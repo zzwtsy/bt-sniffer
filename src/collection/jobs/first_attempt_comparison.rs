@@ -81,7 +81,7 @@ async fn first_attempt_buffer_comparison() {
         s.save_hashes(&initial, START).await.unwrap();
         let mut first_claims = HashMap::new();
         let mut workers: Vec<(Claim, i64)> = Vec::new();
-        let mut turn = 0;
+        let mut claim_policy = ClaimPolicy::new();
         let mut classes = [0u64; 4];
         let mut last = [0i64; 4];
         let mut gap = [0i64; 4];
@@ -166,18 +166,14 @@ async fn first_attempt_buffer_comparison() {
             while workers.len() < 4 {
                 let start = std::time::Instant::now();
                 let claim = s
-                    .claim_class(
-                        now,
-                        Some(ClaimClass::ROTATION[turn % 8]),
-                        AddressPolicy::PublicOnly,
-                    )
+                    .claim_by_order(now, claim_policy.order(), AddressPolicy::PublicOnly)
                     .await
                     .unwrap();
                 calls.push(start.elapsed().as_micros() as u64);
                 let Some(claim) = claim else {
                     break;
                 };
-                turn += 1;
+                claim_policy.on_claimed();
                 let class = claim.job.class as usize;
                 classes[class] += 1;
                 gap[class] = gap[class].max(second - last[class]);

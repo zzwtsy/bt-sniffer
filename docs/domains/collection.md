@@ -6,7 +6,9 @@
 
 采样 hash 先持久化，任务接纳再受活跃任务数、状态空间及策略约束。announce 提示入口容量为 1024，满时尽力丢弃；采样 ingest 通过有界通道和保存确认提供背压。fetch 可以消费历史 hash 和合法 announce，不要求同时采样。
 
-`jobs/admission.rs` 管理接纳与回填，`claim.rs` 决定到期领取，`hints.rs` 管理提示。领取类别 Hint、Recent、Retry、History 与 First/Repeat 领取历史是不同维度；有有效提示不能把重复任务变成首次领取。当前调度策略版本为 2，首次与重复领取预留机会为 3:1，具体候选不足时的回退由领取 SQL 决定，不是完成吞吐比例保证。
+`jobs/admission.rs` 管理接纳与回填，`jobs/policy` 定义类别轮转与借用顺序，`claim.rs` 按给定顺序在事务内领取到期任务，`hints.rs` 管理提示。领取类别 Hint、Recent、Retry、History 与 First/Repeat 领取历史是不同维度；有有效提示不能把重复任务变成首次领取。当前调度策略版本为 2，首次与重复领取预留机会为 3:1，仅在各类别始终有可领取任务时成立，不保证借用后的实际领取比例或完成吞吐比例。
+
+[ClaimPolicy](../../src/collection/jobs/policy/mod.rs) 的八槽顺序为 Hint → Recent → Retry → Hint → History → Recent → Retry → Hint。首选为空时按 Hint → Recent → History → Retry 借用，跳过已查首选，首个命中即停止。scheduler 在一次 `run_inner` 内持有唯一策略实例，定时和完成补位共用游标；`order()` 只读，正常收到成功领取后推进一槽，借用成功也相同。空队列、存储错误和取消等待不推进，重启从首槽开始。Store 仍在一个事务中查询候选、冻结类别、递增 generation、读取提示并提交；取消等待不证明事务未提交。
 
 Recent 窗口为首次发现后 30 分钟，重复观察不重置 first_seen。每 hash 最多 8 条 peer 提示，TTL 30 分钟。休眠再激活要求满足新的观察与 24 小时延迟条件，不能靠同一旧提示无限重试。策略变更应核对 jobs 的调度、接纳和比较测试，保持统计分类可解释。
 

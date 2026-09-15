@@ -3,6 +3,8 @@
 pub(crate) mod admission;
 mod claim;
 mod hints;
+mod policy;
+pub(super) use policy::ClaimPolicy;
 mod queries;
 pub(super) use queries::CollectionStatusSnapshot;
 mod transitions;
@@ -116,16 +118,6 @@ pub(crate) enum ClaimClass {
     History = 3,
 }
 impl ClaimClass {
-    pub(crate) const ROTATION: [Self; 8] = [
-        Self::Hint,
-        Self::Recent,
-        Self::Retry,
-        Self::Hint,
-        Self::History,
-        Self::Recent,
-        Self::Retry,
-        Self::Hint,
-    ];
     fn from_sql(value: i64) -> Result<Self, StorageError> {
         match value {
             0 => Ok(Self::Hint),
@@ -166,7 +158,7 @@ pub(crate) struct Job {
     pub(crate) peers: Vec<SocketAddr>,
 }
 impl Job {
-    /// claim_class 返回的 generation 已加一，值 1 对应此前未领取的 generation=0。
+    /// 领取事务返回的 generation 已加一，值 1 对应此前未领取的 generation=0。
     pub(crate) fn attempt_kind(&self) -> AttemptKind {
         if self.generation == 1 {
             AttemptKind::First
