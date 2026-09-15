@@ -1,5 +1,6 @@
 //! 新调度和接纳的数据库回归；所有状态位于临时目录，使用受控 UTC 时间。
 use super::*;
+use crate::acceptance::FinishOutcome;
 use crate::address::AddressPolicy;
 use crate::collection::test_storage::TestStorage as Storage;
 use crate::storage::StorageConfig;
@@ -396,8 +397,9 @@ async fn backlog_release_comparison() {
                 "arrival_per_second": 4,
                 "service_ms": 5000,
             }),
-        );
-        report.running();
+        )
+        .expect("初始化验收报告");
+        report.running().expect("报告尚未完成");
         let storage = Storage::open(StorageConfig::new(&dir)).await.unwrap();
         let s = &storage.handle;
         let mut payloads = std::collections::HashMap::new();
@@ -544,8 +546,10 @@ async fn backlog_release_comparison() {
         });
         storage.shutdown().await.unwrap();
         assert!(!dir.join("state.sqlite3-wal").exists());
-        report.value["statistics"] = value.clone();
-        report.finish(true, true).expect("验收报告必须成功保存");
+        report.set_statistics(value.clone()).expect("报告尚未完成");
+        report
+            .finish(FinishOutcome::Passed)
+            .expect("验收报告必须成功保存");
         results.push(value);
     }
     assert!(

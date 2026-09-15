@@ -114,6 +114,11 @@ impl Drop for Session {
     }
 }
 impl Session {
+    /// 仅供慢存储测试在 Session 被消费后回收线程。
+    #[cfg(test)]
+    pub(crate) fn test_close_observer(&mut self) -> tokio::sync::oneshot::Receiver<()> {
+        self.storage.as_mut().unwrap().take_close_observer()
+    }
     #[cfg(test)]
     pub(crate) fn test_budget(&self) -> std::sync::Arc<crate::dht::traffic::Budget> {
         self.budget.clone()

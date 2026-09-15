@@ -148,3 +148,60 @@ async fn verification_cooldown_and_waiting_slots_are_shared_and_bounded() {
     assert!(budget.admit_verification(extra).is_none());
     assert!(budget.snapshot().verification.ip_table > 0);
 }
+
+/// 回调非阻塞探测锁，并在首条输出期间产生新计数；下一快照必须包含该计数。
+#[tokio::test]
+async fn log_releases_budget_lock_and_consumes_interval_once() {
+    // tracing 的 callsite 缓存跨测试共享；独立进程避免探针影响其他 subscriber。
+    const CHILD: &str = "BT_SNIFFER_TRAFFIC_LOCK_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "dht::traffic::tests::log_releases_budget_lock_and_consumes_interval_once",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tracing_subscriber::{Layer, prelude::*};
+    struct Probe {
+        budget: Arc<Budget>,
+        updated: Arc<AtomicBool>,
+    }
+    impl<S: tracing::Subscriber> Layer<S> for Probe {
+        fn on_event(&self, _: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+            assert!(
+                self.budget.0.try_lock().is_ok(),
+                "subscriber 不得在流量锁内调用"
+            );
+            if !self.updated.swap(true, Ordering::SeqCst) {
+                self.budget.update(|stats| stats.inbound_packets += 7);
+            }
+        }
+    }
+    let budget = Arc::new(Budget::default());
+    budget.update(|stats| stats.inbound_packets += 3);
+    let updated = Arc::new(AtomicBool::new(false));
+    let subscriber = tracing_subscriber::registry().with(Probe {
+        budget: budget.clone(),
+        updated: updated.clone(),
+    });
+    tracing::subscriber::with_default(subscriber, || budget.log());
+    assert!(updated.load(Ordering::SeqCst));
+    let second = budget.take_log_snapshot();
+    assert_eq!(second.total.inbound_packets, 10);
+    assert_eq!(second.interval.inbound_packets, 7);
+    let third = budget.take_log_snapshot();
+    assert_eq!(third.total.inbound_packets, 10);
+    assert_eq!(third.interval.inbound_packets, 0);
+}

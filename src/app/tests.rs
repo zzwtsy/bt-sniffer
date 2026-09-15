@@ -1,5 +1,6 @@
 //! 从应用入口验证启动、地址族和关闭；默认用临时目录，公网长时间场景单独忽略。
 use super::*;
+use crate::acceptance::FinishOutcome;
 use crate::collection::store::CollectionStore;
 use crate::dht::udp::UdpTransportConfig;
 use clap::Parser;
@@ -177,8 +178,8 @@ async fn public_collection_two_hours() {
         "public-two-hours",
         &dir,
         serde_json::json!({"dual_stack":true,"sample":true,"fetch":true,"queries_per_sec":20,"inbound_per_sec":200,"upload_payload_bytes_per_sec":262144,"planned_seconds":7200}),
-    );
-    report.running();
+    ).expect("初始化验收报告");
+    report.running().expect("报告尚未完成");
     let timer = async {
         for minute in 1..=120 {
             tokio::time::sleep(Duration::from_secs(60)).await;
@@ -201,12 +202,17 @@ async fn public_collection_two_hours() {
         }
     };
     let result = run_with_budget(cli, shutdown, budget.clone()).await;
-    report.value["run_errors"] = serde_json::json!(result.as_ref().err());
+    report
+        .set_run_errors(result.as_ref().err().cloned())
+        .expect("报告尚未完成");
     let traffic = budget.snapshot();
-    report.value["families"] = serde_json::json!({"ipv4":{"validated_dht_responses":traffic.validated_v4},"ipv6":{"validated_dht_responses":traffic.validated_v6},"metadata_family":"not_attributable_in_schema_v2"});
-    report.value["statistics"]["dht"] = serde_json::json!(traffic);
+    report.set_families(serde_json::json!({"ipv4":{"validated_dht_responses":traffic.validated_v4},"ipv6":{"validated_dht_responses":traffic.validated_v6},"metadata_family":"not_attributable_in_schema_v2"})).expect("报告尚未完成");
+    let mut statistics = serde_json::json!({"dht":traffic});
+    report
+        .set_statistics(statistics.clone())
+        .expect("报告尚未完成");
     if let Err(errors) = result {
-        report.value["status"] = serde_json::json!(if errors.iter().any(|e| {
+        let outcome = if errors.iter().any(|e| {
             let e = e.to_ascii_lowercase();
             [
                 "permission denied",
@@ -218,10 +224,11 @@ async fn public_collection_two_hours() {
             .iter()
             .any(|reason| e.contains(reason))
         }) {
-            "environment_blocked"
+            FinishOutcome::EnvironmentBlocked
         } else {
-            "failed"
-        });
+            FinishOutcome::Failed
+        };
+        report.finish(outcome).expect("验收报告必须成功保存");
         panic!("{errors:?}");
     }
     let storage = crate::storage::Storage::open(StorageConfig::new(&dir))
@@ -231,7 +238,8 @@ async fn public_collection_two_hours() {
         .fetch_stats()
         .await
         .unwrap();
-    report.value["statistics"]["storage"] = serde_json::json!(stats);
+    statistics["storage"] = serde_json::json!(stats);
+    report.set_statistics(statistics).expect("报告尚未完成");
     eprintln!("public acceptance final: {stats:?}");
     let count = storage
         .handle
@@ -256,14 +264,27 @@ async fn public_collection_two_hours() {
         .await
         .unwrap();
     storage.shutdown().await.unwrap();
-    report.value["verification"] = serde_json::json!([
-        "normal_shutdown",
-        "sqlite_integrity_check",
-        "all_metadata_sha1",
-        "all_metadata_complete_dictionary"
-    ]);
     report
-        .finish(completed, count > 0)
+        .set_verification(
+            [
+                "normal_shutdown",
+                "sqlite_integrity_check",
+                "all_metadata_sha1",
+                "all_metadata_complete_dictionary",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        )
+        .expect("报告尚未完成");
+    report
+        .finish(if !completed {
+            FinishOutcome::Aborted
+        } else if count > 0 {
+            FinishOutcome::Passed
+        } else {
+            FinishOutcome::Failed
+        })
         .expect("验收报告必须成功保存");
     assert!(completed, "公网验收已正常提前停止，未完成两小时验收");
     assert!(count > 0, "公网两小时没有获取 metadata，互操作闭环尚未通过");

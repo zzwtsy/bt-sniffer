@@ -66,6 +66,8 @@ class 为 collector/control/sampling/verification。流量约束与突发解释�
 
 First/Repeat 是领取历史，failed_attempts_before 是此前远端失败轮数，两者不等价。领取、结束和提交可以跨区间，不能用同一个 interval 的任意分子分母直接算成功率。
 
+流量事件从固定大小快照输出，锁在 subscriber 回调前释放。采集每分钟数据库事件共用一次读取快照，但不与进程内计数形成原子整体；协调器诊断事件的 target 使用实际模块路径 `bt_sniffer::collection::status`，模块拆分时随归属变化。取走的区间计数不会因过滤或丢弃恢复，保证边界见[日志机制](logging.md)。
+
 ## peer、兼容与接纳诊断
 
 | 事件 / 版本 | 字段及边界 |

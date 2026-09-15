@@ -1,26 +1,52 @@
 //! 记录源码范围、执行产物与工具链；源码当前内容不构成二进制构建一致性证明。
-use serde_json::{Value, json};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{fs, io, path::Path, process::Command};
 
-pub(super) fn collect() -> io::Result<Value> {
+/// 运行时取得的源码和工具链身份；与 Python 的摘要范围保持一致。
+#[derive(Serialize)]
+pub(super) struct RunIdentity {
+    source_scope: &'static str,
+    source_sha256: String,
+    source_manifest: String,
+    artifact: ArtifactIdentity,
+    build_source_consistency: &'static str,
+    command: Vec<String>,
+    cwd: std::path::PathBuf,
+    git_head: String,
+    git_status: String,
+    toolchain: String,
+    cargo: String,
+}
+
+#[derive(Serialize)]
+struct ArtifactIdentity {
+    kind: &'static str,
+    path: std::path::PathBuf,
+    sha256: String,
+}
+
+pub(super) fn collect() -> io::Result<RunIdentity> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let (source_sha256, source_manifest) = source_digest(root)?;
     let executable = std::env::current_exe()?;
-    Ok(json!({
-        "source_scope": "cargo-src-tests-scripts-config-v1",
-        "source_sha256": source_sha256,
-        "source_manifest": source_manifest,
-        "artifact": {"kind": "test_executable", "path": executable,
-            "sha256": file_digest(&executable)?},
-        "build_source_consistency": "not_verified_runtime_source_snapshot",
-        "command": std::env::args().collect::<Vec<_>>(),
-        "cwd": std::env::current_dir()?,
-        "git_head": command(root, "git", &["rev-parse", "HEAD"])?.trim(),
-        "git_status": command(root, "git", &["status", "--porcelain=v1"] )?,
-        "toolchain": command(root, "rustc", &["-Vv"] )?,
-        "cargo": command(root, "cargo", &["-V"] )?
-    }))
+    Ok(RunIdentity {
+        source_scope: "cargo-src-tests-scripts-config-v1",
+        source_sha256,
+        source_manifest,
+        artifact: ArtifactIdentity {
+            kind: "test_executable",
+            sha256: file_digest(&executable)?,
+            path: executable,
+        },
+        build_source_consistency: "not_verified_runtime_source_snapshot",
+        command: std::env::args().collect(),
+        cwd: std::env::current_dir()?,
+        git_head: command(root, "git", &["rev-parse", "HEAD"])?.trim().into(),
+        git_status: command(root, "git", &["status", "--porcelain=v1"])?,
+        toolchain: command(root, "rustc", &["-Vv"])?,
+        cargo: command(root, "cargo", &["-V"])?,
+    })
 }
 
 fn command(root: &Path, name: &str, args: &[&str]) -> io::Result<String> {

@@ -641,3 +641,179 @@ async fn classified_commits_require_applied_in_running_and_cleanup_paths() {
         }
     }
 }
+
+/// 实际协调器在完成或诊断 SQL 上阻塞时关闭；队列满也不能绕过共同期限。
+#[tokio::test]
+async fn slow_storage_shutdown_preserves_accepted_commands_and_completion_boundary() {
+    use crate::collection::test_storage::{BlockedOperation, CommandBarrier};
+    #[derive(Clone, Copy, Debug)]
+    enum Waiting {
+        Queue,
+        Completion,
+        Snapshot,
+    }
+    for waiting in [Waiting::Queue, Waiting::Completion, Waiting::Snapshot] {
+        for expires in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut settings = StorageConfig::new(dir.path());
+            settings.command_capacity = 1;
+            let mut session = Session::open(settings.clone()).await.unwrap();
+            let closed = session.test_close_observer();
+            let mut node_config = DhtDispatcherConfig::default();
+            node_config.maintenance.enabled = false;
+            node_config.peer_store.address_policy = AddressPolicy::LocalUnicast;
+            let handle = session
+                .add_node(
+                    "test",
+                    udp(AddressFamily::Ipv4).await,
+                    TransactionManager::new(Duration::from_secs(1), 32),
+                    node_config,
+                    AddressPolicy::LocalUnicast,
+                )
+                .await
+                .unwrap();
+            let store = session.test_store();
+            store.enable_fetch(16);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let (peer, completed_peer) = if matches!(waiting, Waiting::Completion) {
+                let (peer, task) = tcp(AddressFamily::Ipv4).await;
+                (peer, Some(task))
+            } else {
+                (listener.local_addr().unwrap(), None)
+            };
+            let observed = now().unwrap();
+            store.save_hashes(&[hash()], observed).await.unwrap();
+            store.discover_peer(hash(), peer, observed).await.unwrap();
+            let (entered, ready) = tokio::sync::oneshot::channel();
+            let (release, blocked) = std::sync::mpsc::channel();
+            *store.test_barrier.lock().unwrap() = Some((
+                if matches!(waiting, Waiting::Completion) {
+                    BlockedOperation::Completion
+                } else {
+                    BlockedOperation::Status
+                },
+                CommandBarrier {
+                    entered,
+                    release: blocked,
+                },
+            ));
+            session.start_fetch(config(dir.path())).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(3), ready)
+                .await
+                .unwrap()
+                .unwrap();
+            // 到达 SQL 屏障时，完成场景已通过真实 peer 校验；其他场景保留尚未完成的 worker。
+            let mut socket = if let Some(task) = completed_peer {
+                task.await.unwrap();
+                None
+            } else {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                let mut hello = [0; 68];
+                socket.read_exact(&mut hello).await.unwrap();
+                Some(socket)
+            };
+            // 只有 Queue 场景填满命令槽；另外两项单独覆盖协调器等待结果。
+            let mut queued = Box::pin(store.call(|_| Ok(())));
+            if matches!(waiting, Waiting::Queue) {
+                assert!(futures_util::poll!(&mut queued).is_pending());
+            }
+            tokio::time::pause();
+            let mut shutdown = Box::pin(session.shutdown());
+            assert!(futures_util::poll!(&mut shutdown).is_pending());
+            if expires {
+                tokio::time::advance(Duration::from_secs(31)).await;
+                let errors = shutdown.await.unwrap_err();
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains("30 秒") && error.contains("回收采集协调器")),
+                    "{errors:?}"
+                );
+                tokio::time::resume();
+                assert!(matches!(
+                    crate::storage::Storage::open(settings.clone()).await,
+                    Err(StorageError::Locked)
+                ));
+                release.send(()).unwrap();
+            } else {
+                tokio::time::resume();
+                release.send(()).unwrap();
+                shutdown.await.unwrap();
+            }
+            if matches!(waiting, Waiting::Queue) {
+                queued.await.unwrap();
+            } else {
+                drop(queued);
+            }
+            if let Some(socket) = &mut socket {
+                let mut byte = [0];
+                assert_eq!(
+                    tokio::time::timeout(Duration::from_secs(3), socket.read(&mut byte))
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                    0
+                );
+            }
+            drop(handle);
+            drop(store);
+            tokio::time::timeout(Duration::from_secs(5), closed)
+                .await
+                .unwrap()
+                .unwrap();
+            let reopened = crate::collection::test_storage::TestStorage::open(settings)
+                .await
+                .unwrap();
+            let expected = if matches!(waiting, Waiting::Completion) {
+                "succeeded"
+            } else if expires {
+                "running"
+            } else {
+                "retry_wait"
+            };
+            let state = reopened
+                .handle
+                .call(|c| {
+                    Ok(c.query_row(
+                        "SELECT state,generation,attempts FROM fetch_jobs WHERE hash=?1",
+                        [hash().0.as_slice()],
+                        |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, i64>(1)?,
+                                r.get::<_, i64>(2)?,
+                            ))
+                        },
+                    )?)
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                state,
+                (expected.into(), 1, 0),
+                "{waiting:?}, expires={expires}"
+            );
+            assert_eq!(
+                reopened.handle.metadata(hash()).await.unwrap().is_some(),
+                matches!(waiting, Waiting::Completion)
+            );
+            if matches!(waiting, Waiting::Completion) {
+                let hints = reopened
+                    .handle
+                    .call(|c| {
+                        Ok(c.query_row("SELECT count(*) FROM peer_hints", [], |r| {
+                            r.get::<_, i64>(0)
+                        })?)
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(hints, 0);
+            }
+            reopened.shutdown().await.unwrap();
+        }
+    }
+}

@@ -485,7 +485,8 @@ async fn recovery_rejects_unexpected_identity() {
 #[tokio::test(start_paused = true)]
 async fn shutdown_timeout_is_reported() {
     let dir = tempfile::tempdir().unwrap();
-    let session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
+    let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
+    let closed = session.test_close_observer();
     session.faults.push("最初的 socket 故障".into());
     session.faults.push("后续快照失败".into());
     let handle = session.storage.as_ref().unwrap().handle.clone();
@@ -512,6 +513,13 @@ async fn shutdown_timeout_is_reported() {
     assert!(error.iter().any(|e| e == "后续快照失败"));
     release.send(()).unwrap();
     job.await.unwrap().unwrap();
+    closed.await.unwrap();
+    Storage::open(StorageConfig::new(dir.path()))
+        .await
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
 }
 
 // 数据库线程被占住时，UDP 仍能及时回应；不能在 dispatcher 内 await SQL。

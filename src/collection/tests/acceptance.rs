@@ -1,5 +1,6 @@
 //! 显式本机长时间验收，不属于默认测试。
 use super::*;
+use crate::acceptance::FinishOutcome;
 
 /// 显式运行的真实时间耐久测试；混合合法宣布、重复 hash、无效 token 和 DHT 服务查询。
 #[tokio::test]
@@ -15,13 +16,13 @@ async fn sustained_mixed_loopback_30_minutes() {
         "local-thirty-minutes",
         &dir,
         serde_json::json!({"planned_seconds":1800,"workers":2,"max_active":16,"rss_growth_limit_bytes":33554432,"dht_defaults":true}),
-    );
+    ).expect("初始化验收报告");
     let Fixture {
         mut session,
         handle,
         address,
     } = fixture(&dir, AddressFamily::Ipv4).await;
-    report.running();
+    report.running().expect("报告尚未完成");
     let budget = session.test_budget();
     let store = session.test_store();
     session.start_fetch(config(&dir)).await.unwrap();
@@ -155,20 +156,29 @@ async fn sustained_mixed_loopback_30_minutes() {
     }
     let stats = store.fetch_stats().await.unwrap();
     let shutdown = session.shutdown().await;
-    report.value["statistics"] = serde_json::json!({"rounds":rounds,"peak_rss_kib":peak_rss,"rss_floor_kib":memory_floor,"storage":stats,"dht":budget.snapshot()});
-    report.value["families"] =
-        serde_json::json!({"ipv4":"loopback exercised","ipv6":"not exercised by this scenario"});
-    report.value["verification"] = serde_json::json!([
-        "active and running bounds",
-        "healthy control within 2 seconds",
-        "rss growth after 60 second warmup",
-        "normal shutdown"
-    ]);
+    report.set_statistics(serde_json::json!({"rounds":rounds,"peak_rss_kib":peak_rss,"rss_floor_kib":memory_floor,"storage":stats,"dht":budget.snapshot()})).expect("报告尚未完成");
+    report.set_families(serde_json::json!({"ipv4":"loopback exercised","ipv6":"not exercised by this scenario"})).expect("报告尚未完成");
     report
-        .finish(
-            completed || result.is_err(),
-            result.is_ok() && shutdown.is_ok() && stats.metadata_count > 0,
+        .set_verification(
+            [
+                "active and running bounds",
+                "healthy control within 2 seconds",
+                "rss growth after 60 second warmup",
+                "normal shutdown",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         )
+        .expect("报告尚未完成");
+    report
+        .finish(if !completed && result.is_ok() {
+            FinishOutcome::Aborted
+        } else if result.is_ok() && shutdown.is_ok() && stats.metadata_count > 0 {
+            FinishOutcome::Passed
+        } else {
+            FinishOutcome::Failed
+        })
         .expect("验收报告必须成功保存");
     shutdown.unwrap();
     if let Err(panic) = result {

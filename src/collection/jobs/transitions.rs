@@ -119,7 +119,14 @@ impl CollectionStore {
         // 入队前先取得 metadata 字节预算；job、metadata 和许可一起移入命令。
         // 入队后许可由命令持有到处理结束，不因调用者取消 oneshot 等待而提前释放。
         let permit = self.budget(metadata.info().len()).await?;
+        #[cfg(test)]
+        let barrier =
+            self.take_test_barrier(super::super::test_storage::BlockedOperation::Completion);
         self.submit(permit, move |connection| {
+            #[cfg(test)]
+            if let Some(barrier) = barrier {
+                barrier.wait()?;
+            }
             let tx = connection.transaction()?;
             let current: bool = tx.query_row(
                 "SELECT EXISTS (

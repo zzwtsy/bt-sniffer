@@ -104,8 +104,15 @@ pub(crate) struct Storage {
     pub(crate) handle: StorageHandle,
     /// 数据库连接关闭并释放目录锁后发送结果；由唯一 Storage 所有者消费。
     finished: oneshot::Receiver<Result<(), StorageError>>,
+    #[cfg(test)]
+    closed: Option<oneshot::Receiver<()>>,
 }
 impl Storage {
+    /// 测试在所有者超时被丢弃后，仍须确认连接和目录锁已释放。
+    #[cfg(test)]
+    pub(crate) fn take_close_observer(&mut self) -> oneshot::Receiver<()> {
+        self.closed.take().expect("关闭观察者只能领取一次")
+    }
     /// 校验容量并启动独占 SQLite 的线程；返回前等待连接、锁和迁移准备完成。
     /// 初始化失败返回具体错误；取消等待会丢弃接收端，线程发现已无控制者后退出。
     pub(crate) async fn open(config: StorageConfig) -> Result<Self, StorageError> {
@@ -120,6 +127,8 @@ impl Storage {
         let (sender, mut receiver) = mpsc::channel::<StorageCommand>(config.command_capacity);
         let (ready_tx, ready_rx) = oneshot::channel();
         let (done_tx, finished) = oneshot::channel();
+        #[cfg(test)]
+        let (closed_tx, closed) = oneshot::channel();
         std::thread::Builder::new()
             .name("sqlite-storage".into())
             .spawn(move || {
@@ -146,6 +155,8 @@ impl Storage {
                 let result = connection.close().map_err(|(_, e)| StorageError::from(e));
                 drop(lock);
                 let _ = done_tx.send(result);
+                #[cfg(test)]
+                let _ = closed_tx.send(());
             })?;
         ready_rx.await.map_err(|_| StorageError::Closed)??;
         Ok(Self {
@@ -155,6 +166,8 @@ impl Storage {
                 byte_capacity: config.byte_capacity,
             },
             finished,
+            #[cfg(test)]
+            closed: Some(closed),
         })
     }
     /// 排入关闭屏障并等待连接关闭、目录锁释放；成功不等于所有 handle 已被销毁。

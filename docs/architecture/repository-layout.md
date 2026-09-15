@@ -40,6 +40,7 @@ src/
 │   │   └── wire/           帧、扩展握手和兼容边界
 │   ├── ingest/             采样批次保存与确认
 │   ├── diagnostics/        采集指标及事件聚合
+│   ├── status.rs           每分钟诊断组装与数据库快照输出
 │   ├── store.rs            采集 SQL 入口
 │   ├── backpressure.rs    采样背压策略
 │   ├── tcp_limits.rs      TCP 许可

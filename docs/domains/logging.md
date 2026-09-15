@@ -18,6 +18,12 @@ main 持有 guard 到业务关闭、runtime 收尾和最终诊断结束。guard 
 
 采用有界丢弃输出保护网络事件循环，代价是过载时观测不完整。如果确有必须可靠保存的业务证据，应设计独立持久化路径及其资源预算，而不是把所有日志改成无限缓冲；重访依据是明确的可靠性需求与实测丢弃情况。
 
+## 流量日志的临界区
+
+[traffic](../../src/dht/traffic/mod.rs) 在一次 Budget 锁持有期间清理过期状态、复制累计 Stats、取走区间 Stats，并读取 IP 数与各类队列占用；固定大小的 TrafficLogSnapshot 不复制 IP 明细。释放锁后才调用 tracing，subscriber 回调不会持有流量锁。快照之后产生的新计数属于下一区间，过滤或丢弃不恢复已取走计数。
+
+这缩短了临界区，但同步格式化和 subscriber 仍占用调用线程；current_thread 事件循环没有因此免除日志开销。验证入口是 `dht::traffic::tests::log_releases_budget_lock_and_consumes_interval_once`，字段类型仍由事件契约测试验证。
+
 ## 修改时核对
 
 输出机制变更核对过滤、两端写入、轮转、run_id、guard 生命周期；事件变更核对所有 tracing 生产者、事件类型测试、诊断工具和聚合字段。日志专项方法见 [bt-sniffer-logging](../../.agents/skills/bt-sniffer-logging/SKILL.md)。

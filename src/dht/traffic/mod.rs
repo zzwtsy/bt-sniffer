@@ -410,102 +410,125 @@ impl Budget {
     fn update(&self, f: impl Fn(&mut Stats)) {
         self.0.lock().expect("流量锁").update(f);
     }
-    /// 清理 IP 表并取走区间统计；当前实现持 Budget 锁输出，队列丢弃也不会还原区间。
+    /// 锁内只清理和取得固定大小快照；区间取走后不会因过滤或投递丢弃还原。
+    fn take_log_snapshot(&self) -> TrafficLogSnapshot {
+        let mut state = self.0.lock().expect("流量锁");
+        state.clean();
+        TrafficLogSnapshot {
+            total: state.total.clone(),
+            interval: std::mem::take(&mut state.interval),
+            tracked_ips: state.ips.len(),
+            verification_queued: state.verification_queued,
+            queued_current: state.queued_current,
+        }
+    }
+    /// 格式化和 subscriber 回调均在流量锁释放后执行，仍占用当前调用线程。
     pub(crate) fn log(&self) {
-        let mut s = self.0.lock().expect("流量锁");
-        s.clean();
-        let interval = std::mem::take(&mut s.interval);
+        log_snapshot(self.take_log_snapshot());
+    }
+}
+
+/// 只保留统计与占用，不复制远端 IP 明细或限流器。
+struct TrafficLogSnapshot {
+    total: Stats,
+    interval: Stats,
+    tracked_ips: usize,
+    verification_queued: u64,
+    queued_current: [u64; 4],
+}
+
+fn log_snapshot(snapshot: TrafficLogSnapshot) {
+    tracing::info!(
+        event = "dht_occupancy",
+        schema_version = 1u64,
+        tracked_ips = snapshot.tracked_ips,
+        verification_queued = snapshot.verification_queued,
+        "DHT 当前占用"
+    );
+    for (scope, stats) in [("total", &snapshot.total), ("interval", &snapshot.interval)] {
         tracing::info!(
-            event = "dht_occupancy",
+            event = "dht_traffic",
             schema_version = 1u64,
-            tracked_ips = s.ips.len(),
-            verification_queued = s.verification_queued,
-            "DHT 当前占用"
+            scope,
+            inbound_packets = stats.inbound_packets,
+            inbound_bytes = stats.inbound_bytes,
+            reply_packets = stats.reply_packets,
+            reply_bytes = stats.reply_bytes,
+            limited_drops = stats.limited_drops,
+            queue_timeouts = stats.queue_timeouts,
+            validated_v4 = stats.validated_v4,
+            validated_v6 = stats.validated_v6,
+            "DHT 流量"
         );
-        for (scope, stats) in [("total", &s.total), ("interval", &interval)] {
+        let v = &stats.verification;
+        tracing::info!(
+            event = "verification_admission",
+            schema_version = 1u64,
+            scope,
+            admitted = v.admitted,
+            duplicate = v.duplicate,
+            cooldown = v.cooldown,
+            capacity = v.capacity,
+            ip_table = v.ip_table,
+            succeeded = v.succeeded,
+            failed = v.failed,
+            "反向验证接纳"
+        );
+        for (i, class) in ["collector", "control", "sampling", "verification"]
+            .iter()
+            .enumerate()
+        {
             tracing::info!(
-                event = "dht_traffic",
+                event = "dht_class",
                 schema_version = 1u64,
                 scope,
-                inbound_packets = stats.inbound_packets,
-                inbound_bytes = stats.inbound_bytes,
-                reply_packets = stats.reply_packets,
-                reply_bytes = stats.reply_bytes,
-                limited_drops = stats.limited_drops,
-                queue_timeouts = stats.queue_timeouts,
-                validated_v4 = stats.validated_v4,
-                validated_v6 = stats.validated_v6,
-                "DHT 流量"
+                class,
+                packets = stats.packets[i],
+                bytes = stats.bytes[i],
+                queued = stats.queued[i],
+                dequeued_to_send = stats.queue_finished[i][0],
+                queued_cancelled = stats.queue_finished[i][1],
+                queue_timeouts = stats.queue_finished[i][2],
+                local_rejected = stats.queue_finished[i][3],
+                inflight_cancelled = stats.inflight_cancelled[i],
+                "DHT 类别计数"
             );
-            let v = &stats.verification;
-            tracing::info!(
-                event = "verification_admission",
-                schema_version = 1u64,
-                scope,
-                admitted = v.admitted,
-                duplicate = v.duplicate,
-                cooldown = v.cooldown,
-                capacity = v.capacity,
-                ip_table = v.ip_table,
-                succeeded = v.succeeded,
-                failed = v.failed,
-                "反向验证接纳"
-            );
-            for (i, class) in ["collector", "control", "sampling", "verification"]
-                .iter()
-                .enumerate()
+            for (reason, count) in [
+                "class_quota",
+                "destination_ip_quota",
+                "upload_bytes",
+                "ip_table_capacity",
+            ]
+            .iter()
+            .zip(stats.blocked[i])
             {
                 tracing::info!(
-                    event = "dht_class",
+                    event = "dht_wait_reason",
                     schema_version = 1u64,
                     scope,
                     class,
-                    packets = stats.packets[i],
-                    bytes = stats.bytes[i],
-                    queued = stats.queued[i],
-                    dequeued_to_send = stats.queue_finished[i][0],
-                    queued_cancelled = stats.queue_finished[i][1],
-                    queue_timeouts = stats.queue_finished[i][2],
-                    local_rejected = stats.queue_finished[i][3],
-                    inflight_cancelled = stats.inflight_cancelled[i],
-                    "DHT 类别计数"
+                    reason,
+                    count,
+                    "DHT 待发限制"
                 );
-                for (reason, count) in [
-                    "class_quota",
-                    "destination_ip_quota",
-                    "upload_bytes",
-                    "ip_table_capacity",
-                ]
-                .iter()
-                .zip(stats.blocked[i])
-                {
-                    tracing::info!(
-                        event = "dht_wait_reason",
-                        schema_version = 1u64,
-                        scope,
-                        class,
-                        reason,
-                        count,
-                        "DHT 待发限制"
-                    );
-                }
-                log_histogram(&stats.queue_wait[i], scope, "dht_queue", class);
             }
-        }
-        for (class, current) in ["collector", "control", "sampling", "verification"]
-            .iter()
-            .zip(s.queued_current)
-        {
-            tracing::info!(
-                event = "dht_queue_occupancy",
-                schema_version = 1u64,
-                class,
-                current,
-                "DHT 待发占用"
-            );
+            log_histogram(&stats.queue_wait[i], scope, "dht_queue", class);
         }
     }
+    for (class, current) in ["collector", "control", "sampling", "verification"]
+        .iter()
+        .zip(snapshot.queued_current)
+    {
+        tracing::info!(
+            event = "dht_queue_occupancy",
+            schema_version = 1u64,
+            class,
+            current,
+            "DHT 待发占用"
+        );
+    }
 }
+
 impl State {
     fn update(&mut self, f: impl Fn(&mut Stats)) {
         f(&mut self.total);

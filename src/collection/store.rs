@@ -12,6 +12,15 @@ use std::sync::{
 /// 一个采集能力共享一份接纳状态；克隆不创建连接，也不重置计数。
 #[derive(Clone)]
 pub(crate) struct CollectionStore {
+    #[cfg(test)]
+    pub(super) test_barrier: Arc<
+        Mutex<
+            Option<(
+                super::test_storage::BlockedOperation,
+                super::test_storage::CommandBarrier,
+            )>,
+        >,
+    >,
     pub(super) database: StorageHandle,
     /// 进程内采集接纳上限，0 表示尚未启用；不是数据库中当前任务数量。
     pub(super) fetch_limit: Arc<AtomicUsize>,
@@ -23,6 +32,8 @@ pub(crate) struct CollectionStore {
 impl CollectionStore {
     pub(crate) fn new(database: StorageHandle) -> Self {
         Self {
+            #[cfg(test)]
+            test_barrier: Arc::default(),
             database,
             fetch_limit: Arc::new(AtomicUsize::new(0)),
             recent_admission: Arc::default(),

@@ -34,6 +34,12 @@ freshness 观察近期未首试集合 Q：不含 running、有效提示和 gener
 
 完成与重试操作返回 `Applied` 表示事务更新已提交，`Stale` 表示领取无效，外层 `Err` 表示校验、资源或存储失败。已有相同 metadata 的有效完成仍可返回 Applied，因此提交次数不一定等于新增行数。hash 与结果不匹配先拒绝；同 hash 不同字节是 Conflict。结果等待被取消不能证明事务未提交。
 
+## 诊断读取
+
+[status.rs](../../src/collection/status.rs) 负责每分钟诊断组装，不负责领取或重试。它先取得进程内指标，背压日志和数据库快照共用一个观察时间 now_ms，再调用 `CollectionStore::status_snapshot`。一次数据库命令在一个只读事务中读取 DueStats、Stats、recent_active、first_attempt_waiting 和 FirstAttemptBacklog，全部成功后才输出数据库事件；任一查询失败沿存储故障路径返回，不输出部分成功快照。
+
+组合入口复用[queries.rs](../../src/collection/jobs/queries.rs) 的单项查询实现，每次诊断的数据库交互由五次减为一次；SQL 扫描量不因此减少，进程内指标也不与数据库共享原子快照。每秒调度、五秒背压刷新和完成事务保持独立，避免建立第二份内存任务事实。验证入口是 `collection::jobs::query_tests::status_snapshot_matches_individual_queries_and_propagates_failure`。
+
 ## 网络轮次与原始字节
 
 worker 每轮最多尝试 8 个 peer，整轮 180 秒。metadata 获取配置的任务期限为 120 秒、peer 30 秒，连接与握手各 5 秒、分片 10 秒；较早到达的外层期限仍能终止内层操作。同 IP TCP 并发限制为 1；get_peers 的采集限制为全局 10/s、每 IP 1/s，还受 DHT 共享预算约束。

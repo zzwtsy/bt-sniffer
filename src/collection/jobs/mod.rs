@@ -4,6 +4,7 @@ pub(crate) mod admission;
 mod claim;
 mod hints;
 mod queries;
+pub(super) use queries::CollectionStatusSnapshot;
 mod transitions;
 #[cfg(test)]
 use crate::collection::peer::VerifiedMetadata;

@@ -1,5 +1,6 @@
 //! 手动短比较：六组顺序执行，每组真实 loopback 运行 120 秒，资源归各组所有。
 use super::*;
+use crate::acceptance::FinishOutcome;
 use crate::collection::peer::wire as peer_wire;
 use crate::collection::peer::wire::PeerId;
 use crate::collection::test_storage::TestStorage as Storage;
@@ -141,8 +142,9 @@ async fn run_group(concurrency: usize, repetition: usize) -> serde_json::Value {
             "successful_stage_delay_ms": 100,
             "families": ["ipv4","ipv6"],
         }),
-    );
-    report.running();
+    )
+    .expect("初始化验收报告");
+    report.running().expect("报告尚未完成");
     let mut catalog = HashMap::new();
     let mut order = Vec::new();
     for n in 0..1000 {
@@ -370,9 +372,13 @@ async fn run_group(concurrency: usize, repetition: usize) -> serde_json::Value {
         "directory": dir,
     });
     assert!(dht.validated_v4 > 0 && dht.validated_v6 > 0);
-    report.value["statistics"] = value.clone();
+    report.set_statistics(value.clone()).expect("报告尚未完成");
     report
-        .finish(completed, true)
+        .finish(if completed {
+            FinishOutcome::Passed
+        } else {
+            FinishOutcome::Aborted
+        })
         .expect("验收报告必须成功保存");
     println!("LOOPBACK_GROUP={value}");
     assert!(completed, "用户中止，未完成验收");

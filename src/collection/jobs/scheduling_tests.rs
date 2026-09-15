@@ -1,5 +1,6 @@
 //! 固定 SQLite 输入：10,000 活跃任务与 40,000 条历史记录。
 use super::*;
+use crate::acceptance::FinishOutcome;
 use crate::address::AddressPolicy;
 use serde_json::json;
 fn fixture(path: &std::path::Path) -> Connection {
@@ -74,8 +75,8 @@ fn scheduling_release_comparison() {
         "scheduler-comparison",
         &directory,
         json!({"active":10000,"history":40000,"workers":4,"simulated_horizon_ms":2000,"fresh_service_ms":10,"ordinary_service_ms":100,"input":"2500 older ordinary then 7500 fresh; fixed big-endian hashes"}),
-    );
-    report.running();
+    ).expect("初始化验收报告");
+    report.running().expect("报告尚未完成");
     let mut results = Vec::new();
     for preferred in [false, true] {
         let c = fixture(&directory.join(if preferred {
@@ -127,11 +128,20 @@ fn scheduling_release_comparison() {
         waits.sort_unstable();
         results.push(json!({"scheduler":if preferred {"3:1"} else {"old_due_order"},"completed":completed,"claimed_ordinary":class_claims[0],"claimed_fresh":class_claims[1],"wait_p50_ms":waits[waits.len()/2],"wait_p95_ms":waits[waits.len()*95/100],"wall_seconds":start.elapsed().as_secs_f64()}));
     }
-    report.value["statistics"] = json!(results);
-    report.value["verification"] = json!([
-        "same release binary and fixed input",
-        "simulated completion and claim wait only; no network throughput claim"
-    ]);
-    report.finish(true, true).expect("验收报告必须成功保存");
-    eprintln!("{}", report.value);
+    report.set_statistics(json!(results)).expect("报告尚未完成");
+    report
+        .set_verification(
+            [
+                "same release binary and fixed input",
+                "simulated completion and claim wait only; no network throughput claim",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        )
+        .expect("报告尚未完成");
+    report
+        .finish(FinishOutcome::Passed)
+        .expect("验收报告必须成功保存");
+    eprintln!("{}", report.to_value().unwrap());
 }

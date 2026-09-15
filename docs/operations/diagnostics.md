@@ -36,6 +36,14 @@ observe 校验产物并独占一次运行目录，启用双栈随机监听端口
 
 verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema 版本、running 为 0、metadata 的 SHA1 和积压，输出 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
 
+## Rust 验收报告
+
+[Report](../../src/acceptance/mod.rs) 保持 JSON 版本 2，公共字段、运行身份和产物身份由具体可序列化类型维护。config、statistics、families 是业务扩展 JSON；verification 是字符串列表，run_errors 为可选字符串列表，未设置或清除时省略字段。Python 产品诊断和开发检查各自维护报告，不共享此类型。
+
+初始化返回 io::Result；调用者开始执行时调用 running，结束时显式选择 Passed、Failed、Aborted 或 EnvironmentBlocked。准备阶段异常析构尽力保存 environment_blocked，执行阶段异常析构保存 failed，只有显式完成能产生 passed。完成在写入前锁定状态，成功或失败后都拒绝再次完成及修改，Drop 不重试。报告通过临时文件完整写入后排他发布，不覆盖旧证据；保存失败须由调用者报告，不能当作验收成功。打印使用只读序列化快照。
+
+源码清单与摘要算法保持不变：运行时源码快照不证明构建一致性，Git HEAD 也不能代表完整工作区。身份测试继续与 Python 摘要交叉核对，报告测试验证状态及发布失败边界。
+
 ## 证据边界与现场保护
 
 Python verify 校验原始 info 的 SHA1，但不做完整 Bencode 字典验证；Rust 的 metadata 和验收测试负责该边界。结构完整、哈希一致、本次公网观察成功分别证明不同事实，不能互相代替。短窗口和特定服务器的结果不能外推总体性能。
