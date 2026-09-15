@@ -63,7 +63,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_scope_union_runs_shared_checks_once(self):
         all_stages = runner.stages(['all'])
-        self.assertEqual(all_stages, runner.stages(['examples', 'tools', 'docs', 'rust', 'docs']))
+        self.assertEqual(all_stages, runner.stages(['web', 'examples', 'tools', 'docs', 'rust', 'docs']))
         names = [name for name, _ in all_stages]
         self.assertEqual(len(names), len(set(names)))
         self.assertIn('tool-tests', names)

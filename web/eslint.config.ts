@@ -1,5 +1,6 @@
 import antfu from "@antfu/eslint-config";
 import pluginRouter from "@tanstack/eslint-plugin-router";
+import { boundaries } from "./eslint-boundaries";
 
 export default antfu({
   isInEditor: false,
@@ -21,11 +22,13 @@ export default antfu({
     "src/routeTree.gen.ts",
   ],
 }, {
-  files: ["apps/frontend/src/**/*.{ts,tsx}", "apps/backend/src/**/*.ts"],
+  files: ["src/**/*.{ts,tsx}"],
   plugins: {
     "@tanstack/router": pluginRouter,
+    "local": { rules: { boundaries } },
   },
   rules: {
+    "local/boundaries": "error",
     "ts/strict-boolean-expressions": ["error", {
       allowString: true,
       allowNumber: false,

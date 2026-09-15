@@ -1,11 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { OverviewPage } from "@/features/overview/page";
 
-export const Route = createFileRoute("/")({
-  component: () => {
-    return (
-      <div className="p-2">
-        <h3>Welcome Home!</h3>
-      </div>
-    );
-  },
-});
+export const Route = createFileRoute("/")({ component: OverviewPage });

@@ -33,3 +33,7 @@ Node 和 Python 通过本机已有包管理方式准备。不要用 npx 自动�
 维护时核对 name、description、引用与实际触发任务；保留 agents/openai.yaml 的调用策略。上游许可证、来源、安装 hash 是来源记录，不能按本地修改内容重算或伪造。参考材料按具体问题选读，更新时对照本地适配，不整包覆盖。
 
 技能结构可用已安装 skill-creator 的 `scripts/quick_validate.py` 检查；这属于维护时的辅助验证，不是仓库公开检查入口，也不能替代五种任务路由的人工作用核对。
+
+## 前端开发
+
+前端使用 Node 24 和 pnpm 11.22.0，安装锁定依赖与 Chromium 后执行 `python3 scripts/check.py web`。CI 在检查前安装工具；检查阶段不自动下载。涉及公共检查脚本时同时选择 `tools`，变更说明同步选择 `docs`。页面切片、同源代理与静态构建见[前端说明](../../web/README.md)。

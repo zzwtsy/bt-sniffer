@@ -102,3 +102,7 @@ src/
 | 增加日志事件 | 业务事件所有者；输出机制才改 `app/logging` | 事件类型测试、Python 消费者；[事件参考](../domains/log-events.md) |
 
 定位时先读本页对应行，再读专题的源码与验证入口，不需要加载全部模块和文档。
+
+## 前端垂直切片
+
+`web/src/app` 组装 Provider 与同步生命周期，`routes` 挂载页面，`features` 按总览、DHT、发现、任务、hash、详情、metadata、事件组织。切片不引用彼此内部代码；共享展示进入 `components/observation`，shadcn Chart 保留在 `components/ui`。HTTP 与 SSE 公共契约分别位于 `lib/api` 和 `lib/observation`。详见[前端开发说明](../../web/README.md)。

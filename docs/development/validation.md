@@ -6,6 +6,7 @@
 
 | 变更 | 范围 | 执行内容 |
 | --- | --- | --- |
+| 前端页面与同步 | web | lint、引用项目类型、单元和组件测试、构建、浏览器测试 |
 | Rust 行为 | rust | 双栈 loopback 前提、fmt、全部目标 check、严格 Clippy、默认 Rust 测试 |
 | Markdown、文档和 skills | docs | Markdown 格式、本地链接及锚点、检查工具专项 Python 回归 |
 | Python 工具 | tools | 全部 scripts/tests Python 测试 |
@@ -44,3 +45,9 @@ cargo test --locked app::logging::event_tests::json_events_preserve_types_filter
 默认测试不执行 ignored 验收。`app::tests::public_collection_two_hours` 涉及公网长时采集，`collection::tests::acceptance::sustained_mixed_loopback_30_minutes` 是长时本机验收，均需单独授权和前提，不作为日常检查。产品证据工具见[诊断](../operations/diagnostics.md)。测试存在、实际运行通过、公网性能成立是三件事。
 
 CI 保留固定工具准备，调用 all，失败上传该次检查证据并维持失败状态。不要在 workflow 再复制一套检查清单。
+
+## 前端检查范围
+
+`web` 已纳入 `all`，依次执行 lint、`tsc -b`、单元与组件测试、生产构建、Chromium 浏览器测试。缺少 Node 24、pnpm 11.22.0、依赖或 Chromium 时为环境阻塞，检查不会自动安装。首次准备命令见[前端说明](../../web/README.md)。
+
+浏览器夹具是独立 loopback HTTP/SSE 服务，覆盖页面读取、事件证据、冻结、断线、reset、主题和窄屏。固定 51,200 条事件负载将耗时、React commit 次数、DOM 变更批次和长任务写入 `target/checks/frontend-load/`；单元测试核对保留记录、编码字节和索引。React commit 由浏览器注入 DevTools hook 计数；DOM 变更批次独立统计。生产构建的本机耗时不代表公网性能。

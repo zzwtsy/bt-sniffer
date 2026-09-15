@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCOPES = ('rust', 'docs', 'tools', 'examples', 'all')
+SCOPES = ('web', 'rust', 'docs', 'tools', 'examples', 'all')
 LABELS = {'passed': '通过', 'failed': '失败', 'blocked': '环境阻塞',
           'interrupted': '中止', 'not_run': '未运行'}
 
@@ -27,6 +27,11 @@ def stages(scopes):
         selected = set(SCOPES) - {'all'}
     python = sys.executable
     result = [('environment', [python, 'scripts/check_environment.py', *sorted(selected)])]
+    if 'web' in selected:
+        result.extend((f'web-{name}', ['pnpm', '--dir', 'web', command])
+                      for name, command in [('lint', 'lint'), ('types', 'typecheck'),
+                                            ('tests', 'test'), ('build', 'build'),
+                                            ('browser', 'test:e2e')])
     if 'rust' in selected:
         result.extend([
             ('loopback', [python, 'scripts/check_loopback.py']),
@@ -77,7 +82,8 @@ def run_stage(stage, root, log, interrupted):
     """输出直接写文件；仅父进程保留中止状态，子进程在独立组运行。"""
     started = time.monotonic()
     stage['started_at'] = utc()
-    env = dict(os.environ, RUSTUP_AUTO_INSTALL='0')
+    env = dict(os.environ, RUSTUP_AUTO_INSTALL='0', COREPACK_ENABLE_NETWORK='0',
+               PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD='1', npm_config_manage_package_manager_versions='false')
     if stage['name'].startswith('example-'):
         env['CARGO_TARGET_DIR'] = str(root / 'target/skill-examples')
     process = None
@@ -190,13 +196,13 @@ def check(scopes, root=ROOT):
 
 def main(args=None):
     parser = argparse.ArgumentParser(description='按范围执行开发检查；可指定多个范围取并集。')
-    parser.add_argument('scopes', nargs='*', metavar='范围', help='rust / docs / tools / examples / all')
+    parser.add_argument('scopes', nargs='*', metavar='范围', help='web / rust / docs / tools / examples / all')
     arguments = parser.parse_args(args)
     if not arguments.scopes:
         parser.print_help()
         return 0
     if any(scope not in SCOPES for scope in arguments.scopes):
-        parser.error('范围只能是 rust、docs、tools、examples 或 all')
+        parser.error('范围只能是 web、rust、docs、tools、examples 或 all')
     try:
         return check(list(dict.fromkeys(arguments.scopes)))
     except (OSError, ValueError) as error:

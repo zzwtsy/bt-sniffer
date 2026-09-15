@@ -19,6 +19,8 @@ def check(scopes):
         required += ['cargo', 'rustc']
     if 'docs' in scopes:
         required += ['node', 'lychee']
+    if 'web' in scopes:
+        required += ['node', 'pnpm']
     for name in required:
         if shutil.which(name) is None:
             raise ValueError(f'缺少工具：{name}；请按开发指南安装')
@@ -36,7 +38,26 @@ def check(scopes):
             subprocess.run(['cargo', component, '--version'], check=True)
     if 'docs' in scopes:
         tool_commands(ROOT)
+    if 'web' in scopes:
+        check_web(ROOT)
     print('环境前提通过')
+
+
+def check_web(root):
+    """只读取已安装工具；不会下载包管理器、依赖或浏览器。"""
+    if not subprocess.check_output(['node', '--version'], text=True).startswith('v24.'):
+        raise ValueError('前端需要 Node 24')
+    if subprocess.check_output(['pnpm', '--version'], text=True).strip() != '11.22.0':
+        raise ValueError('前端需要 pnpm 11.22.0')
+    for name in ('eslint', 'tsc', 'vitest', 'vite', 'playwright'):
+        if not (root / 'web/node_modules/.bin' / name).is_file():
+            raise ValueError(f'缺少前端依赖：{name}；请先 pnpm --dir web install --frozen-lockfile')
+    browser = subprocess.check_output(
+        ['node', '--input-type=module', '-e',
+         "import {chromium} from '@playwright/test'; process.stdout.write(chromium.executablePath())"],
+        cwd=root / 'web', text=True)
+    if not Path(browser).is_file():
+        raise ValueError('缺少 Chromium；请先 pnpm --dir web exec playwright install chromium')
 
 
 def main():

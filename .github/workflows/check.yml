@@ -21,7 +21,20 @@ jobs:
           cache-dependency-path: tools/docs/package-lock.json
       - name: Install documentation tools
         run: npm ci --prefix tools/docs
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - name: Install frontend dependencies and Chromium
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web exec playwright install --with-deps chromium
+      - name: Prepare Rust dependencies
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path .agents/skills/rust-async-patterns/examples/Cargo.toml
       - name: Complete offline checks
+        env:
+          CARGO_NET_OFFLINE: 'true'
         run: python3 scripts/check.py all
       - name: Upload failed check evidence
         if: failure()
