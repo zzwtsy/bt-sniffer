@@ -27,6 +27,7 @@ cd "$BT_SNIFFER_RUN"
 | 参数 | 默认值 | 约束与作用 |
 | --- | --- | --- |
 | --state-dir | 操作系统 data_local_dir 下 bt-sniffer | 状态目录；无法推导时必须显式指定 |
+| --monitor-listen | 关闭 | loopback SocketAddr，例如 127.0.0.1:3001 或 [::1]:3001；允许端口 0，拒绝非 loopback |
 | --instance | main | 1 至 128 UTF-8 字节；只参与身份键 |
 | --listen-v4 | 0.0.0.0:6881 | IPv4 SocketAddr，端口 0 可由系统分配；与 ipv6-only 冲突 |
 | --listen-v6 | [::]:6881 | IPv6 SocketAddr，端口 0 可用；与 ipv4-only 冲突 |
@@ -54,3 +55,22 @@ cd "$BT_SNIFFER_RUN"
 面向公网运行需要明确授权、允许的 UDP 出入站以及 fetch 所需 TCP 出站；DNS 引导需要解析能力。启用 sample 与 fetch 会主动发现并采集，产生持久化数据和公网流量。部署使用独立非特权用户、固定 WorkingDirectory 和显式 state-dir，确保目录可写。进程管理器发送 SIGTERM 后应留出会话关闭与日志收尾时间，不把立即强杀当正常停止。
 
 退出应确认进程结束和关闭结果；看到邻居响应不证明公网入站可达，看到 metadata 日志不证明数据库完整。故障与数据库复核见[诊断指南](diagnostics.md)。
+
+## 本机监控与 SSH 转发
+
+在上述全新临时目录的本机启动命令后添加 `--monitor-listen 127.0.0.1:3001`。监听成功后可在另一终端读取；操作不修改任务：
+
+```sh
+curl http://127.0.0.1:3001/api/v1/snapshot
+curl -N http://127.0.0.1:3001/api/v1/stream
+```
+
+snapshot 返回 JSON，stream 首先返回 hello；Ctrl-C 结束 curl。程序本身仍通过信号正常关闭。端口 0 的实际地址由启动日志报告。前端开发服务器将 `/api` 代理至此地址，浏览器通过同源请求连接。
+
+远程机器已启动监控且有 SSH 访问权限时，在本机建立隧道；命令只转发端口，不启动采集：
+
+```sh
+ssh -N -L 3001:127.0.0.1:3001 user@host
+```
+
+本机仍访问相同 URL，Ctrl-C 结束隧道。转发不需要开放远程监控端口；详细错误、分页和重连规则见[观测接口](../domains/monitoring.md)。

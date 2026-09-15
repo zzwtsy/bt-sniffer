@@ -10,7 +10,11 @@ use rusqlite::{OptionalExtension, params};
 impl CollectionStore {
     /// 启动时恢复未完成任务并使旧领取失效；now_ms 是恢复时的 UTC 毫秒。
     pub(crate) async fn recover_jobs(&self, now_ms: i64) -> Result<(), StorageError> {
+        let mut observation = self
+            .observer
+            .span(crate::observation::Kind::Lifecycle, "jobs_recover");
         self.call(move |connection| {
+            observation.executing();
             let tx = connection.transaction()?;
             // 恢复 running 时立即递增领取版本，不必等下次领取才拒绝旧 worker 的结果。
             tx.execute(
@@ -34,6 +38,7 @@ impl CollectionStore {
                 [],
             )?;
             tx.commit()?;
+            observation.finish("applied");
             Ok(())
         })
         .await
@@ -50,8 +55,11 @@ impl CollectionStore {
         now_ms: i64,
         reason: RetryReason,
     ) -> Result<UpdateResult, StorageError> {
+        let observer = self.observer.for_job(&job.hash.0, job.generation);
+        let mut observation = observer.span(crate::observation::Kind::Retry, "retry_transaction");
         let jitter = 0.8 + rand::random::<f64>() * 0.4;
         self.call(move |connection| {
+            observation.executing();
             let tx = connection.transaction()?;
             // 必须同时匹配 hash、领取版本与 running；只有 hash 相同不足以接纳迟到结果。
             // 读取失败次数和写回状态共用事务，下面的 UPDATE 延续这里的领取检查。
@@ -67,6 +75,7 @@ impl CollectionStore {
                 )
                 .optional()?;
             let applied = attempts.is_some();
+            let mut scheduled = None;
             if let Some(attempts) = attempts {
                 let transition = retry_transition(attempts, reason, now_ms, jitter);
                 tx.execute(
@@ -88,9 +97,12 @@ impl CollectionStore {
                         reason.category(),
                     ],
                 )?;
+                scheduled = Some(transition);
             }
             // 领取失效时没有写入，但仍需显式 commit；提交报错时返回 Err，不返回 Stale。
             tx.commit()?;
+            observer.emit(crate::observation::Kind::Retry,"retry",if applied{"applied"}else{"stale"},||serde_json::json!({"reason":reason.category(),"remote_failure":reason.failure_category().is_some(),"state":scheduled.as_ref().map(|t|t.state),"remote_failures":scheduled.as_ref().map(|t|t.attempts),"due_at_ms":scheduled.as_ref().map(|t|t.due_at)}));
+            observation.finish(if applied{"applied"}else{"stale"});
             Ok(if applied {
                 UpdateResult::Applied
             } else {
@@ -113,7 +125,11 @@ impl CollectionStore {
         metadata: VerifiedMetadata,
         now_ms: i64,
     ) -> Result<UpdateResult, StorageError> {
+        let observer = self.observer.for_job(&job.hash.0, job.generation);
+        let mut observation =
+            observer.span(crate::observation::Kind::Commit, "complete_transaction");
         if metadata.info_hash() != job.hash {
+            observation.finish("conflict");
             return Err(StorageError::Conflict);
         }
         // 入队前先取得 metadata 字节预算；job、metadata 和许可一起移入命令。
@@ -123,6 +139,7 @@ impl CollectionStore {
         let barrier =
             self.take_test_barrier(super::super::test_storage::BlockedOperation::Completion);
         self.submit(permit, move |connection| {
+            observation.executing();
             #[cfg(test)]
             if let Some(barrier) = barrier {
                 barrier.wait()?;
@@ -141,6 +158,7 @@ impl CollectionStore {
             )?;
             if !current {
                 // 尚未写入；提前返回时 tx 按默认析构行为回滚，结束这个只读事务。
+                observation.finish("stale");
                 return Ok(UpdateResult::Stale);
             }
             check_metadata_size(&tx, job.hash)?;
@@ -184,6 +202,8 @@ impl CollectionStore {
             )?;
             // 领取检查与三次写入都在本事务内；只有提交成功后才记录日志并返回 Applied。
             tx.commit()?;
+            observer.emit(crate::observation::Kind::Commit,"metadata","applied",||serde_json::json!({"bytes":metadata.info().len(),"peer":metadata.source().to_string(),"peer_id":crate::observation::hex(&metadata.peer_id().0)}));
+            observation.finish("applied");
             tracing::debug!(
                 event = "metadata_committed",
                 schema_version = 1u64,

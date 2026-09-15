@@ -24,6 +24,7 @@ docs/
 │   ├── dht.md
 │   ├── collection.md
 │   ├── storage.md
+│   ├── monitoring.md
 │   ├── logging.md
 │   └── log-events.md
 └── operations/
@@ -44,6 +45,7 @@ docs/
 | domains/dht | 协议与网络开发者 | 匹配、校验、采样、流量约束 | dht；联动采集、生命周期 |
 | domains/collection | 采集开发者 | 任务状态、领取、重试、结果提交 | collection；联动存储与事件 |
 | domains/storage | 持久化开发者 | schema、线程、预算、事务与恢复 | storage 和两个 Store；联动采集、诊断 |
+| domains/monitoring | 可视化前后端开发者 | 只读 HTTP、SSE、观测窗口及资源预算 | observation、monitor、inspection；联动生命周期与运行 |
 | domains/logging | 日志机制开发者 | 过滤、输出、队列与关闭保证 | app/logging；联动生命周期 |
 | domains/log-events | 事件生产者和消费者 | 字段类型、单位、版本和统计含义 | tracing 调用、diagnostics、Python 解析；联动日志机制 |
 | operations/running | 运行者与 CLI 开发者 | 参数表、地址、目录、启动与停止 | app/config、sockets、main；联动相关领域 |

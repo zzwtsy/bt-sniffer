@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 /// 已通过协议校验的宣布及其观察时间；到达入口不代表数据库已接纳或提交。
 #[derive(Debug, Clone)]
 pub(crate) struct AnnounceEvent {
+    pub(crate) observer: crate::observation::Observer,
     pub(crate) hash: InfoHashV1,
     pub(crate) peer: SocketAddr,
     pub(crate) observed_at: SystemTime,
@@ -38,9 +39,23 @@ pub(crate) struct FetchIngress {
 impl FetchIngress {
     /// observed 先计入所有进入此处的事件；丢弃不阻塞 UDP 循环，也不撤销协议 ACK。
     pub(super) fn announce(&self, event: AnnounceEvent) {
+        let observer = event.observer.clone();
         self.observed.fetch_add(1, Ordering::Relaxed);
         if self.paused.load(Ordering::Relaxed) || self.sender.try_send(event).is_err() {
+            observer.emit(
+                crate::observation::Kind::Discovery,
+                "announce_ingress",
+                "dropped",
+                || serde_json::json!({}),
+            );
             self.dropped.fetch_add(1, Ordering::Relaxed);
+        } else {
+            observer.emit(
+                crate::observation::Kind::Discovery,
+                "announce_ingress",
+                "queued",
+                || serde_json::json!({}),
+            );
         }
     }
 }
@@ -86,11 +101,22 @@ impl DhtHandle {
         hash: InfoHashV1,
         progress: Arc<RpcProgress>,
     ) -> Result<GetPeersResponse, QueryError> {
+        let mut command = progress
+            .observer
+            .span(crate::observation::Kind::Rpc, "command");
+        command.cancellation_request_on_drop();
+        command.observer.emit(
+            crate::observation::Kind::Rpc,
+            "command_queue",
+            "waiting",
+            || serde_json::json!({"peer":remote.address.to_string()}),
+        );
         let cancel = CancellationToken::new();
         let _guard = cancel.clone().drop_guard();
         let (reply, result) = oneshot::channel();
         self.commands
             .send(Command::GetPeers {
+                observer: command.observer.clone(),
                 remote,
                 hash,
                 progress,
@@ -99,7 +125,19 @@ impl DhtHandle {
             })
             .await
             .map_err(|_| QueryError::DispatcherClosed)?;
-        result.await.map_err(|_| QueryError::DispatcherClosed)?
+        command.observer.emit(
+            crate::observation::Kind::Rpc,
+            "command_queue",
+            "accepted",
+            || serde_json::json!({}),
+        );
+        let result = result.await.map_err(|_| QueryError::DispatcherClosed)?;
+        command.finish(
+            result
+                .as_ref()
+                .map_or_else(|error| error.label(), |_| "completed"),
+        );
+        result
     }
     /// 从当前路由表读取查找种子；空集合是无可用种子，不是网络查询返回空结果。
     pub(crate) async fn fetch_seeds(
@@ -148,7 +186,14 @@ pub(super) async fn wait_cancelled(tokens: Vec<CancellationToken>) {
 }
 impl DhtDispatcher {
     pub(super) fn cancel_fetch_queries(&mut self) {
-        self.queued.retain(|q| !q.purpose.cancelled());
+        self.queued.retain_mut(|q| {
+            if q.purpose.cancelled() {
+                q.observation.finish("reclaimed");
+                false
+            } else {
+                true
+            }
+        });
         // 先收集需要撤销的 ID，再同时移除协议登记与业务等待者。
         let ids: Vec<_> = self
             .pending
@@ -157,7 +202,8 @@ impl DhtDispatcher {
             .collect();
         for id in ids {
             self.transactions.cancel(id);
-            if let Some(pending) = self.pending.remove(&id) {
+            if let Some(mut pending) = self.pending.remove(&id) {
+                pending.observation.finish("reclaimed");
                 self.budget.inflight_cancelled(pending.purpose.class());
             }
         }
@@ -227,6 +273,7 @@ mod tests {
             dropped: Arc::new(AtomicU64::new(0)),
         };
         let event = AnnounceEvent {
+            observer: Default::default(),
             hash: InfoHashV1([1; 20]),
             peer: "127.0.0.1:1".parse().unwrap(),
             observed_at: SystemTime::now(),

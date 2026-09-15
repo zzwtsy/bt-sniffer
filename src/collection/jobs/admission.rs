@@ -303,10 +303,12 @@ impl CollectionStore {
     ) -> Result<Option<(i64, InfoHashV1)>, StorageError> {
         let limit = self.fetch_limit.load(Ordering::Relaxed);
         let recent_config = self.recent_admission();
+        let observer = self.observer.clone();
         let counters = self.backfill_counters.clone();
         self.call(move |connection| {
             let tx = connection.transaction()?;
             let (mut scanned, mut inserted) = (0, 0);
+            let mut admitted = Vec::new();
             let mut admission = Admission::load(&tx, now, limit, recent_config)?;
             if admission.total == 0 || admission.recent == 0 {
                 tx.commit()?;
@@ -345,7 +347,11 @@ impl CollectionStore {
                     |r| r.get(0),
                 )?;
                 if !exists {
-                    inserted += admission.enqueue(&tx, hash, now)? as u64;
+                    let added = admission.enqueue(&tx, hash, now)?;
+                    inserted += added as u64;
+                    if added != 0 && observer.enabled() {
+                        admitted.push(hash);
+                    }
                 }
                 next = Some((at, hash));
                 if admission.total == 0 || admission.recent == 0 {
@@ -353,6 +359,14 @@ impl CollectionStore {
                 }
             }
             tx.commit()?;
+            for hash in admitted {
+                observer.for_hash(&hash.0).emit(
+                    crate::observation::Kind::Admission,
+                    "backfill",
+                    "applied",
+                    || serde_json::json!({}),
+                );
+            }
             counters
                 .lock()
                 .expect("补建统计锁")
@@ -453,9 +467,11 @@ impl CollectionStore {
         let limit = self.fetch_limit.load(Ordering::Relaxed);
         let recent_config = self.recent_admission();
         let recent_limit = recent_config.limit;
+        let observer = self.observer.clone();
         let counters = self.backfill_counters.clone();
         self.call(move |connection| {
             let (mut scanned, mut inserted) = (0, 0);
+            let mut admitted = Vec::new();
             let tx = connection.transaction()?;
             let mut admission = Admission::load(&tx, now_ms, limit, recent_config)?;
             let mut next = cursor;
@@ -513,13 +529,25 @@ impl CollectionStore {
                         && (recent_limit == 0
                             || !(now_ms.saturating_sub(RECENT_MS)..=now_ms).contains(&first_seen))
                     {
-                        inserted += admission.enqueue(&tx, hash, now_ms)? as u64;
+                        let added = admission.enqueue(&tx, hash, now_ms)?;
+                        inserted += added as u64;
+                        if added != 0 && observer.enabled() {
+                            admitted.push(hash);
+                        }
                     }
                     next = Some(hash);
                 }
             }
             super::hints::cleanup_expired(&tx, now_ms)?;
             tx.commit()?;
+            for hash in admitted {
+                observer.for_hash(&hash.0).emit(
+                    crate::observation::Kind::Admission,
+                    "backfill",
+                    "applied",
+                    || serde_json::json!({}),
+                );
+            }
             counters
                 .lock()
                 .expect("补建统计锁")

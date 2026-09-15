@@ -13,6 +13,7 @@
 | 编写或修正文档 | [文档任务入口](AGENTS.md)、[写作规则](development/documentation.md) |
 | 修改 DHT 协议和流量 | [DHT](domains/dht.md) |
 | 修改接纳、采集与重试 | [采集](domains/collection.md) |
+| 接入发现流程可视化与只读 API | [观测接口](domains/monitoring.md) |
 | 修改数据库操作和恢复 | [存储](domains/storage.md) |
 | 修改日志输出或字段 | [日志机制](domains/logging.md)、[事件参考](domains/log-events.md) |
 | 启动程序与理解参数 | [运行指南](operations/running.md) |

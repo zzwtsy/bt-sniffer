@@ -42,6 +42,8 @@ impl Drop for TaskReport {
 }
 /// guard 默认记录取消；阶段成功转换和最终失败均只提交一次。
 pub(crate) struct PeerObservation {
+    pub(crate) observer: crate::observation::Observer,
+    span: Option<crate::observation::Span>,
     /// 此状态只属于一条 peer 会话；切换地址时随 report 重新初始化。
     used_extension_compatibility: bool,
     compatibility_downloaded: bool,
@@ -60,6 +62,19 @@ pub(crate) struct PeerObservation {
     outer_timeout: Arc<std::sync::atomic::AtomicBool>,
 }
 impl PeerObservation {
+    pub(crate) fn progress(&self, data: impl FnOnce() -> serde_json::Value) {
+        if let Some(span) = &self.span {
+            span.observer.progress(data);
+        }
+    }
+    pub(crate) fn attach_observer(&mut self, observer: crate::observation::Observer) {
+        self.observer = observer;
+        self.span = Some(
+            self.observer
+                .span(crate::observation::Kind::Peer, self.key.stage.label()),
+        );
+    }
+
     pub(crate) fn new(
         metrics: Arc<crate::collection::diagnostics::metrics::Metrics>,
         source: Source,
@@ -69,6 +84,8 @@ impl PeerObservation {
     ) -> Self {
         Self {
             metrics,
+            observer: Default::default(),
+            span: None,
             used_extension_compatibility: false,
             compatibility_downloaded: false,
             connection: None,
@@ -99,6 +116,15 @@ impl PeerObservation {
     /// 在最终失败处附加一次细分；finish 和 Drop 负责原阶段耗时统计。
     pub(crate) fn failure(&mut self, error: &crate::collection::peer::PeerError) {
         if !self.finished && !self.failure_recorded {
+            self.observer.emit(
+                crate::observation::Kind::Peer,
+                self.key.stage.label(),
+                error.label(),
+                || serde_json::json!({"reason":failure_reason(error)}),
+            );
+            if let Some(span) = &mut self.span {
+                span.finish(error.label());
+            }
             self.metrics
                 .diagnostics
                 .failure(self.key, failure_reason(error));
@@ -122,6 +148,13 @@ impl PeerObservation {
         if !matches!(stage, Stage::StandardHandshake | Stage::ExtensionHandshake) {
             self.finish_handshake(ResultKind::Success, Deadline::None);
         }
+        if let Some(span) = &mut self.span {
+            span.finish("success");
+        }
+        self.span = Some(
+            self.observer
+                .span(crate::observation::Kind::Peer, stage.label()),
+        );
         self.key.stage = stage;
         self.key.result = ResultKind::Cancelled;
         self.key.deadline = Deadline::None;
@@ -133,6 +166,14 @@ impl PeerObservation {
     }
     /// 正常结束与 Drop 共用；Task 截断记超时，普通取消不产生远端失败历史。
     pub(crate) fn finish(&mut self, result: ResultKind, deadline: Deadline) {
+        if let Some(span) = &mut self.span {
+            span.finish(match result {
+                ResultKind::Success => "success",
+                ResultKind::Timeout => "timeout",
+                ResultKind::Cancelled => "cancelled",
+                _ => "failed",
+            });
+        }
         if self.finished {
             return;
         }
@@ -212,6 +253,12 @@ impl PeerObservation {
             Err(error) if error.kind == WireErrorKind::InvalidDictionary => false,
             _ => return,
         };
+        self.observer.emit(
+            crate::observation::Kind::Peer,
+            "extension_compatibility",
+            if accepted { "accepted" } else { "rejected" },
+            || serde_json::json!({}),
+        );
         let first = accepted && !self.used_extension_compatibility;
         self.used_extension_compatibility |= accepted;
         let mut pair = self

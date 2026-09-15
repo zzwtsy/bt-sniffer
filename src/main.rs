@@ -12,6 +12,8 @@ mod collection;
 mod dht;
 mod histogram;
 mod info_hash;
+mod monitor;
+mod observation;
 mod storage;
 
 /// 程序入口只负责启动应用，具体协议和 DHT 逻辑由内部模块提供。

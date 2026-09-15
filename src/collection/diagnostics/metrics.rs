@@ -4,7 +4,8 @@ use std::time::Duration;
 
 /// 采集事件计数；枚举序号对应 Snapshot.counts，COUNTERS 只负责按同序输出。
 /// 累计的是已观察事件，不可把开始数、结束数或区间数直接当成功率。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(usize)]
 pub(crate) enum Counter {
     /// 实际领取到具有有效 peer 提示的任务数，不等于提示连接成功。
@@ -59,7 +60,8 @@ const COUNTERS: [Counter; 16] = [
     Counter::AnnouncesAccepted,
 ];
 /// 耗时观察维度；枚举序号对应 Snapshot.timings，取消也可形成一次样本。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(usize)]
 pub(crate) enum Timing {
     /// 一次双栈查找从开始到返回或被丢弃的耗时。
@@ -95,6 +97,12 @@ pub(crate) struct Metrics {
     snapshots: Mutex<(Snapshot, Snapshot)>,
 }
 impl Metrics {
+    /// 固定累计快照；不消费日志区间，分位保持桶边界语义。
+    pub(crate) fn snapshot(&self) -> serde_json::Value {
+        let snapshot = self.snapshots.lock().expect("指标锁").0.clone();
+        serde_json::json!({"diagnostics":self.diagnostics.snapshot(),"counters":COUNTERS.iter().zip(snapshot.counts).map(|(counter,value)|serde_json::json!({"counter":counter,"value":value})).collect::<Vec<_>>(),"durations":TIMINGS.iter().zip(snapshot.timings).map(|(timing,h)|serde_json::json!({"timing":timing,"count":h.count(),"overflow":h.overflow(),"p50":h.quantile(50),"p95":h.quantile(95),"p99":h.quantile(99)})).collect::<Vec<_>>()})
+    }
+
     #[cfg(test)]
     pub(crate) fn report(&self) -> serde_json::Value {
         let pair = self.snapshots.lock().expect("指标锁");
@@ -275,4 +283,14 @@ mod tests {
             2
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn inspection_does_not_consume_interval() {
+    let metrics = Metrics::default();
+    metrics.add(Counter::MetadataCommitted, 3);
+    let before = metrics.interval_counts();
+    assert_eq!(metrics.snapshot(), metrics.snapshot());
+    assert_eq!(metrics.interval_counts(), before);
 }

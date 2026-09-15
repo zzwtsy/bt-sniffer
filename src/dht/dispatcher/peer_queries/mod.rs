@@ -17,7 +17,19 @@ impl DhtDispatcher {
         args: &QueryArgs,
         now: Instant,
     ) -> bool {
+        let observer = args.info_hash.map_or_else(
+            || self.observer.clone(),
+            |hash| self.observer.for_hash(&hash.0),
+        );
+        let mut observation = observer.span(crate::observation::Kind::Rpc, "inbound_get_peers");
+        observation.observer.emit(
+            crate::observation::Kind::Rpc,
+            "inbound_get_peers",
+            "received",
+            || serde_json::json!({"source":source.to_string()}),
+        );
         let Some(hash) = args.info_hash else {
+            observation.finish("missing_hash");
             self.send_error(
                 source,
                 t,
@@ -32,6 +44,7 @@ impl DhtDispatcher {
             || args.token.is_some()
             || args.implied_port.is_some()
         {
+            observation.finish("invalid_arguments");
             self.send_error(
                 source,
                 t,
@@ -44,6 +57,7 @@ impl DhtDispatcher {
         let token = match self.tokens.issue(source.ip(), now) {
             Ok(token) => token,
             Err(_) => {
+                observation.finish("token_unavailable");
                 self.send_error(source, t, KrpcErrorCode::Server, "暂时无法生成写令牌")
                     .await;
                 return false;
@@ -66,7 +80,15 @@ impl DhtDispatcher {
                     .collect(),
             );
         }
-        self.send_response(source, t, response).await
+        observation.observer.emit(
+            crate::observation::Kind::Rpc,
+            "get_peers_reply",
+            "prepared",
+            || serde_json::json!({"peer_count":response.values.as_ref().map_or(0,Vec::len)}),
+        );
+        let sent = self.send_response(source, t, response).await;
+        observation.finish(if sent { "reply_sent" } else { "reply_unsent" });
+        sent
     }
 
     pub(super) async fn handle_announce_peer(
@@ -76,7 +98,19 @@ impl DhtDispatcher {
         args: &QueryArgs,
         now: Instant,
     ) -> bool {
+        let observer = args.info_hash.map_or_else(
+            || self.observer.clone(),
+            |hash| self.observer.for_hash(&hash.0),
+        );
+        let mut observation = observer.span(crate::observation::Kind::Discovery, "announce");
+        observation.observer.emit(
+            crate::observation::Kind::Discovery,
+            "announce",
+            "received",
+            || serde_json::json!({"source":source.to_string()}),
+        );
         let (Some(hash), Some(token)) = (args.info_hash, args.token.as_ref()) else {
+            observation.finish("missing_fields");
             self.send_error(
                 source,
                 t,
@@ -90,6 +124,7 @@ impl DhtDispatcher {
             || !args.want.is_empty()
             || !matches!(args.implied_port, None | Some(0 | 1))
         {
+            observation.finish("invalid_arguments");
             self.send_error(
                 source,
                 t,
@@ -99,12 +134,14 @@ impl DhtDispatcher {
             .await;
             return false;
         }
+        observation.observer = observation.observer.for_hash(&hash.0);
         let port = if args.implied_port == Some(1) {
             Some(source.port())
         } else {
             args.port
         };
         let Some(port) = port.filter(|port| *port != 0) else {
+            observation.finish("invalid_port");
             self.send_error(
                 source,
                 t,
@@ -116,6 +153,7 @@ impl DhtDispatcher {
         };
         let address = SocketAddr::new(source.ip(), port);
         if !self.peers.accepts(address) {
+            observation.finish("invalid_address");
             self.send_error(
                 source,
                 t,
@@ -128,11 +166,13 @@ impl DhtDispatcher {
         match self.tokens.validate(source.ip(), token, now) {
             Ok(true) => {}
             Ok(false) => {
+                observation.finish("invalid_token");
                 self.send_error(source, t, KrpcErrorCode::Protocol, "写令牌无效或已过期")
                     .await;
                 return false;
             }
             Err(_) => {
+                observation.finish("token_unavailable");
                 self.send_error(source, t, KrpcErrorCode::Server, "暂时无法校验写令牌")
                     .await;
                 return false;
@@ -140,12 +180,14 @@ impl DhtDispatcher {
         }
         // 写入在发送确认之前完成：UDP 确认丢失不应撤销合法宣布。
         if self.peers.announce(hash, address, now).is_err() {
+            observation.finish("peer_store_failed");
             self.send_error(source, t, KrpcErrorCode::Server, "暂时无法保存 peer")
                 .await;
             return false;
         }
         if let Some(ingress) = &self.fetch_ingress {
             ingress.announce(super::fetch::AnnounceEvent {
+                observer: observation.observer.clone(),
                 hash,
                 peer: address,
                 observed_at: self
@@ -154,6 +196,7 @@ impl DhtDispatcher {
                     .unwrap_or_else(|_| std::time::SystemTime::now()),
             });
         }
+        observation.finish("validated");
         self.send_basic_response(source, t).await
     }
 }

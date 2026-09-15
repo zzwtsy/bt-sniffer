@@ -99,7 +99,8 @@ mod tests {
 }
 
 /// 字节结构或字段约束错误；网络失败和会话资源限制由上层分类。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum WireErrorKind {
     /// peer-wire 协议名不匹配。
     ProtocolName,

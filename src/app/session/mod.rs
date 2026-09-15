@@ -91,6 +91,8 @@ enum TaskOutput {
 }
 /// 会话是运行资源的唯一关闭入口；Drop 只中止任务，完成落盘必须显式 await shutdown。
 pub(crate) struct Session {
+    observer: crate::observation::Observer,
+    monitor: Option<crate::monitor::Monitor>,
     budget: std::sync::Arc<crate::dht::traffic::Budget>,
     storage: Option<Storage>,
     collection_store: CollectionStore,
@@ -148,15 +150,30 @@ impl Session {
         Self::open_with_budget(config, budget).await
     }
     /// 所有节点使用应用已经创建的同一配额，构造过程不创建临时预算。
+    #[cfg(test)]
     pub(crate) async fn open_with_budget(
         config: StorageConfig,
         budget: std::sync::Arc<crate::dht::traffic::Budget>,
     ) -> Result<Self, StorageError> {
+        Self::open_observed(config, budget, Default::default()).await
+    }
+    pub(crate) async fn open_observed(
+        config: StorageConfig,
+        budget: std::sync::Arc<crate::dht::traffic::Budget>,
+        observer: crate::observation::Observer,
+    ) -> Result<Self, StorageError> {
+        let mut span = observer.span(crate::observation::Kind::Lifecycle, "storage_open");
         let (report, errors) = FaultReporter::new();
-        let storage = Storage::open(config).await?;
-        let collection_store = CollectionStore::new(storage.handle.clone());
+        let storage = Storage::open(config)
+            .await
+            .inspect_err(|_| span.finish("failed"))?;
+        let mut collection_store = CollectionStore::new(storage.handle.clone());
+        collection_store.observer = observer.clone();
+        span.finish("ready");
         let dht_store = DhtStore::new(storage.handle.clone());
         Ok(Self {
+            observer,
+            monitor: None,
             budget,
             storage: Some(storage),
             collection_store,
@@ -181,6 +198,7 @@ impl Session {
         config: DhtDispatcherConfig,
         policy: AddressPolicy,
     ) -> Result<DhtHandle, StorageError> {
+        self.collection_store.inspection_policy = policy;
         let store = self.dht_store.clone();
         let address = transport
             .local_addr()
@@ -190,9 +208,14 @@ impl Session {
         } else {
             AddressFamily::Ipv6
         };
+        let mut identity_span = self
+            .observer
+            .span(crate::observation::Kind::Lifecycle, "identity_restore");
         let identity =
             identity::load_or_create(&store, instance, family, unix_millis(SystemTime::now())?)
-                .await?;
+                .await
+                .inspect_err(|_| identity_span.finish("failed"))?;
+        identity_span.finish("ready");
         if self
             .nodes
             .iter()
@@ -200,18 +223,37 @@ impl Session {
         {
             return Err(StorageError::Conflict);
         }
-        let contacts = store.load_contacts(identity).await?;
+        let mut contacts_span = self
+            .observer
+            .span(crate::observation::Kind::Lifecycle, "contacts_restore");
+        let contacts = store
+            .load_contacts(identity)
+            .await
+            .inspect_err(|_| contacts_span.finish("failed"))?;
+        contacts_span.finish("ready");
+        let mut cooldown_span = self
+            .observer
+            .span(crate::observation::Kind::Lifecycle, "cooldowns_restore");
         let cooldowns = store
             .restore_cooldowns(identity, unix_millis(SystemTime::now())?)
-            .await?;
+            .await
+            .inspect_err(|_| cooldown_span.finish("failed"))?;
+        cooldown_span.finish("ready");
         let table = RoutingTable::new(
             identity.node_id,
             family,
             tokio::time::Instant::now().into_std(),
         );
-        let (mut dispatcher, handle) =
+        let (mut dispatcher, mut handle) =
             DhtDispatcher::with_budget(transport, table, transactions, config, self.budget.clone())
                 .map_err(|e| StorageError::Database(e.to_string()))?;
+        let mut node_observer = self.observer.clone();
+        if node_observer.enabled() {
+            node_observer.context.node_id = Some(crate::observation::hex(&identity.node_id.0));
+        }
+        dispatcher.observer = node_observer.clone();
+        handle.observer = node_observer;
+        self.observer.emit(crate::observation::Kind::Lifecycle,"node_restore","ready",||serde_json::json!({"node_id":crate::observation::hex(&identity.node_id.0),"contacts":contacts.len(),"address":address.to_string()}));
         dispatcher.attach_storage(store.clone(), identity, contacts, cooldowns, policy)?;
         let report = self.report.clone();
         dispatcher.report_storage_errors_to(report.storage_callback());
@@ -322,9 +364,28 @@ impl Session {
             .insert(task.id(), TaskRole::SampleCollector(index));
         Ok(())
     }
+    /// 启动已绑定的只读服务；Session 保留唯一收尾责任。
+    pub(crate) fn start_monitor(&mut self, listener: tokio::net::TcpListener) {
+        self.monitor = Some(crate::monitor::Monitor::start(
+            listener,
+            self.collection_store.clone(),
+            self.nodes.iter().map(|n| n.handle.clone()).collect(),
+            self.observer.clone(),
+        ));
+    }
     /// 返回所有遇到的错误，不用保存失败掩盖最初的 socket 故障。
     pub(crate) async fn shutdown(mut self) -> Result<(), Vec<String>> {
-        match tokio::time::timeout(Duration::from_secs(30), self.shutdown_inner()).await {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        if let Some(monitor) = &self.monitor {
+            monitor.begin_shutdown();
+        }
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown",
+            "started",
+            || serde_json::json!({}),
+        );
+        let result = match tokio::time::timeout_at(deadline, self.shutdown_inner()).await {
             Ok(result) => result,
             Err(_) => {
                 let mut errors = self.faults.take();
@@ -337,7 +398,21 @@ impl Session {
                 ));
                 Err(errors)
             }
+        };
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown",
+            if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
+            || serde_json::json!({}),
+        );
+        if let Some(monitor) = &mut self.monitor {
+            monitor.finish(deadline).await;
         }
+        result
     }
     /// 与应用的信号和引导任务一起等待，不轮询 JoinHandle，也不重复消费任务结果。
     pub(crate) async fn next_fault(&mut self) -> SessionFault {
@@ -359,6 +434,7 @@ impl Session {
                 }
             }
             tokio::select! {
+                _ = async{match &mut self.monitor{Some(monitor)=>monitor.changed().await,None=>std::future::pending::<()>().await}}=>{},
                 _ = self.storage.as_ref().unwrap().handle.closed() => {
                     self.report.publish(SessionFault::DatabaseExited);
                 }
@@ -451,6 +527,12 @@ impl Session {
     /// 按依赖顺序停止生产、回收结果、保存快照，最后关闭数据库；外层施加共同期限。
     async fn shutdown_inner(&mut self) -> Result<(), Vec<String>> {
         self.shutdown_stage = "回收采集协调器".into();
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown_stage",
+            "started",
+            || serde_json::json!({"stage":self.shutdown_stage}),
+        );
         self.stop_snapshots.cancel();
         let store = self.collection_store.clone();
         self.stop_fetch.cancel();
@@ -466,6 +548,12 @@ impl Session {
         }
         // 先向所有节点发出停产请求，再等待任务排空，避免另一地址族一直继续采集。
         self.shutdown_stage = "停止节点采样".into();
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown_stage",
+            "started",
+            || serde_json::json!({"stage":self.shutdown_stage}),
+        );
         let faults = &self.faults;
         futures_util::future::join_all(self.nodes.iter().enumerate().map(
             |(index, node)| async move {
@@ -482,6 +570,12 @@ impl Session {
         ))
         .await;
         self.shutdown_stage = "关闭节点".into();
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown_stage",
+            "started",
+            || serde_json::json!({"stage":self.shutdown_stage}),
+        );
         futures_util::future::join_all(self.nodes.iter().enumerate().map(
             |(index, node)| async move {
                 if let Err(error) = node.handle.shutdown().await {
@@ -498,11 +592,23 @@ impl Session {
         ))
         .await;
         self.shutdown_stage = "回收节点任务".into();
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown_stage",
+            "started",
+            || serde_json::json!({"stage":self.shutdown_stage}),
+        );
         while let Some(result) = self.tasks.join_next_with_id().await {
             self.accept_task(result, TaskPhase::ShuttingDown);
         }
         for (index, node) in self.nodes.iter_mut().enumerate() {
             self.shutdown_stage = format!("保存节点 {index} 状态");
+            self.observer.emit(
+                crate::observation::Kind::Lifecycle,
+                "shutdown_stage",
+                "started",
+                || serde_json::json!({"stage":self.shutdown_stage}),
+            );
             if let Some(exit) = node.exit.take() {
                 if let Err(error) = exit.network_result {
                     self.faults.push(error.to_string());
@@ -532,12 +638,24 @@ impl Session {
             self.faults.push(error.to_string());
         }
         self.shutdown_stage = "关闭数据库（读取最终统计）".into();
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown_stage",
+            "started",
+            || serde_json::json!({"stage":self.shutdown_stage}),
+        );
         match store.fetch_stats().await {
             Ok(stats) => stats.log(true),
             Err(error) => self.faults.push(error.to_string()),
         }
         self.budget.log();
         self.shutdown_stage = "关闭数据库".into();
+        self.observer.emit(
+            crate::observation::Kind::Lifecycle,
+            "shutdown_stage",
+            "started",
+            || serde_json::json!({"stage":self.shutdown_stage}),
+        );
         if let Some(storage) = self.storage.take()
             && let Err(error) = storage.shutdown().await
         {

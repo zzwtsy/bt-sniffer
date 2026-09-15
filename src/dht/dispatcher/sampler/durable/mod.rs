@@ -128,9 +128,16 @@ impl Sampler {
             self.mark_storage_fault(StorageError::Invalid("冷却时长溢出"));
             return None;
         };
-        let store = durable.storage.clone();
+        let mut store = durable.storage.clone();
+        store.observer = request.observer.clone();
         let identity = durable.identity;
         let capacity = s.config.cooldown_capacity;
+        request.observer.emit(
+            crate::observation::Kind::Sampling,
+            "cooldown_reservation",
+            "started",
+            || serde_json::json!({"duration_ms":duration}),
+        );
         durable.reserving = Some(Box::pin(async move {
             let result = store
                 .reserve_sampling(
@@ -194,7 +201,8 @@ impl Sampler {
             self.mark_storage_fault(StorageError::Invalid("冷却结算溢出"));
             return;
         };
-        let store = durable.storage.clone();
+        let mut store = durable.storage.clone();
+        store.observer = request.observer.clone();
         durable.settling.push(Box::pin(async move {
             store
                 .settle_sampling(lease, at, duration, cooldown.failures)
@@ -216,7 +224,8 @@ impl Sampler {
             if let Some(lease) = request.lease
                 && let Some(d) = &mut self.durable
             {
-                let store = d.storage.clone();
+                let mut store = d.storage.clone();
+                store.observer = request.observer.clone();
                 d.settling
                     .push(Box::pin(async move { store.abandon_sampling(lease).await }));
             }

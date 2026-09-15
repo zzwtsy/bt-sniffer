@@ -46,10 +46,15 @@ struct CooldownRecoveryRow {
 impl DhtStore {
     /// 明确未发包时只撤销对应租约，旧请求不能删除后来建立的预约。
     pub(crate) async fn abandon_sampling(&self, lease: CooldownLease) -> Result<(), StorageError> {
+        let mut observation = self
+            .observer
+            .span(crate::observation::Kind::Sampling, "cooldown_abandon");
         self.call(move |connection| {
+            observation.executing();
             let tx=connection.transaction()?;
-            tx.execute("DELETE FROM sampling_cooldowns WHERE identity=?1 AND lease=?2 AND pending=1 AND ((kind=0 AND key=?3) OR (kind=1 AND key=?4))", params![lease.identity,lease.token.as_slice(),lease.id.0.as_slice(),ip_bytes(lease.ip)])?;
+            let changed = tx.execute("DELETE FROM sampling_cooldowns WHERE identity=?1 AND lease=?2 AND pending=1 AND ((kind=0 AND key=?3) OR (kind=1 AND key=?4))", params![lease.identity,lease.token.as_slice(),lease.id.0.as_slice(),ip_bytes(lease.ip)])?;
             tx.commit()?;
+            observation.finish(if changed>0 {"applied"}else{"stale"});
             Ok(())
         }).await
     }
@@ -72,7 +77,11 @@ impl DhtStore {
         {
             return Err(StorageError::Invalid("冷却预约参数无效"));
         }
+        let mut observation = self
+            .observer
+            .span(crate::observation::Kind::Sampling, "cooldown_reservation");
         self.call(move |connection| {
+            observation.executing();
             let tx = connection.transaction()?;
             tx.execute(
                 "DELETE FROM sampling_cooldowns
@@ -128,6 +137,7 @@ impl DhtStore {
                 )?;
             }
             tx.commit()?;
+            observation.finish("applied");
             Ok(CooldownLease {
                 duration_ms,
                 identity: identity.key,
@@ -149,11 +159,16 @@ impl DhtStore {
         if now < 0 || duration_ms <= 0 || now.checked_add(duration_ms).is_none() {
             return Err(StorageError::Invalid("冷却结算参数无效"));
         }
+        let mut observation = self
+            .observer
+            .span(crate::observation::Kind::Sampling, "cooldown_settle");
         self.call(move |connection| {
+            observation.executing();
             let tx = connection.transaction()?;
+            let mut changed = 0;
             // token 是比较并交换条件：旧回调绝不能缩短后来重新取得的预约。
             for (kind, key) in [(0, lease.id.0.to_vec()), (1, ip_bytes(lease.ip))] {
-                tx.execute(
+                changed += tx.execute(
                     "UPDATE sampling_cooldowns
                      SET pending=0, until_at=?1, duration_ms=?2, failures=?3
                      WHERE identity=?4
@@ -173,6 +188,7 @@ impl DhtStore {
                 )?;
             }
             tx.commit()?;
+            observation.finish(if changed > 0 { "applied" } else { "stale" });
             Ok(())
         })
         .await

@@ -240,6 +240,7 @@ impl Error for QueryError {
 /// 实际发送证据由 dispatcher 更新，调用者超时仍能读取。
 #[derive(Debug, Default)]
 pub(crate) struct RpcProgress {
+    pub(crate) observer: crate::observation::Observer,
     pub(crate) sent: std::sync::atomic::AtomicU64,
     pub(crate) limited: std::sync::atomic::AtomicBool,
 }
@@ -274,6 +275,7 @@ impl Error for DispatcherError {
 /// RPC future 被丢弃时触发取消通知，实际清理由 dispatcher 后续处理，不是同步回收证明。
 #[derive(Debug, Clone)]
 pub(crate) struct DhtHandle {
+    pub(crate) observer: crate::observation::Observer,
     pub(super) commands: mpsc::Sender<Command>,
 }
 
@@ -380,7 +382,12 @@ pub(crate) struct DhtStatus {
 
 #[derive(Debug)]
 pub(super) enum Command {
+    Inspect {
+        routing: bool,
+        reply: oneshot::Sender<serde_json::Value>,
+    },
     GetPeers {
+        observer: crate::observation::Observer,
         remote: RemoteNode,
         hash: crate::info_hash::InfoHashV1,
         progress: std::sync::Arc<RpcProgress>,
@@ -448,4 +455,21 @@ pub(super) enum Command {
     Shutdown {
         reply: oneshot::Sender<()>,
     },
+}
+
+impl QueryError {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::DispatcherClosed => "dispatcher_closed",
+            Self::LocalWait => "local_wait",
+            Self::ShuttingDown => "shutting_down",
+            Self::AtCapacity { .. } => "capacity",
+            Self::Transaction(_) => "transaction",
+            Self::Transport(_) => "transport",
+            Self::Timeout => "timeout",
+            Self::Remote { .. } => "remote_error",
+            Self::InvalidResponse(_) => "invalid_response",
+            Self::UnexpectedNodeId { .. } => "unexpected_node_id",
+        }
+    }
 }

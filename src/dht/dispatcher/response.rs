@@ -34,6 +34,28 @@ impl ValidatedResponse {
 }
 
 impl DhtDispatcher {
+    fn observe_rejected_response(&self, error: &TransactionError, source: std::net::SocketAddr) {
+        let observer = match error {
+            TransactionError::SourceMismatch { id, .. } => self
+                .pending
+                .get(id)
+                .map(|p| &p.observation.observer)
+                .unwrap_or(&self.observer),
+            _ => &self.observer,
+        };
+        observer.emit(
+            crate::observation::Kind::Rpc,
+            "response_match",
+            match error {
+                TransactionError::SourceMismatch { .. } => "source_mismatch",
+                TransactionError::InvalidTransactionIdLength { .. } => "invalid_transaction_length",
+                TransactionError::UnknownTransaction(_) => "unknown_transaction",
+                _ => "rejected",
+            },
+            || serde_json::json!({"source":source.to_string()}),
+        );
+    }
+
     /// 匹配并处理一条成功响应消息。
     ///
     /// 校验顺序很重要：先匹配 transaction 与来源地址，再检查消息字段和 Node ID，
@@ -53,7 +75,10 @@ impl DhtDispatcher {
                 return;
             }
             // 来源不匹配、未知或错误长度的响应不会消费合法 transaction。
-            Err(_) => return,
+            Err(error) => {
+                self.observe_rejected_response(&error, received.source);
+                return;
+            }
         };
         let Some(pending) = self.pending.remove(&completed.transaction.id) else {
             // 正常情况下两张 pending 表始终同步；防御性处理避免异常状态导致 panic。
@@ -144,6 +169,7 @@ impl DhtDispatcher {
 
         self.budget.validated(received.source.ip());
         // 到这里才算得到一条经过 transaction、地址、结构和身份共同验证的响应。
+        self.observer.emit(crate::observation::Kind::Routing,"contact","validated",||serde_json::json!({"node_id":crate::observation::hex(&response.id.0),"address":received.source.to_string()}));
         let outcome = self
             .routing
             .observe_response(response.id, received.source, now);
@@ -155,11 +181,12 @@ impl DhtDispatcher {
     /// 根据查询用途交付成功结果，并清除对应的内部去重状态。
     async fn finish_success(
         &mut self,
-        pending: PendingDispatch,
+        mut pending: PendingDispatch,
         responder_id: NodeId,
         decoded: ValidatedResponse,
         now: Instant,
     ) {
+        pending.observation.finish("validated");
         match pending.purpose {
             PendingPurpose::Fetch { reply, .. } => {
                 if let ValidatedResponse::Peers(response) = decoded {
@@ -301,7 +328,10 @@ impl DhtDispatcher {
                 }
                 return;
             }
-            Err(_) => return,
+            Err(error) => {
+                self.observe_rejected_response(&error, received.source);
+                return;
+            }
         };
         let Some(pending) = self.pending.remove(&completed.transaction.id) else {
             return;
@@ -333,11 +363,18 @@ impl DhtDispatcher {
     /// 记录失败并最多再试一次。
     async fn finish_network_failure(
         &mut self,
-        pending: PendingDispatch,
+        mut pending: PendingDispatch,
         error: QueryError,
         now: Instant,
     ) {
         let remote_replied_with_error = matches!(&error, QueryError::Remote { .. });
+        pending.observation.observer.emit(
+            crate::observation::Kind::Rpc,
+            "response",
+            error.label(),
+            || serde_json::json!({"detail":error.to_string()}),
+        );
+        pending.observation.finish(error.label());
         match pending.purpose {
             PendingPurpose::Fetch { reply, .. } => {
                 if !remote_replied_with_error {
@@ -431,6 +468,18 @@ impl DhtDispatcher {
     /// 大多数结果已经由 routing table 自己处理；只有 `ProbeRequired` 需要 dispatcher
     /// 暂存候选节点，并向 bucket 中的旧节点发送 ping。
     async fn handle_insert_outcome(&mut self, outcome: InsertOutcome, now: Instant) {
+        self.observer.emit(crate::observation::Kind::Routing, "insert", match &outcome {
+            InsertOutcome::Inserted => "inserted",
+            InsertOutcome::Updated => "updated",
+            InsertOutcome::ReplacedBad { .. } => "replaced_bad",
+            InsertOutcome::ProbeRequired { .. } => "probe_required",
+            InsertOutcome::RejectedFull => "rejected_full",
+            InsertOutcome::IgnoredSelf => "ignored_self",
+            InsertOutcome::IgnoredWrongAddressFamily => "ignored_address_family",
+        }, || match &outcome {
+            InsertOutcome::ReplacedBad { removed } => serde_json::json!({"removed_id":crate::observation::hex(&removed.id.0),"removed_address":removed.address.to_string()}),
+            _ => serde_json::json!({}),
+        });
         if let InsertOutcome::ProbeRequired {
             mut incumbents,
             candidate,

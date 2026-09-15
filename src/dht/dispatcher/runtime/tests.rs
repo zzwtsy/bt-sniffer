@@ -154,6 +154,7 @@ async fn queued_rpc_timeout_cancel_shutdown_and_head_of_line_isolation() {
     dispatcher
         .handle_command(
             Command::GetPeers {
+                observer: Default::default(),
                 remote: RemoteNode {
                     address: blocked,
                     expected_id: None,

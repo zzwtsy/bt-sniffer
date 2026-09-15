@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 /// 尚未登记 transaction 的待发意图；持有业务上下文、统计票据及本地排队期限。
 #[derive(Debug)]
 pub(super) struct Queued {
+    pub(super) observation: crate::observation::Span,
+    wait_reasons: u8,
     pub(super) remote: RemoteNode,
     pub(super) query: Outbound,
     pub(super) purpose: PendingPurpose,
@@ -74,6 +76,13 @@ impl DhtDispatcher {
         mut purpose: PendingPurpose,
         now: Instant,
     ) {
+        let parent = match &purpose {
+            PendingPurpose::Fetch { observer, .. } => observer.clone(),
+            PendingPurpose::Sampling(request) => request.observer.clone(),
+            _ => self.observer.clone(),
+        };
+        let mut observation = parent.span(crate::observation::Kind::Rpc, "query");
+        observation.observer.emit(crate::observation::Kind::Rpc,"request","created",||serde_json::json!({"peer":remote.address.to_string(),"method":match query{Outbound::Ping=>"ping",Outbound::FindNode(_)=>"find_node",Outbound::Sample(_)=>"sample_infohashes",Outbound::GetPeers(_)=>"get_peers"}}));
         let reserve = if match purpose {
             PendingPurpose::UserPing { .. } => true,
             #[cfg(test)]
@@ -86,18 +95,27 @@ impl DhtDispatcher {
         };
         let limit = self.transactions.max_pending().saturating_sub(reserve);
         if self.occupied() >= limit {
+            observation.finish("capacity");
             self.finish_start_error(purpose, QueryError::AtCapacity { limit }, now);
             return;
         }
         if let PendingPurpose::Verification { permit, .. } = &mut purpose {
             *permit = self.budget.admit_verification(remote.address.ip());
             if permit.is_none() {
+                observation.finish("local_wait");
                 self.finish_start_error(purpose, QueryError::LocalWait, now);
                 return;
             }
         }
         let record = self.budget.queue_record(purpose.class());
+        observation
+            .observer
+            .emit(crate::observation::Kind::Rpc, "queue", "admitted", || {
+                serde_json::json!({})
+            });
         self.queued.push_back(Queued {
+            observation,
+            wait_reasons: 0,
             record,
             remote,
             query,
@@ -114,12 +132,15 @@ impl DhtDispatcher {
         while index < self.queued.len() {
             let queued = &self.queued[index];
             if queued.purpose.cancelled() {
-                self.queued.remove(index);
+                if let Some(mut queued) = self.queued.remove(index) {
+                    queued.observation.finish("reclaimed");
+                }
                 continue;
             }
             if now >= queued.deadline {
                 let mut queued = self.queued.remove(index).unwrap();
                 queued.record.finish(2);
+                queued.observation.finish("queue_timeout");
                 self.finish_start_error(queued.purpose, QueryError::LocalWait, now);
                 continue;
             }
@@ -133,6 +154,7 @@ impl DhtDispatcher {
                 Err(error) => {
                     let mut queued = self.queued.remove(index).unwrap();
                     queued.record.finish(3);
+                    queued.observation.finish("encode_failed");
                     self.finish_start_error(
                         queued.purpose,
                         QueryError::Transport(crate::dht::udp::UdpTransportError::Encode(error)),
@@ -148,6 +170,10 @@ impl DhtDispatcher {
             );
             let wait = decision.wait;
             self.queued[index].record.blocked(decision.reasons);
+            if self.queued[index].wait_reasons != decision.reasons {
+                self.queued[index].wait_reasons = decision.reasons;
+                self.queued[index].observation.observer.emit(crate::observation::Kind::Rpc,"queue_wait","changed",||serde_json::json!({"class_quota":decision.reasons&1!=0,"destination_ip_quota":decision.reasons&2!=0,"upload_bytes":decision.reasons&4!=0,"ip_table_capacity":decision.reasons&8!=0}));
+            }
             let queued = &self.queued[index];
             if wait.is_zero() {
                 let mut queued = self.queued.remove(index).unwrap();
@@ -156,8 +182,14 @@ impl DhtDispatcher {
                     drop(permit.take());
                 }
                 drop(queued.record);
-                self.send_rpc(queued.remote, queued.query, queued.purpose, now)
-                    .await;
+                self.send_rpc(
+                    queued.remote,
+                    queued.query,
+                    queued.purpose,
+                    queued.observation,
+                    now,
+                )
+                .await;
             } else {
                 if let PendingPurpose::Fetch { progress, .. } = &queued.purpose {
                     progress

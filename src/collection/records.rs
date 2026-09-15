@@ -43,9 +43,12 @@ impl CollectionStore {
         } else {
             admission_at
         };
+        let observer = self.observer.clone();
         let counters = self.backfill_counters.clone();
+        let mut transaction = observer.span(crate::observation::Kind::Commit, "hashes");
         let result = self
             .submit(budget, move |connection| {
+                transaction.executing();
                 let mut deferred = 0;
                 let tx = connection.transaction()?;
                 let mut admission = super::jobs::admission::Admission::load(
@@ -54,11 +57,35 @@ impl CollectionStore {
                     limit,
                     recent_config,
                 )?;
+                let mut observations = Vec::new();
                 for hash in hashes {
+                    if observer.enabled() {
+                        let exists: bool = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM infohashes WHERE hash=?1)",
+                            [hash.0.as_slice()],
+                            |r| r.get(0),
+                        )?;
+                        observations.push((hash, exists));
+                    }
                     upsert_hash(&tx, hash, observed_at)?;
                     deferred += u64::from(admission.observe(&tx, hash, admission_at)?);
                 }
                 tx.commit()?;
+                transaction.observer.emit(
+                    crate::observation::Kind::Discovery,
+                    "batch_segment",
+                    "applied",
+                    || serde_json::json!({"count":count,"observed_at_ms":observed_at}),
+                );
+                transaction.finish("applied");
+                for (hash, exists) in observations {
+                    observer.for_hash(&hash.0).emit(
+                        crate::observation::Kind::Discovery,
+                        "hash_saved",
+                        if exists { "reobserved" } else { "new" },
+                        || serde_json::json!({"observed_at_ms":observed_at}),
+                    );
+                }
                 counters.lock().expect("补建统计锁").defer(
                     super::jobs::admission::Deferral::SampleWaitingBackfill,
                     deferred,

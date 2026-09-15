@@ -85,6 +85,7 @@ impl SamplerConfig {
 /// 一个合法响应对应一个批次，包括空样本。跨批去重交给消费者，不写入 PeerStore。
 #[derive(Debug)]
 pub(crate) struct SampleBatch {
+    pub(crate) observer: crate::observation::Observer,
     /// 网络响应到达时的 UTC 时间，不用数据库消费者取出批次的时间代替。
     pub(crate) observed_at: std::time::SystemTime,
     pub(crate) responder: DiscoveredNode,

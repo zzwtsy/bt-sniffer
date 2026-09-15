@@ -91,7 +91,8 @@ impl MetadataConfig {
 }
 
 /// 当前 peer 正在执行的物理阶段；超时范围使用独立 Deadline 表达。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Stage {
     Connect,
     StandardHandshake,
@@ -100,7 +101,8 @@ pub(crate) enum Stage {
     Verify,
 }
 /// 截断当前操作的期限范围；None 用于非超时结果，不是协议阶段。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Deadline {
     None,
     Stage,
@@ -108,7 +110,8 @@ pub(crate) enum Deadline {
     Task,
 }
 /// Limit 错误的固定资源限制原因，不依赖显示文本分类。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ResourceLimit {
     FrameLength,
     ReceiveOverflow,
@@ -260,6 +263,7 @@ impl VerifiedMetadata {
 /// 单次调用的观察来源与取消覆盖层；不改变连接配置，不保存在客户端克隆中。
 #[derive(Clone, Default)]
 pub(crate) struct PeerContext {
+    pub(crate) observer: crate::observation::Observer,
     pub(crate) source: crate::collection::diagnostics::Source,
     pub(crate) attempt: Option<crate::collection::jobs::AttemptKind>,
     pub(crate) outer_timeout: Arc<std::sync::atomic::AtomicBool>,
@@ -267,11 +271,17 @@ pub(crate) struct PeerContext {
 /// 所有 worker 共享配置、指标和 TCP Peer ID；候选选择与并发归调度器所有。
 #[derive(Debug, Clone)]
 pub(crate) struct PeerClient {
+    pub(crate) observer: crate::observation::Observer,
     config: Arc<MetadataConfig>,
     peer_id: PeerId,
     metrics: Arc<crate::collection::diagnostics::metrics::Metrics>,
 }
 impl PeerClient {
+    pub(crate) fn with_observer(mut self, observer: crate::observation::Observer) -> Self {
+        self.observer = observer;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn test_metrics(&self) -> Arc<crate::collection::diagnostics::metrics::Metrics> {
         self.metrics.clone()
@@ -317,6 +327,7 @@ impl PeerClient {
         let mut peer_id = [0; 20];
         fill(&mut peer_id)?;
         Ok(Self {
+            observer: Default::default(),
             config: Arc::new(config),
             peer_id: PeerId(peer_id),
             metrics,
@@ -346,6 +357,7 @@ impl PeerClient {
                 task_timeout.clone(),
                 context.outer_timeout.clone(),
             );
+            diagnostic.attach_observer(context.observer.clone());
             diagnostic.observe_connect(address, context.attempt);
             self.metrics.add(
                 crate::collection::diagnostics::metrics::Counter::PeerAttempts,
@@ -408,3 +420,30 @@ pub(crate) mod tests;
 
 #[cfg(test)]
 pub(crate) mod compatibility_tests;
+
+impl Stage {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Connect => "connect",
+            Self::StandardHandshake => "standard_handshake",
+            Self::ExtensionHandshake => "extension_handshake",
+            Self::Transfer => "transfer",
+            Self::Verify => "verify",
+        }
+    }
+}
+impl PeerError {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "io",
+            Self::Timeout(_) => "timeout",
+            Self::Protocol(_) => "protocol",
+            Self::Unsupported => "unsupported",
+            Self::Limit(_) => "limit",
+            Self::Rejected(_) => "rejected",
+            Self::Disconnected => "disconnected",
+            Self::HashMismatch => "hash_mismatch",
+            Self::HandshakeHashMismatch => "handshake_hash_mismatch",
+        }
+    }
+}

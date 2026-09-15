@@ -383,6 +383,7 @@ async fn real_handshakes_report_standard_extension_eof_and_hash_mismatch() {
                     address,
                     &cancellation,
                     crate::collection::peer::PeerContext {
+                        observer: Default::default(),
                         source: Source::Announce,
                         ..Default::default()
                     }

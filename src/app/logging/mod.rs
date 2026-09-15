@@ -67,11 +67,12 @@ pub(crate) fn init() -> Result<(Logging, QueueDiagnostics), String> {
         .buffered_lines_limit(QUEUE_CAPACITY)
         .lossy(true)
         .finish(std::io::stderr());
-    let diagnostics = QueueDiagnostics::new(
+    let mut diagnostics = QueueDiagnostics::new(
         file_writer.error_counter(),
         stderr_writer.error_counter(),
         directive,
     );
+    diagnostics.run_id = run_id.clone();
     tracing_subscriber::registry()
         .with(filter)
         .with(

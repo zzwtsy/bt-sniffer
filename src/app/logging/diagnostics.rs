@@ -4,6 +4,7 @@ use tracing_appender::non_blocking::ErrorCounter;
 
 /// main 持有诊断句柄并借给应用；上次观察值只由这一条主流程更新。
 pub(crate) struct QueueDiagnostics {
+    pub(super) run_id: String,
     counters: [ErrorCounter; 2],
     previous: [usize; 2],
     filter: String,
@@ -11,10 +12,15 @@ pub(crate) struct QueueDiagnostics {
 impl QueueDiagnostics {
     pub(super) fn new(file: ErrorCounter, stderr: ErrorCounter, filter: String) -> Self {
         Self {
+            run_id: "test".into(),
             counters: [file, stderr],
             previous: [0; 2],
             filter,
         }
+    }
+    /// 日志初始化确定的运行标识，供只读观测复用。
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
     }
     /// 启动实际使用的指令，不重新读取环境变量。
     pub(crate) fn filter(&self) -> &str {

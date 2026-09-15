@@ -8,10 +8,14 @@ pub(crate) use cooldown::{CooldownLease, RestoredCooldown};
 #[derive(Debug, Clone)]
 pub(crate) struct DhtStore {
     database: StorageHandle,
+    pub(crate) observer: crate::observation::Observer,
 }
 impl DhtStore {
     pub(crate) fn new(database: StorageHandle) -> Self {
-        Self { database }
+        Self {
+            database,
+            observer: Default::default(),
+        }
     }
 }
 

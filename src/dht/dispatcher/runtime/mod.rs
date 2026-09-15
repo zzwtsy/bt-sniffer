@@ -37,6 +37,7 @@ use crate::dht::udp::UdpTransportError;
 /// Node ID 以及 routing table 探测目的。
 #[derive(Debug)]
 pub(super) struct PendingDispatch {
+    pub(super) observation: crate::observation::Span,
     /// 响应应该来自哪个地址，以及预期使用哪个 Node ID。
     pub(super) remote: RemoteNode,
     /// 查询完成后应该通知谁、执行哪一种 routing table 后续动作。
@@ -47,6 +48,7 @@ pub(super) struct PendingDispatch {
 #[derive(Debug)]
 pub(super) enum PendingPurpose {
     Fetch {
+        observer: crate::observation::Observer,
         progress: std::sync::Arc<super::api::RpcProgress>,
         cancel: tokio_util::sync::CancellationToken,
         reply: oneshot::Sender<Result<super::fetch::GetPeersResponse, QueryError>>,
@@ -90,6 +92,7 @@ pub(super) enum PendingPurpose {
 /// 单个 UDP socket 对应的 DHT 状态所有者与消息分派器。
 #[derive(Debug)]
 pub(crate) struct DhtDispatcher {
+    pub(crate) observer: crate::observation::Observer,
     pub(super) budget: std::sync::Arc<crate::dht::traffic::Budget>,
     pub(super) queued: std::collections::VecDeque<super::traffic::Queued>,
     /// 待发队列下次需要推进的最早时间；None 表示无需为该队列设置定时唤醒。
@@ -212,6 +215,7 @@ impl DhtDispatcher {
         let maintenance = MaintenanceState::new(maintenance, current_time());
         Ok((
             Self {
+                observer: Default::default(),
                 budget,
                 queued: Default::default(),
                 queue_deadline: None,
@@ -233,7 +237,10 @@ impl DhtDispatcher {
                 recovery: super::recovery::Recovery::default(),
                 clock: crate::clock::Clock::default(),
             },
-            DhtHandle { commands: sender },
+            DhtHandle {
+                commands: sender,
+                observer: Default::default(),
+            },
         ))
     }
 
@@ -338,6 +345,7 @@ impl DhtDispatcher {
     async fn handle_command(&mut self, command: Command, now: Instant) {
         match command {
             Command::GetPeers {
+                observer,
                 remote,
                 hash,
                 progress,
@@ -345,13 +353,28 @@ impl DhtDispatcher {
                 reply,
             } => {
                 if cancel.is_cancelled() || reply.is_closed() {
+                    observer.emit(
+                        crate::observation::Kind::Rpc,
+                        "command",
+                        "reclaimed",
+                        || serde_json::json!({}),
+                    );
                     return;
                 }
                 if !self.automatic_policy.accepts(remote.address)
                     || !self.routing.address_family().accepts(remote.address)
                 {
+                    observer.emit(
+                        crate::observation::Kind::Rpc,
+                        "command",
+                        "invalid_address",
+                        || serde_json::json!({}),
+                    );
                     let _ = reply.send(Err(QueryError::InvalidResponse("get_peers 目标地址无效")));
                 } else if self.occupied() >= self.transactions.max_pending().saturating_sub(1) {
+                    observer.emit(crate::observation::Kind::Rpc, "command", "capacity", || {
+                        serde_json::json!({})
+                    });
                     progress
                         .limited
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -363,6 +386,7 @@ impl DhtDispatcher {
                         remote,
                         super::fetch::Outbound::GetPeers(hash),
                         PendingPurpose::Fetch {
+                            observer,
                             cancel,
                             reply,
                             progress,
@@ -406,6 +430,7 @@ impl DhtDispatcher {
                 let _ = reply.send(());
             }
             Command::StartSampling { config, reply } => {
+                self.sampler.observer = self.observer.clone();
                 let reserve = self.maintenance.config.reserved_user_transactions.max(1);
                 let available = self.transactions.max_pending().saturating_sub(reserve);
                 let result = self.sampler.start(config, available.saturating_add(1), now);
@@ -456,6 +481,9 @@ impl DhtDispatcher {
                     )
                     .await;
                 }
+            }
+            Command::Inspect { routing, reply } => {
+                let _ = reply.send(self.inspection(routing));
             }
             Command::Status { reply } => {
                 let nodes = self
@@ -537,6 +565,7 @@ impl DhtDispatcher {
         remote: RemoteNode,
         query: super::fetch::Outbound,
         purpose: PendingPurpose,
+        mut observation: crate::observation::Span,
         now: Instant,
     ) {
         let (method, _, _) = query.fields();
@@ -546,6 +575,7 @@ impl DhtDispatcher {
         {
             Ok(id) => id,
             Err(error) => {
+                observation.finish("registration_failed");
                 self.finish_start_error(purpose, transaction_query_error(error), now);
                 return;
             }
@@ -555,14 +585,29 @@ impl DhtDispatcher {
         let class = purpose.class();
         // 先保存业务上下文。即使 UDP 响应马上进入 socket，事件循环下一次接收它时
         // 也一定能够找到对应的等待者。
-        self.pending
-            .insert(transaction_id, PendingDispatch { remote, purpose });
+        self.pending.insert(
+            transaction_id,
+            PendingDispatch {
+                remote,
+                purpose,
+                observation,
+            },
+        );
         if let Err(error) = self.transport.try_send_to(remote.address, &message) {
             self.transactions.cancel(transaction_id);
-            if let Some(pending) = self.pending.remove(&transaction_id) {
+            if let Some(mut pending) = self.pending.remove(&transaction_id) {
+                pending.observation.finish("send_failed");
                 self.finish_start_error(pending.purpose, QueryError::Transport(error), now);
             }
         } else {
+            if let Some(pending) = self.pending.get(&transaction_id) {
+                pending.observation.observer.emit(
+                    crate::observation::Kind::Rpc,
+                    "send",
+                    "sent",
+                    || serde_json::json!({"peer":remote.address.to_string()}),
+                );
+            }
             self.budget.sent(
                 class,
                 bendy::serde::to_bytes(&message).expect("已编码消息").len(),

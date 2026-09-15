@@ -9,13 +9,20 @@ enum DiscoverySource {
 }
 
 async fn sample_or_history(family: AddressFamily, source: DiscoverySource) {
+    sample_or_history_observed(family, source, Default::default()).await;
+}
+async fn sample_or_history_observed(
+    family: AddressFamily,
+    source: DiscoverySource,
+    observer: crate::observation::Observer,
+) {
     // 准备：使用独立目录和本机节点，模拟 peer 返回固定的原始 info 字节。
     let dir = tempfile::tempdir().unwrap();
     let Fixture {
         mut session,
         handle,
         address: _,
-    } = fixture(dir.path(), family).await;
+    } = fixture_observed(dir.path(), family, observer.clone()).await;
     let store = session.test_store();
     if source == DiscoverySource::History {
         store
@@ -120,11 +127,12 @@ async fn history_to_metadata_v6() {
 #[tokio::test]
 async fn valid_announce_downloads_without_routing_and_invalid_token_does_not() {
     let dir = tempfile::tempdir().unwrap();
+    let observer = crate::observation::Observer::new("announce".into());
     let Fixture {
         mut session,
         handle: _,
         address,
-    } = fixture(dir.path(), AddressFamily::Ipv4).await;
+    } = fixture_observed(dir.path(), AddressFamily::Ipv4, observer.clone()).await;
     let store = session.test_store();
     session.start_fetch(config(dir.path())).await.unwrap();
     let (peer, tcp_task) = tcp(AddressFamily::Ipv4).await;
@@ -138,6 +146,17 @@ async fn valid_announce_downloads_without_routing_and_invalid_token_does_not() {
         .unwrap();
     assert_eq!(sender.recv().await.unwrap().message.y, MessageType::Error);
     assert_eq!(store.active_jobs().await.unwrap(), 0);
+    let events = observer.page(0, 100, &Default::default()).events;
+    assert!(
+        events
+            .iter()
+            .any(|e| e["step"] == "announce" && e["result"] == "invalid_token")
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["step"] == "announce_save" && e["result"] == "applied")
+    );
     sender
         .send_to(address, &announce_query(None, 0))
         .await
@@ -161,6 +180,19 @@ async fn valid_announce_downloads_without_routing_and_invalid_token_does_not() {
     await_metadata(&store).await;
     tcp_task.await.unwrap();
     session.shutdown().await.unwrap();
+    let events = observer
+        .page(
+            0,
+            100,
+            &crate::observation::Filter {
+                hash: Some(crate::observation::hex(&hash().0)),
+                ..Default::default()
+            },
+        )
+        .events;
+    assert!(events.iter().any(|e| e["step"] == "announce_save"
+        && e["result"] == "applied"
+        && e["context"]["observation_id"].is_string()));
 }
 
 /// 从尚未验证的候选继续迭代查询，取得可用 peer 后完成真实 metadata 下载。
@@ -419,4 +451,74 @@ async fn lookup_promotes_reserve_on_both_families() {
             let _ = task.await;
         }
     }
+}
+
+/// 同一确定性工作负载开关观测得到相同持久结果，并验证协议到提交的关联。
+#[tokio::test]
+async fn observed_sampling_preserves_result_and_links_all_stages() {
+    let disabled = tokio::time::Instant::now();
+    sample_or_history(AddressFamily::Ipv4, DiscoverySource::Sampling).await;
+    let baseline = disabled.elapsed();
+    let observer = crate::observation::Observer::new("pipeline".into());
+    let enabled = tokio::time::Instant::now();
+    sample_or_history_observed(
+        AddressFamily::Ipv4,
+        DiscoverySource::Sampling,
+        observer.clone(),
+    )
+    .await;
+    let elapsed = enabled.elapsed();
+    let mut events = Vec::new();
+    let mut after = 0;
+    loop {
+        let page = observer.page(after, 100, &crate::observation::Filter::default());
+        let next = page.next.parse().unwrap();
+        events.extend(page.events);
+        if next == after {
+            break;
+        }
+        after = next;
+    }
+    for kind in [
+        "sampling",
+        "discovery",
+        "job",
+        "lookup",
+        "rpc",
+        "peer",
+        "piece",
+        "validation",
+        "commit",
+    ] {
+        assert!(
+            events.iter().any(|e| e["kind"] == kind),
+            "缺少 {kind}: {events:?}"
+        );
+    }
+    let committed = events
+        .iter()
+        .find(|e| e["kind"] == "commit" && e["step"] == "metadata" && e["result"] == "applied")
+        .expect("真实事务提交事件");
+    assert_eq!(
+        committed["context"]["hash"],
+        crate::observation::hex(&hash().0)
+    );
+    assert_eq!(committed["context"]["generation"], 1);
+    assert!(
+        events
+            .iter()
+            .any(|e| e["kind"] == "piece" && e["context"]["peer_attempt_id"].is_string())
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e["kind"] == "rpc" && e["context"]["rpc_id"].is_string())
+    );
+    println!(
+        "本机观测比较 baseline_ms={} enabled_ms={} retained_events={} retained_bytes={}",
+        baseline.as_millis(),
+        elapsed.as_millis(),
+        observer.window().retained,
+        observer.window().bytes
+    );
 }

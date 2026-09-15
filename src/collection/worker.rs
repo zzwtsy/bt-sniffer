@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 /// 协调器一次组装的具体执行资源；克隆 Arc 共享许可、查询节奏、Peer ID 和指标。
 pub(super) struct WorkerResources {
+    pub(super) observer: crate::observation::Observer,
     pub(super) peer: PeerClient,
     pub(super) lookup: Arc<lookup::LookupPacer>,
     pub(super) tcp: super::tcp_limits::TcpLimits,
@@ -42,6 +43,7 @@ impl WorkerResources {
         metrics: Arc<super::diagnostics::metrics::Metrics>,
     ) -> Self {
         Self {
+            observer: peer.observer.clone(),
             peer,
             metrics,
             lookup: Arc::default(),
@@ -74,9 +76,14 @@ pub(super) async fn run_job(
     families: Vec<crate::dht::routing::AddressFamily>,
     cancel: CancellationToken,
 ) -> Outcome {
+    let observer = resources.observer.for_job(&job.hash.0, job.generation);
+    let mut execution = observer.span(crate::observation::Kind::Job, "execution");
     let task_timeout = Arc::new(AtomicBool::new(false));
     let stage = std::sync::Mutex::new(ExecutionStage::LocalWait);
-    let progress = Arc::new(crate::dht::dispatcher::RpcProgress::default());
+    let progress = Arc::new(crate::dht::dispatcher::RpcProgress {
+        observer: execution.observer.clone(),
+        ..Default::default()
+    });
     let dht_active = AtomicBool::new(true);
     let work = async {
         let mut tried = std::collections::HashSet::new();
@@ -121,13 +128,28 @@ pub(super) async fn run_job(
             let Some((peer, source)) = next else {
                 break;
             };
-            if !policy.accepts(peer)
-                || !families.iter().any(|f| f.accepts(peer))
-                || !tried.insert(peer)
-            {
+            let rejected = if !policy.accepts(peer) {
+                Some("address_policy")
+            } else if !families.iter().any(|f| f.accepts(peer)) {
+                Some("address_family")
+            } else if !tried.insert(peer) {
+                Some("duplicate")
+            } else {
+                None
+            };
+            if let Some(reason) = rejected {
+                observer.emit(
+                    crate::observation::Kind::Peer,
+                    "candidate",
+                    reason,
+                    || serde_json::json!({"peer":peer.to_string()}),
+                );
                 continue;
             }
+            let peer_observer = observer.child(crate::observation::Kind::Peer);
+            peer_observer.emit(crate::observation::Kind::Peer,"candidate","selected",||serde_json::json!({"peer":peer.to_string(),"source":if source==Source::Announce{"announce"}else{"dht"}}));
             let context = super::peer::PeerContext {
+                observer: peer_observer,
                 source,
                 attempt: Some(job.attempt_kind()),
                 outer_timeout: task_timeout.clone(),
@@ -180,7 +202,7 @@ pub(super) async fn run_job(
     };
     // timeout 借用 work，记录真实触发原因后再由作用域回收网络 future。
     tokio::pin!(work);
-    tokio::select! {
+    let outcome = tokio::select! {
         biased;
         _ = cancel.cancelled() => Outcome::Retry(RetryReason::Local(LocalReason::Cancelled)),
         result = tokio::time::timeout(Duration::from_secs(180), &mut work) => {
@@ -198,7 +220,13 @@ pub(super) async fn run_job(
                 })
             })
         },
-    }
+    };
+    execution.finish(match &outcome {
+        Outcome::Success(_) => "downloaded",
+        Outcome::Control(_) => "control_failure",
+        Outcome::Retry(reason) => reason.category().unwrap_or("retry"),
+    });
+    outcome
 }
 /// 持有同 IP 许可完成一个 peer 尝试；失败返回固定类别，成功返回已校验的 metadata。
 async fn attempt(
@@ -210,11 +238,15 @@ async fn attempt(
     context: super::peer::PeerContext,
 ) -> Result<VerifiedMetadata, RetryReason> {
     *stage.lock().expect("执行阶段锁") = ExecutionStage::LocalWait;
+    let mut wait_span = context
+        .observer
+        .span(crate::observation::Kind::Peer, "tcp_permit");
     let wait = resources.metrics.timer(Timing::TcpWait);
     // 这里只等同 IP 许可；guard 保留到本次尝试结束，真正连接由下方 fetch 驱动。
     // run_job 的取消或总超时会丢弃 attempt，等待中的申请或已取得的许可随之释放。
     let _connection_permit = resources.tcp.acquire_for_ip(peer.ip()).await;
     drop(wait);
+    wait_span.finish("acquired");
     *stage.lock().expect("执行阶段锁") = ExecutionStage::Peer;
     match resources.peer.fetch_one(hash, peer, cancel, context).await {
         Ok(metadata) => {

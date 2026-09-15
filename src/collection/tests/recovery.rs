@@ -5,10 +5,12 @@ use super::*;
 #[tokio::test]
 async fn completion_rollback_and_stale_success_are_atomic() {
     let dir = tempfile::tempdir().unwrap();
-    let storage =
+    let mut storage =
         crate::collection::test_storage::TestStorage::open(StorageConfig::new(dir.path()))
             .await
             .unwrap();
+    let observer = crate::observation::Observer::new("transactions".into());
+    storage.handle.observer = observer.clone();
     let store = &storage.handle;
     store.enable_fetch(2);
     store.save_hashes(&[hash()], 100).await.unwrap();
@@ -61,6 +63,29 @@ async fn completion_rollback_and_stale_success_are_atomic() {
     );
     assert_eq!(store.metadata(hash()).await.unwrap().unwrap(), INFO);
     assert_eq!(store.fetch_stats().await.unwrap().succeeded, 1);
+    let events = observer
+        .page(
+            0,
+            100,
+            &crate::observation::Filter {
+                kind: Some(crate::observation::Kind::Commit),
+                ..Default::default()
+            },
+        )
+        .events;
+    for outcome in ["stale", "failed", "applied"] {
+        assert!(
+            events.iter().any(|e| e["result"] == outcome),
+            "缺少提交结果 {outcome}"
+        );
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["step"] == "metadata" && e["result"] == "applied")
+            .count(),
+        1
+    );
     storage.shutdown().await.unwrap();
 }
 
@@ -657,7 +682,13 @@ async fn slow_storage_shutdown_preserves_accepted_commands_and_completion_bounda
             let dir = tempfile::tempdir().unwrap();
             let mut settings = StorageConfig::new(dir.path());
             settings.command_capacity = 1;
-            let mut session = Session::open(settings.clone()).await.unwrap();
+            let mut session = Session::open_observed(
+                settings.clone(),
+                Arc::default(),
+                crate::observation::Observer::new("slow-shutdown".into()),
+            )
+            .await
+            .unwrap();
             let closed = session.test_close_observer();
             let mut node_config = DhtDispatcherConfig::default();
             node_config.maintenance.enabled = false;
@@ -672,6 +703,26 @@ async fn slow_storage_shutdown_preserves_accepted_commands_and_completion_bounda
                 )
                 .await
                 .unwrap();
+            let mut monitor_client = None;
+            if matches!(waiting, Waiting::Completion) {
+                let listener = crate::monitor::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap();
+                let address = listener.local_addr().unwrap();
+                session.start_monitor(listener);
+                let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+                client
+                    .write_all(b"GET /api/v1/stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    .await
+                    .unwrap();
+                let mut bytes = [0; 8192];
+                let count = tokio::time::timeout(Duration::from_secs(2), client.read(&mut bytes))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(String::from_utf8_lossy(&bytes[..count]).contains("200 OK"));
+                monitor_client = Some(client);
+            }
             let store = session.test_store();
             store.enable_fetch(16);
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -743,6 +794,17 @@ async fn slow_storage_shutdown_preserves_accepted_commands_and_completion_bounda
                 tokio::time::resume();
                 release.send(()).unwrap();
                 shutdown.await.unwrap();
+            }
+            if let Some(mut client) = monitor_client {
+                let mut tail = Vec::new();
+                let result =
+                    tokio::time::timeout(Duration::from_secs(2), client.read_to_end(&mut tail))
+                        .await
+                        .unwrap();
+                assert!(
+                    result.is_ok()
+                        || result.is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionReset)
+                );
             }
             if matches!(waiting, Waiting::Queue) {
                 queued.await.unwrap();
@@ -816,4 +878,54 @@ async fn slow_storage_shutdown_preserves_accepted_commands_and_completion_bounda
             reopened.shutdown().await.unwrap();
         }
     }
+}
+
+/// 调用者已取消等待时，数据库事实和过程仍在真实提交后同时可见。
+#[tokio::test]
+async fn cancelled_completion_waiter_still_observes_committed_transaction() {
+    use crate::collection::test_storage::{BlockedOperation, CommandBarrier};
+    let dir = tempfile::tempdir().unwrap();
+    let mut storage =
+        crate::collection::test_storage::TestStorage::open(StorageConfig::new(dir.path()))
+            .await
+            .unwrap();
+    let observer = crate::observation::Observer::new("cancelled-commit".into());
+    storage.handle.observer = observer.clone();
+    let store = storage.handle.clone();
+    store.enable_fetch(2);
+    store.save_hashes(&[hash()], 100).await.unwrap();
+    let job = store.claim_job(100).await.unwrap().unwrap();
+    let metadata = verified().await;
+    let (entered, arrival) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    *store.test_barrier.lock().unwrap() = Some((
+        BlockedOperation::Completion,
+        CommandBarrier {
+            entered,
+            release: blocked,
+        },
+    ));
+    let writer = store.clone();
+    let task = tokio::spawn(async move { writer.complete_job(job, metadata, 101).await });
+    arrival.await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(
+        !observer
+            .page(0, 100, &Default::default())
+            .events
+            .iter()
+            .any(|e| e["step"] == "metadata" && e["result"] == "applied")
+    );
+    release.send(()).unwrap();
+    assert_eq!(store.metadata(hash()).await.unwrap().unwrap(), INFO);
+    let events = observer.page(0, 100, &Default::default()).events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["step"] == "metadata" && e["result"] == "applied")
+            .count(),
+        1
+    );
+    storage.shutdown().await.unwrap();
 }

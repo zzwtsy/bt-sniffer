@@ -11,6 +11,7 @@ mod comparison;
 pub(crate) mod diagnostics;
 mod failure;
 pub(crate) mod ingest;
+pub(crate) mod inspection;
 pub(crate) mod jobs;
 mod lifecycle;
 mod lookup;
@@ -129,7 +130,8 @@ impl Collector {
         config.validate().map_err(CollectorError::Configuration)?;
         let metrics = Arc::new(Metrics::default());
         let peer = PeerClient::with_resources(config.metadata.clone(), metrics.clone())
-            .map_err(CollectorError::Configuration)?;
+            .map_err(CollectorError::Configuration)?
+            .with_observer(store.observer.clone());
         store.enable_fetch(config.max_active);
         store.enable_recent_admission(
             if config.sample_backpressure == SampleBackpressure::Freshness {

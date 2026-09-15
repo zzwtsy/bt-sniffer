@@ -16,6 +16,7 @@
 
 mod api;
 mod fetch;
+mod inspection;
 pub(crate) use api::DiscoveredNode;
 pub(crate) use fetch::{AnnounceEvent, FetchIngress, GetPeersResponse};
 mod maintenance;

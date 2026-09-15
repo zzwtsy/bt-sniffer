@@ -15,6 +15,9 @@ pub(crate) const DEFAULT_BOOTSTRAP: [&str; 3] = [
 #[derive(Debug, Parser)]
 #[command(version, about = "持久化的双栈 BitTorrent DHT 服务节点")]
 pub(crate) struct Cli {
+    /// 开启只读观测 HTTP；仅允许 loopback，省略时不创建监控资源。
+    #[arg(long, value_parser = monitor_address)]
+    pub(crate) monitor_listen: Option<SocketAddr>,
     /// 状态目录；默认使用操作系统的本地应用数据目录。
     #[arg(long)]
     pub(crate) state_dir: Option<PathBuf>,
@@ -235,4 +238,12 @@ fn sampling_backpressure_cli_is_validated_without_changing_resource_defaults() {
         SampleBackpressure::Capacity
     );
     assert!(Cli::try_parse_from(["bt-sniffer", "--sample-backpressure", "other"]).is_err());
+}
+
+fn monitor_address(value: &str) -> Result<SocketAddr, String> {
+    let address: SocketAddr = value.parse().map_err(|_| "监控监听地址无效".to_string())?;
+    if !address.ip().is_loopback() {
+        return Err("监控只能监听 loopback".into());
+    }
+    Ok(address)
 }

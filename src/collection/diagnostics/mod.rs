@@ -15,14 +15,16 @@ use std::sync::Arc;
 use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 
 /// 候选首次实际尝试时的来源，不按返回响应重新归类。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Source {
     Announce,
     #[default]
     Dht,
 }
 pub(crate) use crate::collection::peer::{Deadline, Stage};
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ResultKind {
     Success,
     Timeout,
@@ -37,7 +39,8 @@ pub(crate) enum ResultKind {
     Cancelled,
 }
 /// 失败细分只来自类型，不保存报文、地址或系统 errno。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 enum FailureReason {
     Protocol(crate::collection::peer::wire::WireErrorKind),
     Resource(crate::collection::peer::ResourceLimit),
@@ -111,6 +114,13 @@ pub(crate) struct Diagnostics {
     snapshots: Mutex<(Snapshot, Snapshot)>,
 }
 impl Diagnostics {
+    /// 只复制累计的固定维度；不会清空日志区间。
+    pub(crate) fn snapshot(&self) -> serde_json::Value {
+        let pair = self.snapshots.lock().expect("诊断聚合锁");
+        let snapshot = &pair.0;
+        serde_json::json!({"peers":snapshot.peers.iter().map(|(key,d)|serde_json::json!({"stage":key.stage,"source":key.source,"ipv6":key.ipv6,"result":key.result,"deadline":key.deadline,"count":d.count,"sum_ms":d.sum_ms,"p95_upper_bound_ms":d.quantile(95),"p95_exceeds_ms":d.exceeds(95)})).collect::<Vec<_>>(),"failures":snapshot.failures.iter().map(|((stage,source,ipv6,reason),count)|serde_json::json!({"stage":stage,"source":source,"ipv6":ipv6,"reason":reason,"count":count})).collect::<Vec<_>>()})
+    }
+
     /// 基准报告只读取固定聚合，不重置日志区间。
     #[cfg(test)]
     pub(crate) fn report(&self) -> serde_json::Value {

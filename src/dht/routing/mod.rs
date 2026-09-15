@@ -507,3 +507,25 @@ fn set_bit(id: &mut NodeId, bit: usize, value: bool) {
 
 #[cfg(test)]
 mod tests;
+
+impl RoutingTable {
+    /// 当前路由桶和联系人；不把恢复候选或未经验证的响应节点描述为已可达。
+    pub(crate) fn inspection(&self, now: Instant) -> serde_json::Value {
+        let mut buckets = Vec::new();
+        let mut contacts = Vec::new();
+        for bucket in &self.buckets {
+            let id = format!(
+                "{}/{}",
+                crate::observation::hex(&bucket.range.prefix.0),
+                bucket.range.prefix_len
+            );
+            buckets.push(
+                serde_json::json!({"id":id,"count":bucket.nodes.len(),"capacity":BUCKET_SIZE}),
+            );
+            for node in &bucket.nodes {
+                contacts.push(serde_json::json!({"bucket":id,"node_id":crate::observation::hex(&node.id.0),"address":node.address.to_string(),"status":match node.status(now){NodeStatus::Good=>"good",NodeStatus::Questionable=>"questionable",NodeStatus::Bad=>"bad"},"last_response_age_ms":now.saturating_duration_since(node.last_response).as_millis() as u64}));
+            }
+        }
+        serde_json::json!({"observed_at_ms":crate::observation::wall_ms(),"buckets":buckets,"contacts":contacts})
+    }
+}

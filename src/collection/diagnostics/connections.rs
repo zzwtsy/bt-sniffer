@@ -362,6 +362,7 @@ mod tests {
         .unwrap()
         .with_metrics(metrics.clone());
         let context = crate::collection::peer::PeerContext {
+            observer: Default::default(),
             attempt: Some(AttemptKind::First),
             ..Default::default()
         };

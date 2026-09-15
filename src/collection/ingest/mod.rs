@@ -68,7 +68,9 @@ impl SampleIngest {
             );
             while self.offset < batch.samples.len() {
                 let end = (self.offset + 1024).min(batch.samples.len());
-                store
+                let mut observed_store = store.clone();
+                observed_store.observer = batch.observer.clone();
+                observed_store
                     .save_hashes_at(
                         &batch.samples[self.offset..end],
                         at,
@@ -76,6 +78,12 @@ impl SampleIngest {
                             .millis_at(tokio::time::Instant::now().into_std())?,
                     )
                     .await?;
+                batch.observer.emit(
+                    crate::observation::Kind::Discovery,
+                    "batch_save",
+                    "confirmed",
+                    || serde_json::json!({"offset":end,"total":batch.samples.len()}),
+                );
                 self.offset = end;
             }
             self.current = None;
@@ -87,8 +95,9 @@ impl SampleIngest {
 impl Collector {
     /// 使用事件观察时间保存提示；接纳确认后才增加 AnnouncesAccepted，拒绝计入丢弃。
     pub(super) async fn accept_announce(&self, event: AnnounceEvent) -> Result<(), StorageError> {
-        if !self
-            .store
+        let mut store = self.store.clone();
+        store.observer = event.observer.clone();
+        if !store
             .discover_peer(event.hash, event.peer, unix_millis(event.observed_at)?)
             .await?
         {

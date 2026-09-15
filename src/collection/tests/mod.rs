@@ -166,7 +166,16 @@ struct Fixture {
 }
 
 async fn fixture(dir: &std::path::Path, family: AddressFamily) -> Fixture {
-    let mut session = Session::open(StorageConfig::new(dir)).await.unwrap();
+    fixture_observed(dir, family, Default::default()).await
+}
+async fn fixture_observed(
+    dir: &std::path::Path,
+    family: AddressFamily,
+    observer: crate::observation::Observer,
+) -> Fixture {
+    let mut session = Session::open_observed(StorageConfig::new(dir), Arc::default(), observer)
+        .await
+        .unwrap();
     let transport = udp(family).await;
     let address = transport.local_addr().unwrap();
     let mut cfg = DhtDispatcherConfig::default();

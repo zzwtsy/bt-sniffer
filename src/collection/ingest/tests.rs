@@ -27,6 +27,7 @@ async fn failed_collection_retains_batch_and_resume_offset() {
     let mut samples = vec![InfoHashV1([1; 20]); 1024];
     samples.extend([InfoHashV1([0; 20]); 10]);
     tx.send(SampleBatch {
+        observer: Default::default(),
         responder: crate::dht::dispatcher::DiscoveredNode {
             id: NodeId([7; 20]),
             address: "127.0.0.1:1".parse().unwrap(),
@@ -111,6 +112,7 @@ async fn cancelled_database_confirmation_preserves_unconfirmed_batch() {
     let (sender, receiver) = mpsc::channel(1);
     sender
         .send(SampleBatch {
+            observer: Default::default(),
             responder: crate::dht::dispatcher::DiscoveredNode {
                 id: NodeId([7; 20]),
                 address: "127.0.0.1:1".parse().unwrap(),

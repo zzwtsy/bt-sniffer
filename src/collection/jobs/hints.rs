@@ -23,8 +23,11 @@ impl CollectionStore {
         if peer.port() == 0 || observed_at_ms < 0 {
             return Err(StorageError::Invalid("peer 发现参数无效"));
         }
+        let observer = self.observer.for_hash(&hash.0);
+        let mut observation = observer.span(crate::observation::Kind::Admission, "announce_save");
         let limit = self.fetch_limit.load(Ordering::Relaxed);
         self.call(move |connection| {
+            observation.executing();
             let tx = connection.transaction()?;
             let mut available_slots = available(&tx, limit)?;
             // 满载时不扩大数据库；已接纳任务仍可更新短期地址。
@@ -39,6 +42,7 @@ impl CollectionStore {
                 |row| row.get(0),
             )?;
             if available_slots == 0 && !active {
+                observation.finish("capacity");
                 return Ok(false);
             }
             upsert_hash(&tx, hash, observed_at_ms)?;
@@ -68,6 +72,13 @@ impl CollectionStore {
                 params![hash.0.as_slice(), MAX_PEER_HINTS],
             )?;
             tx.commit()?;
+            observer.emit(
+                crate::observation::Kind::Discovery,
+                "peer_hint",
+                "applied",
+                || serde_json::json!({"peer":peer.to_string(),"observed_at_ms":observed_at_ms}),
+            );
+            observation.finish("applied");
             Ok(true)
         })
         .await

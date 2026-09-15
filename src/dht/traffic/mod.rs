@@ -177,8 +177,7 @@ struct IpState {
     touched: tokio::time::Instant,
     verification_until: Option<tokio::time::Instant>,
 }
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(test, derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub(crate) struct Stats {
     pub(crate) validated_v4: u64,
     pub(crate) validated_v6: u64,
@@ -340,7 +339,6 @@ impl Budget {
             }
         });
     }
-    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> Stats {
         self.0.lock().expect("流量锁").total.clone()
     }

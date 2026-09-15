@@ -73,7 +73,11 @@ async fn query(
     progress: Arc<RpcProgress>,
 ) -> Result<GetPeersResponse, QueryError> {
     loop {
+        let mut wait = progress
+            .observer
+            .span(crate::observation::Kind::Lookup, "pacing");
         pacer.pace(node.address.ip()).await;
+        wait.finish("ready");
         match handle
             .get_peers_observed(
                 RemoteNode {
@@ -88,7 +92,17 @@ async fn query(
             Err(QueryError::AtCapacity { .. } | QueryError::LocalWait) => {
                 tokio::time::sleep(Duration::from_millis(100)).await
             }
-            result => return result,
+            result => {
+                if let Ok(response) = &result {
+                    for candidate in &response.nodes {
+                        progress.observer.emit(crate::observation::Kind::Lookup,"candidate","discovered",||serde_json::json!({"from":node.address.to_string(),"node_id":crate::observation::hex(&candidate.id.0),"address":candidate.address.to_string(),"xor_distance":crate::observation::hex(&xor_distance(&candidate.id.0,&hash.0))}));
+                    }
+                    for peer in &response.peers {
+                        progress.observer.emit(crate::observation::Kind::Lookup,"peer","discovered",||serde_json::json!({"from":node.address.to_string(),"peer":peer.to_string()}));
+                    }
+                }
+                return result;
+            }
         }
     }
 }
@@ -299,6 +313,9 @@ pub(super) async fn stream(
     sender: Option<Sender<SocketAddr>>,
     progress: Arc<RpcProgress>,
 ) -> LookupResult {
+    let mut observation = progress
+        .observer
+        .span(crate::observation::Kind::Lookup, "lookup");
     metrics.add(Counter::Lookups, 1);
     let _timer = metrics.timer(metrics::Timing::Lookup);
     let peers = Arc::new(Mutex::new(Vec::new()));
@@ -334,7 +351,14 @@ pub(super) async fn stream(
             }
         }
     };
-    let _ = tokio::time::timeout(Duration::from_secs(30), work).await;
+    let completed = tokio::time::timeout(Duration::from_secs(30), work).await;
+    observation.finish(if completed.is_err() {
+        "timeout"
+    } else if fault.lock().expect("查找故障锁").is_some() {
+        "control_failure"
+    } else {
+        "finished"
+    });
     drop(families);
     #[cfg(test)]
     let result = peers.lock().expect("peer 结果锁").clone();

@@ -39,9 +39,44 @@ async fn run_with_resolver(
             sleep(Duration::from_secs(60)).await;
             continue;
         }
-        let addresses = resolve_addresses(&seeds, status.family, policy, &resolve).await;
+        let observed_resolve = |host: String| {
+            if !handle.observer.enabled() {
+                return resolve(host);
+            }
+            let future = resolve(host.clone());
+            let observer = handle.observer.clone();
+            Box::pin(async move {
+                let mut span = observer.span(crate::observation::Kind::Bootstrap, "dns");
+                span.observer.emit(
+                    crate::observation::Kind::Bootstrap,
+                    "dns_seed",
+                    "started",
+                    || serde_json::json!({"seed":host}),
+                );
+                let result = future.await;
+                span.finish(if result.is_ok() { "resolved" } else { "failed" });
+                if let Ok(addresses) = &result {
+                    for address in addresses.iter() {
+                        span.observer.emit(
+                            crate::observation::Kind::Bootstrap,
+                            "dns_address",
+                            "resolved",
+                            || serde_json::json!({"address":address.to_string()}),
+                        );
+                    }
+                }
+                result
+            }) as BoxFuture<'static, io::Result<Vec<SocketAddr>>>
+        };
+        let addresses = resolve_addresses(&seeds, status.family, policy, &observed_resolve).await;
         match round(&handle, addresses).await? {
             Round::Connected => {
+                handle.observer.emit(
+                    crate::observation::Kind::Bootstrap,
+                    "bootstrap",
+                    "connected",
+                    || serde_json::json!({}),
+                );
                 tracing::info!(
                     event = "bootstrap_connected",
                     schema_version = 1u64,
@@ -54,6 +89,12 @@ async fn run_with_resolver(
             }
             Round::Busy => sleep(Duration::from_secs(1)).await,
             Round::Failed => {
+                handle.observer.emit(
+                    crate::observation::Kind::Bootstrap,
+                    "bootstrap",
+                    "retry",
+                    || serde_json::json!({"backoff_ms":backoff.as_millis() as u64}),
+                );
                 let delay = retry_delay(backoff, rand::rng().random_range(0..=200));
                 tracing::warn!(
                     event = "bootstrap_retry_scheduled",

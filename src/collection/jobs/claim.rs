@@ -22,6 +22,7 @@ impl CollectionStore {
         preference: Option<ClaimClass>,
         policy: crate::address::AddressPolicy,
     ) -> Result<Option<Claim>, StorageError> {
+        let observer = self.observer.clone();
         self.call(move |connection| {
             let tx = connection.transaction()?;
             install_peer_policy(&tx, policy)?;
@@ -109,6 +110,7 @@ impl CollectionStore {
                 peers
             };
             tx.commit()?;
+            observer.for_job(&hash.0,generation+1).emit(crate::observation::Kind::Job,"claim","applied",||serde_json::json!({"class":class.label(),"attempt_kind":if generation==0{"first"}else{"repeat"},"failed_attempts_before":failed_attempts_before,"had_valid_hint":!peers.is_empty(),"due_at_ms":due_at,"first_seen_ms":first_seen}));
             Ok(Some(Claim {
                 job: Job {
                     hash,

@@ -31,8 +31,7 @@ pub(crate) struct DueStats {
 }
 
 /// 数据库当前状态快照；任务数按状态统计，metadata_bytes 是已存原始字节总量。
-#[derive(Debug, Default)]
-#[cfg_attr(test, derive(serde::Serialize))]
+#[derive(Debug, Default, serde::Serialize)]
 pub(crate) struct Stats {
     pub(crate) pending: i64,
     pub(crate) running: i64,
@@ -82,7 +81,7 @@ pub(crate) enum LocalReason {
     Cancelled,
 }
 impl RetryReason {
-    fn category(self) -> Option<&'static str> {
+    pub(crate) fn category(self) -> Option<&'static str> {
         match self {
             Self::Deferred => Some("local_deferred"),
             Self::Local(LocalReason::ResourceWait) => Some("local_wait"),
@@ -203,3 +202,14 @@ mod query_tests;
 
 #[cfg(test)]
 mod first_attempt_comparison;
+
+impl ClaimClass {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Hint => "hint",
+            Self::Recent => "recent",
+            Self::Retry => "retry",
+            Self::History => "history",
+        }
+    }
+}

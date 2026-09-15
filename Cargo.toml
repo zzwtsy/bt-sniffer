@@ -16,7 +16,10 @@ futures-util = { version = "0.3", features = ["sink"] }
 bytes = "1"
 sha1 = "0.11"
 serde_bytes = "0.11"
-rusqlite = { version = "0.40.2", features = ["bundled", "functions"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "functions", "hooks"] }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-appender = "0.2"
@@ -28,3 +31,4 @@ governor = { version = "0.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

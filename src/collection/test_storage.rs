@@ -19,6 +19,7 @@ impl TestStorage {
 /// 只在指定业务命令到达数据库线程时停住，不用计时猜测协调器的位置。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum BlockedOperation {
+    Inspection,
     Completion,
     Status,
 }

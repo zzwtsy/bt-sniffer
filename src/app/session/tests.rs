@@ -844,6 +844,7 @@ async fn session_logs_use_module_targets_and_fields() {
     let (sender, receiver) = mpsc::channel(1);
     sender
         .send(SampleBatch {
+            observer: Default::default(),
             responder: crate::dht::dispatcher::DiscoveredNode {
                 id: NodeId([7; 20]),
                 address: "127.0.0.1:1".parse().unwrap(),

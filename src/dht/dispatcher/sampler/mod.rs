@@ -26,7 +26,8 @@ use tokio::sync::mpsc;
 const UNSUPPORTED_FOR: Duration = Duration::from_secs(21600);
 /// 当前调度停顿原因，不是错误分类；Storage 可表示等确认，也可伴随实际存储故障。
 /// 是否发生存储错误还需查看 SamplerStatus.storage_error，不能仅凭 pause 判定。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum PauseReason {
     #[default]
     Stopped,
@@ -102,6 +103,7 @@ pub(super) enum OutputWatch {
 /// 预留的批次许可和磁盘租约随请求走到成功、失败或取消的收尾路径。
 #[derive(Debug)]
 pub(super) struct Request {
+    pub(super) observer: crate::observation::Observer,
     /// 采样启停代数，拒绝旧会话的迟到结果；不同于 SQLite 任务领取 generation。
     generation: u64,
     /// 可选磁盘冷却预约；预留成功不代表请求已发出，结束时按发送确定性结算。
@@ -124,6 +126,7 @@ struct Cooldown {
 }
 #[derive(Debug)]
 struct Session {
+    observer: crate::observation::Observer,
     config: SamplerConfig,
     output: mpsc::Sender<SampleBatch>,
     ready_permit: Option<mpsc::OwnedPermit<SampleBatch>>,
@@ -200,7 +203,15 @@ impl Session {
 
     /// 换一个查询目标并清除本轮进度；Node ID/IP 冷却保存在 Sampler 中，不随轮次清除。
     fn reset_round(&mut self, now: Instant) {
+        self.observer.emit(crate::observation::Kind::Sampling,"round","finished",||serde_json::json!({"target":crate::observation::hex(&self.target.0),"queries":self.queries}));
+        self.observer = self.observer.child(crate::observation::Kind::Lifecycle);
         self.target = NodeId(rand::random());
+        self.observer.emit(
+            crate::observation::Kind::Sampling,
+            "round",
+            "started",
+            || serde_json::json!({"target":crate::observation::hex(&self.target.0)}),
+        );
         self.queries = 0;
         for candidate in self.candidates.values_mut() {
             candidate.visited = false;
@@ -213,6 +224,7 @@ impl Session {
 /// dispatcher 独占的采样状态；session 管一轮启停，冷却表和 durable 跨启停保留。
 #[derive(Debug, Default)]
 pub(super) struct Sampler {
+    pub(super) observer: crate::observation::Observer,
     generation: u64,
     durable: Option<durable::Durable>,
     session: Option<Session>,
@@ -250,6 +262,7 @@ impl Sampler {
         let (output, receiver) = mpsc::channel(config.output_capacity);
         self.generation = self.generation.wrapping_add(1);
         self.session = Some(Session {
+            observer: self.observer.child(crate::observation::Kind::Lifecycle),
             config,
             output,
             ready_permit: None,
@@ -259,6 +272,14 @@ impl Sampler {
             queries: 0,
             next_send: now,
         });
+        if let Some(session) = &self.session {
+            session.observer.emit(
+                crate::observation::Kind::Sampling,
+                "round",
+                "started",
+                || serde_json::json!({"target":crate::observation::hex(&session.target.0)}),
+            );
+        }
         self.status = SamplerStatus {
             running: true,
             ..Default::default()
@@ -307,6 +328,7 @@ impl Sampler {
         }
         // 在途请求的 interval 尚未知，按规范最大值保守等待；不能靠启停绕过冷却。
         if let Some(session) = self.session.take() {
+            session.observer.emit(crate::observation::Kind::Sampling,"round","stopped",||serde_json::json!({"queries":session.queries,"in_flight":session.in_flight.len()}));
             for (id, ip) in session.in_flight {
                 if let Some(value) = self.ids.get_mut(&id) {
                     value.until = value.until.max(now + UNSUPPORTED_FOR);
@@ -513,7 +535,10 @@ impl Sampler {
         self.deadline = Some(session.next_send);
         self.status.pause = PauseReason::Ready;
         self.status.in_flight = session.in_flight.len();
+        let observer = session.observer.child(crate::observation::Kind::Sampling);
+        observer.emit(crate::observation::Kind::Sampling,"candidate","selected",||serde_json::json!({"node_id":crate::observation::hex(&candidate.node.id.0),"peer":candidate.node.address.to_string(),"target":crate::observation::hex(&session.target.0),"query_index":session.queries}));
         Request {
+            observer,
             generation: self.generation,
             lease: None,
             node: candidate.node,
@@ -554,8 +579,10 @@ impl Sampler {
         self.settle_request(&request, now);
         self.add_nodes(response.nodes, routing, now);
         self.status.successful += 1;
+        request.observer.emit(crate::observation::Kind::Sampling,"response","validated",||serde_json::json!({"count":response.samples.len(),"num":response.num,"interval_secs":response.interval.as_secs()}));
         if let Some(permit) = request.permit.take() {
             permit.send(SampleBatch {
+                observer: request.observer.clone(),
                 observed_at,
                 responder: request.node,
                 target: request.target,
@@ -573,6 +600,16 @@ impl Sampler {
         routing: &RoutingTable,
         now: Instant,
     ) {
+        request.observer.emit(
+            crate::observation::Kind::Sampling,
+            "response",
+            if request.kind == RequestKind::Sample {
+                "unsupported"
+            } else {
+                "fallback_nodes"
+            },
+            || serde_json::json!({"nodes":nodes.len()}),
+        );
         self.finished(&request);
         if request.kind == RequestKind::Sample {
             self.status.unsupported += 1;
@@ -582,6 +619,12 @@ impl Sampler {
         self.add_nodes(nodes, routing, now);
     }
     pub(super) fn failure(&mut self, request: Request, error: &QueryError, now: Instant) {
+        request.observer.emit(
+            crate::observation::Kind::Sampling,
+            "response",
+            error.label(),
+            || serde_json::json!({"fallback":matches!(error,QueryError::Remote{code:204,..})}),
+        );
         self.finished(&request);
         let Some(s) = self.session.as_mut() else {
             return;
@@ -654,7 +697,11 @@ impl DhtDispatcher {
             return;
         }
         let selected = ready.or_else(|| self.sampler.next(&self.routing, capacity, now));
-        if let Some(request) = selected {
+        if let Some(mut request) = selected {
+            if !request.observer.enabled() {
+                request.observer = self.observer.child(crate::observation::Kind::Sampling);
+                request.observer.emit(crate::observation::Kind::Sampling,"candidate","selected",||serde_json::json!({"node_id":crate::observation::hex(&request.node.id.0),"peer":request.node.address.to_string(),"target":crate::observation::hex(&request.target.0)}));
+            }
             let Some(request) = self.sampler.reserve_request(request, now) else {
                 return;
             };
@@ -698,3 +745,9 @@ impl DhtDispatcher {
 
 #[cfg(test)]
 mod tests;
+
+impl Sampler {
+    pub(super) fn inspection(&self) -> serde_json::Value {
+        self.session.as_ref().map_or(serde_json::Value::Null,|s|serde_json::json!({"target":crate::observation::hex(&s.target.0),"queries":s.queries,"candidates":s.candidates.values().map(|c|serde_json::json!({"node_id":crate::observation::hex(&c.node.id.0),"address":c.node.address.to_string(),"visited":c.visited,"fallback":c.kind==RequestKind::FindNodeFallback,"cooldown_ms":self.ids.get(&c.node.id).map(|v|v.until.saturating_duration_since(std::time::Instant::now()).as_millis() as u64)})).collect::<Vec<_>>()}))
+    }
+}

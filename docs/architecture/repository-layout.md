@@ -47,6 +47,8 @@ src/
 │   ├── records.rs         持久化记录类型
 │   ├── failure.rs         失败分类
 │   └── tests/             离线链路、恢复、边界和 ignored 验收
+├── observation/            强类型事件、关联上下文、有界历史和当前状态
+├── monitor/                只读 HTTP/SSE、刷新和连接所有权
 ├── storage/                SQLite 线程、命令预算、schema 和地址表示
 ├── address.rs              网络地址策略
 ├── clock.rs                时间与可控测试时钟
@@ -55,11 +57,13 @@ src/
 └── acceptance/             仅 cfg(test) 的验收身份与证据辅助
 ```
 
-图中省略各目录的 `mod.rs`、单元测试及细分实现文件；完整文件以模块声明为准。`catalog`、`monitor` 空目录没有编译模块，不代表已实现功能。
+图中省略各目录的 `mod.rs`、单元测试及细分实现文件；完整文件以模块声明为准。观测与 HTTP 的边界见[观测接口](../domains/monitoring.md)。
 
 ## 划分依据与依赖方向
 
 `app` 组装具体组件，不承载 KRPC 或领取 SQL。`Session` 持有任务关闭责任；每个 dispatcher 持有本地址族路由、transaction 和采样状态。采集规则放在 `collection`，不会让 DHT 解释重试状态或接纳策略。
+
+`observation` 不依赖 HTTP、SQLite 或调度；`monitor` 通过 DHT handle 和 CollectionStore 读取，app 负责注入并由 Session 收尾。
 
 依赖主方向为 `main → app → collection / dht → storage 与共享基础模块`；采集通过 DHT handle 查询 peer。`DhtStore` 与 `CollectionStore` 是业务侧的两个具体 SQL 入口，复用一个 `StorageHandle`，并非两条数据库线程。`storage` 不反向调用业务调度；`histogram` 只计算桶值，由业务模块命名日志字段。
 

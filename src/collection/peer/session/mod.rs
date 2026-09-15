@@ -121,6 +121,7 @@ async fn request_pieces(
     pieces: &mut Pieces,
     remote_id: u8,
     config: &MetadataConfig,
+    observer: &crate::observation::Observer,
 ) -> Result<(), PeerError> {
     while pieces.next < pieces.complete.len()
         && pieces.deadlines.iter().flatten().count() < config.request_window
@@ -134,6 +135,7 @@ async fn request_pieces(
         )
         .await?;
         pieces.deadlines[piece] = Some(Instant::now() + config.piece_timeout);
+        observer.emit(crate::observation::Kind::Piece,"request","sent",||serde_json::json!({"piece":piece,"timeout_ms":config.piece_timeout.as_millis() as u64}));
         pieces.next += 1;
     }
     Ok(())
@@ -216,11 +218,33 @@ fn verify_metadata(
     address: SocketAddr,
     peer_id: PeerId,
     max_depth: usize,
+    observer: &crate::observation::Observer,
 ) -> Result<VerifiedMetadata, PeerError> {
-    if Sha1::digest(&state.bytes).as_slice() != hash.0 {
+    let matches = Sha1::digest(&state.bytes).as_slice() == hash.0;
+    observer.emit(
+        crate::observation::Kind::Validation,
+        "raw_info_hash",
+        if matches { "verified" } else { "mismatch" },
+        || serde_json::json!({"bytes":state.bytes.len()}),
+    );
+    if !matches {
         return Err(PeerError::HashMismatch);
     }
-    let raw = peer_wire::dictionary_prefix(&state.bytes, max_depth)?;
+    let parsed = peer_wire::dictionary_prefix(&state.bytes, max_depth);
+    observer.emit(
+        crate::observation::Kind::Validation,
+        "complete_dictionary",
+        if parsed
+            .as_ref()
+            .is_ok_and(|raw| raw.len() == state.bytes.len())
+        {
+            "verified"
+        } else {
+            "invalid"
+        },
+        || serde_json::json!({}),
+    );
+    let raw = parsed?;
     if raw.len() != state.bytes.len() {
         return Err(WireErrorKind::InfoTrailing.into());
     }
@@ -277,6 +301,7 @@ pub(super) async fn fetch_peer(
                 pieces,
                 remote_id.expect("已协商扩展 ID"),
                 config,
+                &diagnostic.observer,
             )
             .await?;
         }
@@ -285,10 +310,26 @@ pub(super) async fn fetch_peer(
             None => handshake_deadline,
         };
         // 无关消息、重复分片和 keepalive 不改变已有分片的绝对期限。
-        if Instant::now() >= deadline {
-            return Err(PeerError::Timeout(Deadline::Stage));
+        let frame = if Instant::now() >= deadline {
+            Err(PeerError::Timeout(Deadline::Stage))
+        } else {
+            receive_frame(&mut stream, deadline, config, &mut received).await
+        };
+        if matches!(&frame, Err(PeerError::Timeout(_)))
+            && let Some(pieces) = &pieces
+        {
+            for (piece, deadline) in pieces.deadlines.iter().enumerate() {
+                if deadline.is_some_and(|deadline| deadline <= Instant::now()) {
+                    diagnostic.observer.emit(
+                        crate::observation::Kind::Piece,
+                        "receive",
+                        "timeout",
+                        || serde_json::json!({"piece":piece}),
+                    );
+                }
+            }
         }
-        let frame = receive_frame(&mut stream, deadline, config, &mut received).await?;
+        let frame = frame?;
         if frame.is_empty() || frame[0] != 20 {
             continue;
         }
@@ -300,6 +341,7 @@ pub(super) async fn fetch_peer(
                 peer_wire::parse_extension(&frame[2..], config.max_header_size, config.max_depth);
             diagnostic.extension_frame(&parsed);
             let update = parsed?;
+            diagnostic.observer.emit(crate::observation::Kind::Peer,"extension","parsed",||serde_json::json!({"metadata_id":update.metadata_id,"metadata_size":update.metadata_size}));
             apply_extension(
                 update,
                 config,
@@ -328,6 +370,12 @@ pub(super) async fn fetch_peer(
             }
             MetadataMessage::Reject { piece } => {
                 if state.deadlines.get(piece).is_some_and(Option::is_some) {
+                    diagnostic.observer.emit(
+                        crate::observation::Kind::Piece,
+                        "receive",
+                        "rejected",
+                        || serde_json::json!({"piece":piece}),
+                    );
                     return Err(PeerError::Rejected(piece));
                 }
             }
@@ -335,17 +383,34 @@ pub(super) async fn fetch_peer(
                 piece,
                 total_size,
                 data,
-            } => state.data(piece, total_size, data)?,
+            } => {
+                let before = state.received;
+                let result = state.data(piece, total_size, data);
+                diagnostic.observer.emit(crate::observation::Kind::Piece,"receive",if result.is_err(){"invalid"}else if state.received==before{"duplicate"}else{"accepted"},||serde_json::json!({"piece":piece,"bytes":data.len(),"received_pieces":state.received,"total_pieces":state.complete.len(),"metadata_bytes":state.bytes.len()}));
+                result?;
+            }
         }
+        diagnostic.progress(||serde_json::json!({"peer":address.to_string(),"metadata_bytes":state.bytes.len(),"received_pieces":state.received,"complete":state.complete,"requested":state.next}));
         if state.received == state.complete.len() {
             diagnostic.advance(Stage::Verify);
-            let mut metadata = verify_metadata(
+            let mut validation = diagnostic
+                .observer
+                .span(crate::observation::Kind::Validation, "metadata");
+            validation.executing();
+            let result = verify_metadata(
                 state,
                 hash,
                 address,
                 handshake_info.peer_id,
                 config.max_depth,
-            )?;
+                &validation.observer,
+            );
+            validation.finish(
+                result
+                    .as_ref()
+                    .map_or_else(|error| error.label(), |_| "verified"),
+            );
+            let mut metadata = result?;
             metadata.used_extension_compatibility = diagnostic.extension_downloaded();
             return Ok(metadata);
         }
