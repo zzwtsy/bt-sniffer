@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { PageTitle, Panel } from "@/components/observation/common";
 import { EventTable } from "@/components/observation/event-table";
 import { HistoryPanel } from "@/components/observation/history";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageSearch } from "@/lib/api/search";
 import { useDisplayed, useEngine, useMonitor } from "@/lib/observation/context";
 import { hashPattern } from "@/lib/observation/contracts";
@@ -67,48 +74,45 @@ export function EventsPage() {
           });
         }}
       >
-        <input
+        <Input
           name="hash"
           aria-label="按 hash 筛选"
           placeholder="完整 hash"
           defaultValue={search.hash}
         />
-        <input
+        <Input
           name="object"
           aria-label="关联对象"
           placeholder="关联对象 ID"
           maxLength={128}
           defaultValue={search.object}
         />
-        <select
+        <NativeSelect
           name="kind"
           aria-label="事件类别"
           defaultValue={search.kind ?? ""}
         >
-          <option value="">全部类别</option>
+          <NativeSelectOption value="">全部类别</NativeSelectOption>
           {kinds.map(k => (
-            <option key={k} value={k}>
+            <NativeSelectOption key={k} value={k}>
               {label(k)}
-            </option>
+            </NativeSelectOption>
           ))}
-        </select>
-        <button>应用筛选</button>
+        </NativeSelect>
+        <Button>应用筛选</Button>
         {error && <span role="alert">{error}</span>}
       </form>
-      <div className="tabs">
-        <button
-          aria-pressed={search.mode !== "live"}
-          onClick={() => change({ mode: "history" })}
-        >
-          历史分页
-        </button>
-        <button
-          aria-pressed={search.mode === "live"}
-          onClick={() => change({ mode: "live" })}
-        >
-          实时跟随
-        </button>
-      </div>
+      <Tabs
+        className="mb-5"
+        value={search.mode === "live" ? "live" : "history"}
+        onValueChange={value =>
+          change({ mode: value === "live" ? "live" : "history" })}
+      >
+        <TabsList>
+          <TabsTrigger value="history">历史分页</TabsTrigger>
+          <TabsTrigger value="live">实时跟随</TabsTrigger>
+        </TabsList>
+      </Tabs>
       {search.mode === "live"
         ? (
             <Panel
@@ -116,9 +120,13 @@ export function EventsPage() {
               description={`浏览器保留 ${monitor.events} 条 · 已淘汰 ${monitor.evicted} 条`}
               action={
                 !follow && (
-                  <button onClick={() => setFollow(true)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFollow(true)}
+                  >
                     有新事件 / 回到最新
-                  </button>
+                  </Button>
                 )
               }
             >

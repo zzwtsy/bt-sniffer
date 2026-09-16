@@ -1,7 +1,34 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
+import { cn } from "cn";
 import { ArrowUpRight, Copy, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  EmptyHeader,
+  Empty as EmptyRoot,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { label, shortHash, time } from "@/lib/observation/format";
 
 export function Panel({
@@ -18,16 +45,16 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`panel ${className}`}>
-      <div className="panel-heading">
-        <div>
-          <h2>{title}</h2>
-          {(Boolean(description)) && <p className="muted">{description}</p>}
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
+    <Card className={cn("mb-5", className)}>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description !== undefined && description !== "" && (
+          <CardDescription>{description}</CardDescription>
+        )}
+        {action !== undefined && <CardAction>{action}</CardAction>}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }
 export function PageTitle({
@@ -52,6 +79,13 @@ export function PageTitle({
     </div>
   );
 }
+const statusTones: Record<string, string> = {
+  danger: "border-transparent bg-status-danger-bg text-status-danger",
+  warning: "border-transparent bg-status-warning-bg text-status-warning",
+  success: "border-transparent bg-status-success-bg text-status-success",
+  active: "border-transparent bg-primary/10 text-primary",
+  neutral: "border-transparent bg-muted text-foreground",
+};
 export function Status({ value }: { value: unknown }) {
   const raw = typeof value === "string" ? value : "unknown";
   const tone = /failed|error|invalid|mismatch|timeout/.test(raw)
@@ -64,10 +98,10 @@ export function Status({ value }: { value: unknown }) {
           ? "active"
           : "neutral";
   return (
-    <span className={`status ${tone}`}>
-      <span aria-hidden="true" />
+    <Badge variant="outline" className={cn("status", statusTones[tone])}>
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
       {label(value)}
-    </span>
+    </Badge>
   );
 }
 export function HashLink({
@@ -94,8 +128,9 @@ export function CopyText({ value }: { value: string }) {
   return (
     <span className="copy-wrap">
       <code>{value}</code>
-      <button
-        className="icon-button"
+      <Button
+        variant="outline"
+        size="icon-sm"
         aria-label="复制完整值"
         onClick={() => {
           void navigator.clipboard.writeText(value).then(
@@ -104,8 +139,8 @@ export function CopyText({ value }: { value: string }) {
           );
         }}
       >
-        <Copy size={14} />
-      </button>
+        <Copy />
+      </Button>
       <span className="muted" role="status">
         {message}
       </span>
@@ -118,10 +153,13 @@ export function Empty({
   children?: ReactNode;
 }) {
   return (
-    <div className="empty">
-      <span className="empty-dot" aria-hidden="true" />
-      <p>{children}</p>
-    </div>
+    <EmptyRoot>
+      <EmptyHeader>
+        <EmptyTitle className="font-normal text-muted-foreground">
+          {children}
+        </EmptyTitle>
+      </EmptyHeader>
+    </EmptyRoot>
   );
 }
 export function QueryState({
@@ -137,24 +175,28 @@ export function QueryState({
 }) {
   if (error) {
     return (
-      <div className="notice danger" role="status">
-        {hasData ? "刷新失败，保留上次结果。" : "暂时无法读取。"}
-        {error.message}
+      <Alert variant="destructive" className="mb-4">
+        <AlertTitle>
+          {hasData ? "刷新失败，保留上次结果。" : "暂时无法读取。"}
+        </AlertTitle>
+        <AlertDescription>{error.message}</AlertDescription>
         {retry && (
-          <button className="quiet-button" onClick={retry}>
-            <RefreshCw size={14} />
-            重试查询
-          </button>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={retry}>
+              <RefreshCw />
+              重试查询
+            </Button>
+          </AlertAction>
         )}
-      </div>
+      </Alert>
     );
   }
   if (loading && !hasData) {
     return (
-      <div className="loading" role="status">
-        <span className="skeleton" />
-        <span className="skeleton" />
-        <span className="skeleton" />
+      <div className="grid gap-3 py-5" role="status">
+        <Skeleton className="h-6" />
+        <Skeleton className="h-6" />
+        <Skeleton className="h-6" />
         <span className="sr-only">正在读取数据</span>
       </div>
     );
@@ -163,7 +205,12 @@ export function QueryState({
 }
 export function Freshness({ at, stale, queried = false }: { at?: unknown; stale?: boolean; queried?: boolean }) {
   return (
-    <span className={`freshness ${stale ? "warning-text" : ""}`}>
+    <span
+      className={cn(
+        "text-xs text-muted-foreground",
+        stale && "text-status-warning",
+      )}
+    >
       {stale ? "陈旧数据 · " : queried ? "查询时间 · " : "观察时间 · "}
       {time(at)}
     </span>
@@ -189,32 +236,48 @@ export function Pager({
   onLimit: (limit: 50 | 100) => void;
 }) {
   return (
-    <div className="pager">
-      <label>
+    <nav aria-label="分页" className="pager">
+      <label className="flex items-center gap-2 text-xs">
         每页
-        <select
+        <NativeSelect
+          size="sm"
+          aria-label="每页条数"
           value={limit}
           onChange={e => onLimit(e.target.value === "100" ? 100 : 50)}
         >
-          <option value={50}>50</option>
-          <option value={100}>100</option>
-        </select>
-        {" "}
+          <NativeSelectOption value={50}>50</NativeSelectOption>
+          <NativeSelectOption value={100}>100</NativeSelectOption>
+        </NativeSelect>
         条
       </label>
       <span className="muted">固定顺序 · 分页期间数据可能变化</span>
-      <div className="button-group">
-        <button disabled={!hasCursor} onClick={onFirst}>
+      <div className="flex gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!hasCursor}
+          onClick={onFirst}
+        >
           首批
-        </button>
-        <button disabled={!canPrevious} onClick={onPrevious}>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!canPrevious}
+          onClick={onPrevious}
+        >
           上一页
-        </button>
-        <button disabled={next == null} onClick={() => (next != null && next !== "") && onNext(next)}>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={next == null}
+          onClick={() => (next != null && next !== "") && onNext(next)}
+        >
           下一页
-        </button>
+        </Button>
       </div>
-    </div>
+    </nav>
   );
 }
 export function Metric({
@@ -229,13 +292,17 @@ export function Metric({
   icon: ReactNode;
 }) {
   return (
-    <div className="metric">
-      <div className="metric-label">
-        {title}
-        {icon}
-      </div>
-      <div className="metric-value">{value}</div>
-      <div className="muted">{detail}</div>
-    </div>
+    <Card size="sm" className="metric">
+      <CardContent>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          {title}
+          {icon}
+        </div>
+        <div className="metric-value mt-2 text-2xl font-semibold tracking-tight tabular-nums">
+          {value}
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+      </CardContent>
+    </Card>
   );
 }

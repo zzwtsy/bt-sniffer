@@ -15,6 +15,14 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { useDisplayed, useEngine, useMonitor } from "@/lib/observation/context";
 import { record, rows, source } from "@/lib/observation/contracts";
 import { count, label, time } from "@/lib/observation/format";
@@ -169,26 +177,26 @@ export function OverviewPage() {
           )}
           <details>
             <summary>查看图表数据（最近 20 点）</summary>
-            <table>
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>提交 / 秒</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>时间</TableHead>
+                  <TableHead>提交 / 秒</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {points.slice(-20).map(p => (
-                  <tr key={p.at}>
-                    <td>{time(p.at)}</td>
-                    <td>
+                  <TableRow key={p.at}>
+                    <TableCell>{time(p.at)}</TableCell>
+                    <TableCell>
                       {p.commits === null
                         ? "缺失 / 不连续"
                         : p.commits.toFixed(2)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </details>
         </Panel>
         <Panel title="值得查看" description="业务状态与监控连接状态分别判断。">
@@ -244,39 +252,37 @@ export function OverviewPage() {
         title="当前活跃阶段"
         description="快照独立于历史缓存；最多展示 50 项。"
       >
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>关联 hash</th>
-                <th>阶段</th>
-                <th>generation</th>
-                <th>开始时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.slice(0, 50).map((a) => {
-                const c = record(a.context);
-                return (
-                  <tr key={String(c.span_id)}>
-                    <td>
-                      {typeof c.hash === "string"
-                        ? (
-                            <HashLink hash={c.hash} />
-                          )
-                        : (
-                            <span className="muted">非 hash 阶段</span>
-                          )}
-                    </td>
-                    <td>{label(a.step)}</td>
-                    <td>{count(c.generation)}</td>
-                    <td>{time(a.since_ms)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>关联 hash</TableHead>
+              <TableHead>阶段</TableHead>
+              <TableHead>generation</TableHead>
+              <TableHead>开始时间</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {active.slice(0, 50).map((a) => {
+              const c = record(a.context);
+              return (
+                <TableRow key={String(c.span_id)}>
+                  <TableCell>
+                    {typeof c.hash === "string"
+                      ? (
+                          <HashLink hash={c.hash} />
+                        )
+                      : (
+                          <span className="muted">非 hash 阶段</span>
+                        )}
+                  </TableCell>
+                  <TableCell>{label(a.step)}</TableCell>
+                  <TableCell>{count(c.generation)}</TableCell>
+                  <TableCell>{time(a.since_ms)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
         {active.length === 0 && <Empty>当前没有保留的活跃阶段。</Empty>}
       </Panel>
     </>

@@ -11,6 +11,12 @@ import {
 } from "@/components/observation/common";
 import { EventTable } from "@/components/observation/event-table";
 import { HistoryPanel } from "@/components/observation/history";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { useRead } from "@/lib/api/queries";
 import { usePageSearch } from "@/lib/api/search";
 import { useDisplayed, useEngine, useMonitor } from "@/lib/observation/context";
@@ -116,11 +122,13 @@ function HashDetail({ hash }: { hash: string }) {
           void fact.refetch();
         }}
       />
-      <div className="notice">
-        过程只展示已载入及当前保留的事件。
-        {(((monitor.snapshot?.window.evicted ?? 0) > 0)) ? "后端有历史淘汰。" : ""}
-        {monitor.evicted > 0 ? "浏览器也已淘汰旧记录。" : ""}
-      </div>
+      <Alert className="mb-4">
+        <AlertDescription>
+          过程只展示已载入及当前保留的事件。
+          {(((monitor.snapshot?.window.evicted ?? 0) > 0)) ? "后端有历史淘汰。" : ""}
+          {monitor.evicted > 0 ? "浏览器也已淘汰旧记录。" : ""}
+        </AlertDescription>
+      </Alert>
       <div className="detail-grid">
         <div>
           <Panel
@@ -135,7 +143,7 @@ function HashDetail({ hash }: { hash: string }) {
             <div className="filter-bar">
               <label>
                 领取
-                <select
+                <NativeSelect
                   value={generation ?? ""}
                   onChange={e =>
                     page.change({
@@ -143,28 +151,32 @@ function HashDetail({ hash }: { hash: string }) {
                       peer: undefined,
                     })}
                 >
-                  {available.length === 0 && <option value="">未知</option>}
+                  {available.length === 0 && (
+                    <NativeSelectOption value="">未知</NativeSelectOption>
+                  )}
                   {available.map(g => (
-                    <option key={g} value={g}>
+                    <NativeSelectOption key={g} value={g}>
                       generation
                       {g}
-                    </option>
+                    </NativeSelectOption>
                   ))}
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 peer
-                <select
+                <NativeSelect
                   value={peer ?? ""}
                   onChange={e => page.change({ peer: e.target.value })}
                 >
-                  {peers.length === 0 && <option value="">无保留尝试</option>}
+                  {peers.length === 0 && (
+                    <NativeSelectOption value="">无保留尝试</NativeSelectOption>
+                  )}
                   {peers.map(p => (
-                    <option key={p} value={p}>
+                    <NativeSelectOption key={p} value={p}>
                       {p}
-                    </option>
+                    </NativeSelectOption>
                   ))}
-                </select>
+                </NativeSelect>
               </label>
             </div>
             <p className="muted">
@@ -179,12 +191,14 @@ function HashDetail({ hash }: { hash: string }) {
               {label(record(summary?.claim).class)}
             </p>
             {(Boolean((attempts.data?.next))) && (
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() =>
                   setAttemptCursor(attempts.data?.next ?? undefined)}
               >
                 加载后续领取摘要
-              </button>
+              </Button>
             )}
             {generation !== undefined && (
               <p>
@@ -320,7 +334,7 @@ function PieceView({ model }: { model: ReturnType<typeof pieces> }) {
   const [offset, setOffset] = useState(0);
   return (
     <div className="piece-section">
-      <div className="panel-heading">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <h3>本 peer 的分片</h3>
         <span>
           有效
@@ -371,19 +385,23 @@ function PieceView({ model }: { model: ReturnType<typeof pieces> }) {
                   },
                 )}
               </div>
-              <div className="button-group">
-                <button
+              <div className="flex gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={offset === 0}
                   onClick={() => setOffset(Math.max(0, offset - 128))}
                 >
                   前 128 片
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={offset + 128 >= model.total}
                   onClick={() => setOffset(offset + 128)}
                 >
                   后 128 片
-                </button>
+                </Button>
               </div>
             </>
           )

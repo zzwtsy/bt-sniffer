@@ -1,3 +1,4 @@
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { queryString } from "@/lib/api/client";
 import { useHistory } from "@/lib/api/queries";
 import { usePageSearch } from "@/lib/api/search";
@@ -41,12 +42,18 @@ export function HistoryPanel({
         }}
       />
       {query.page.completeness === "partial" && (
-        <div className="notice">后端历史部分保留，较早过程可能已被淘汰。</div>
+        <Alert className="mb-4">
+          <AlertDescription>
+            后端历史部分保留，较早过程可能已被淘汰。
+          </AlertDescription>
+        </Alert>
       )}
       {query.missing && (
-        <div className="notice">
-          本页部分事件已从浏览器缓存淘汰，请重新查询。
-        </div>
+        <Alert className="mb-4">
+          <AlertDescription>
+            本页部分事件已从浏览器缓存淘汰，请重新查询。
+          </AlertDescription>
+        </Alert>
       )}
       <EventTable events={query.page.events} />
       <Pager

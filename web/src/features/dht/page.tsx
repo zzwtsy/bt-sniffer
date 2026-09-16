@@ -16,6 +16,14 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { queryString } from "@/lib/api/client";
 import { useRead } from "@/lib/api/queries";
 import { usePageSearch } from "@/lib/api/search";
@@ -149,60 +157,56 @@ export function DhtDetailPage() {
         </ChartContainer>
         <details>
           <summary>桶容量数据</summary>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>桶</th>
-                  <th>联系人</th>
-                  <th>容量</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows(query.data?.buckets).map(b => (
-                  <tr key={string(b.id)}>
-                    <td>
-                      <code>{string(b.id)}</code>
-                    </td>
-                    <td>{count(b.count)}</td>
-                    <td>{count(b.capacity)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>桶</TableHead>
+                <TableHead>联系人</TableHead>
+                <TableHead>容量</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows(query.data?.buckets).map(b => (
+                <TableRow key={string(b.id)}>
+                  <TableCell>
+                    <code>{string(b.id)}</code>
+                  </TableCell>
+                  <TableCell>{count(b.count)}</TableCell>
+                  <TableCell>{count(b.capacity)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </details>
         <Freshness at={query.data?.observed_at_ms} />
       </Panel>
       <Panel title="联系人">
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>节点 ID</th>
-                <th>地址</th>
-                <th>状态</th>
-                <th>距最近响应</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows(query.data?.items).map(c => (
-                <tr key={string(c.node_id)}>
-                  <td>
-                    <code>{string(c.node_id)}</code>
-                  </td>
-                  <td>
-                    <code>{string(c.address)}</code>
-                  </td>
-                  <td>
-                    <Status value={c.status} />
-                  </td>
-                  <td>{duration(c.last_response_age_ms)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>节点 ID</TableHead>
+              <TableHead>地址</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>距最近响应</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows(query.data?.items).map(c => (
+              <TableRow key={string(c.node_id)}>
+                <TableCell>
+                  <code>{string(c.node_id)}</code>
+                </TableCell>
+                <TableCell>
+                  <code>{string(c.address)}</code>
+                </TableCell>
+                <TableCell>
+                  <Status value={c.status} />
+                </TableCell>
+                <TableCell>{duration(c.last_response_age_ms)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
         <Pager
           next={typeof query.data?.next === "string" ? query.data.next : null}
           onNext={page.next}
@@ -242,30 +246,28 @@ export function DhtDetailPage() {
               {count(sampling.unsupported)}
             </span>
           </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>候选</th>
-                  <th>冷却</th>
-                  <th>回退</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows(detail.candidates)
-                  .slice(0, 100)
-                  .map(c => (
-                    <tr key={string(c.node_id)}>
-                      <td>
-                        <code>{string(c.address)}</code>
-                      </td>
-                      <td>{duration(c.cooldown_ms)}</td>
-                      <td>{c.fallback === true ? "find_node" : "否"}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>候选</TableHead>
+                <TableHead>冷却</TableHead>
+                <TableHead>回退</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows(detail.candidates)
+                .slice(0, 100)
+                .map(c => (
+                  <TableRow key={string(c.node_id)}>
+                    <TableCell>
+                      <code>{string(c.address)}</code>
+                    </TableCell>
+                    <TableCell>{duration(c.cooldown_ms)}</TableCell>
+                    <TableCell>{c.fallback === true ? "find_node" : "否"}</TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
           {!((sampling.running === true)) && (
             <p className="muted">当前没有运行中的主动采样轮次。</p>
           )}

@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
 import type { Fields } from "@/lib/observation/contracts";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { queryString } from "@/lib/api/client";
 import { useRead } from "@/lib/api/queries";
 import { usePageSearch } from "@/lib/api/search";
@@ -67,26 +75,24 @@ export function Records({
             void query.refetch();
           }}
         />
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                {columns.map(c => (
-                  <th key={c.name}>{c.name}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {query.data?.items.map((row, index) => (
-                <tr key={String(row.hash ?? row.id ?? index)}>
-                  {columns.map(c => (
-                    <td key={c.name}>{c.cell(row)}</td>
-                  ))}
-                </tr>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {columns.map(c => (
+                <TableHead key={c.name}>{c.name}</TableHead>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {query.data?.items.map((row, index) => (
+              <TableRow key={String(row.hash ?? row.id ?? index)}>
+                {columns.map(c => (
+                  <TableCell key={c.name}>{c.cell(row)}</TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
         {query.data?.items.length === 0 && <Empty />}
         {query.data?.window && (
           <p className="muted">

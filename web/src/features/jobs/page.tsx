@@ -1,5 +1,9 @@
 import { HashLink, Status } from "@/components/observation/common";
 import { Records } from "@/components/observation/records";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { usePageSearch } from "@/lib/api/search";
 import { useDisplayed, useMonitor } from "@/lib/observation/context";
 import { string } from "@/lib/observation/contracts";
@@ -20,7 +24,7 @@ export function JobsPage() {
         <div className="filter-bar">
           <label>
             任务状态
-            <select
+            <NativeSelect
               value={page.search.state ?? ""}
               onChange={e =>
                 page.change({
@@ -30,15 +34,15 @@ export function JobsPage() {
                   trail: undefined,
                 })}
             >
-              <option value="">全部状态</option>
+              <NativeSelectOption value="">全部状态</NativeSelectOption>
               {["pending", "running", "retry_wait", "dormant", "succeeded"].map(
                 s => (
-                  <option key={s} value={s}>
+                  <NativeSelectOption key={s} value={s}>
                     {label(s)}
-                  </option>
+                  </NativeSelectOption>
                 ),
               )}
-            </select>
+            </NativeSelect>
           </label>
           <span className="muted">
             单状态按到期时间排列，全部状态按 hash 排列

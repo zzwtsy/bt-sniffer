@@ -3,6 +3,8 @@ import { Search } from "lucide-react";
 import { useState } from "react";
 import { HashLink } from "@/components/observation/common";
 import { Records } from "@/components/observation/records";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { hashPattern, string } from "@/lib/observation/contracts";
 import { time } from "@/lib/observation/format";
 
@@ -36,13 +38,13 @@ export function HashesPage() {
           }}
         >
           <Search size={16} aria-hidden="true" />
-          <input
+          <Input
             aria-label="完整 hash"
             placeholder="输入 40 位 hash，查看采集链路"
             value={hash}
             onChange={e => setHash(e.target.value)}
           />
-          <button className="primary-button">定位 hash</button>
+          <Button>定位 hash</Button>
           {error && <span role="alert">{error}</span>}
         </form>
       )}

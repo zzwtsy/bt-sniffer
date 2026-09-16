@@ -15,7 +15,14 @@ import {
   SunMoon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Status } from "@/components/observation/common";
 import { useTheme } from "@/components/theme-provider";
+import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { useDisplay, useEngine, useMonitor } from "@/lib/observation/context";
 import { source } from "@/lib/observation/contracts";
 import { time } from "@/lib/observation/format";
@@ -78,7 +85,7 @@ export function Layout() {
             ))}
           </nav>
           <div className="sidebar-footer">
-            <span className="status neutral">只读观测</span>
+            <Status value="只读观测" />
             <p>
               当前过程 · 有限历史
               <br />
@@ -89,14 +96,16 @@ export function Layout() {
         <div className="workspace">
           <header className="topbar">
             <div className="row">
-              <button
-                className="mobile-toggle icon-button"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="mobile-toggle"
                 aria-label="展开导航"
                 aria-expanded={open}
                 onClick={() => setOpen(!open)}
               >
-                <Menu size={19} />
-              </button>
+                <Menu />
+              </Button>
               <span
                 className={`connection-dot ${monitor.phase === "live" ? "connected" : ""}`}
                 aria-hidden="true"
@@ -108,17 +117,19 @@ export function Layout() {
               </span>
             </div>
             <div className="row">
-              <button
-                className="quiet-button"
+              <Button
+                variant="ghost"
+                size="sm"
                 aria-pressed={display.frozen}
                 onClick={display.store.toggle}
               >
-                {display.frozen ? <Play size={15} /> : <Pause size={15} />}
+                {display.frozen ? <Play /> : <Pause />}
                 {display.frozen ? "恢复实时显示" : "冻结显示"}
-              </button>
+              </Button>
               <label className="theme-picker">
                 <SunMoon size={17} />
-                <select
+                <NativeSelect
+                  size="sm"
                   aria-label="主题"
                   value={theme.theme}
                   onChange={e =>
@@ -126,35 +137,45 @@ export function Layout() {
                       e.target.value as "light" | "dark" | "system",
                     )}
                 >
-                  <option value="system">跟随系统</option>
-                  <option value="light">浅色</option>
-                  <option value="dark">深色</option>
-                </select>
+                  <NativeSelectOption value="system">跟随系统</NativeSelectOption>
+                  <NativeSelectOption value="light">浅色</NativeSelectOption>
+                  <NativeSelectOption value="dark">深色</NativeSelectOption>
+                </NativeSelect>
               </label>
             </div>
           </header>
           <main id="main-content">
-            {source(monitor.snapshot, "monitor").phase === "shutting_down" && <div className="notice" role="status">服务正在关闭，当前结果属于最后观察窗口。</div>}
+            {source(monitor.snapshot, "monitor").phase === "shutting_down" && (
+              <Alert className="mb-4">
+                <AlertDescription>
+                  服务正在关闭，当前结果属于最后观察窗口。
+                </AlertDescription>
+              </Alert>
+            )}
             {display.frozen && (
-              <div className="notice" role="status">
-                画面已冻结于
-                {time(display.at)}
-                ，采集不受影响。恢复后显示最新状态。
-              </div>
+              <Alert className="mb-4">
+                <AlertDescription>
+                  画面已冻结于
+                  {time(display.at)}
+                  ，采集不受影响。恢复后显示最新状态。
+                </AlertDescription>
+              </Alert>
             )}
             {display.error && (
-              <div className="notice danger" role="alert">
-                {display.error}
-              </div>
+              <Alert variant="destructive" className="mb-4">
+                <AlertDescription>{display.error}</AlertDescription>
+              </Alert>
             )}
             {(monitor.message != null && monitor.message !== "") && (
-              <div className="notice danger" role="status">
-                {monitor.message}
-                <button className="quiet-button" onClick={engine.retry}>
-                  <RefreshCw size={14} />
-                  重新同步
-                </button>
-              </div>
+              <Alert variant="destructive" className="mb-4">
+                <AlertDescription>{monitor.message}</AlertDescription>
+                <AlertAction>
+                  <Button variant="outline" size="sm" onClick={engine.retry}>
+                    <RefreshCw />
+                    重新同步
+                  </Button>
+                </AlertAction>
+              </Alert>
             )}
             <Outlet />
           </main>

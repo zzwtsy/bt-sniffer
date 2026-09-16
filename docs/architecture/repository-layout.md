@@ -107,4 +107,4 @@ src/
 
 ## 前端垂直切片
 
-`web/src/app` 组装 Provider 与同步生命周期，`routes` 挂载页面，`features` 按总览、DHT、发现、任务、hash、详情、metadata、事件组织。切片不引用彼此内部代码；共享展示进入 `components/observation`，shadcn Chart 保留在 `components/ui`。HTTP 与 SSE 公共契约分别位于 `lib/api` 和 `lib/observation`。详见[前端开发说明](../../web/README.md)。
+`web/src/app` 组装 Provider 与同步生命周期，`routes` 挂载页面，`features` 按总览、DHT、发现、任务、hash、详情、metadata、事件组织。切片不引用彼此内部代码；共享展示进入 `components/observation`，shadcn 原语（Button、Card、Table、Sheet 等）集中在 `components/ui`，业务呈现不绕过原语手写控件样式；`app/styles.css` 只保留布局骨架与 tracks、pieces 等 bespoke 可视化。HTTP 与 SSE 公共契约分别位于 `lib/api` 和 `lib/observation`。详见[前端开发说明](../../web/README.md)。
