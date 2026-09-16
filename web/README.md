@@ -30,7 +30,7 @@ pnpm --dir web preview
 - `src/components/observation` 保存跨切片复用的分页、状态、证据与 hash 链接。
 - `src/lib/api` 负责参数、错误、请求限额及 Query 适配；`src/lib/observation` 负责公共契约、SSE、历史缓存和趋势。
 
-切片不引用其他切片内部实现，通过 URL 关联。公共层不反向依赖页面。新增 UI 原语使用仓库已有 shadcn CLI，不另建图表框架。`app/styles.css` 只保留布局骨架（app-shell、sidebar、topbar）、tracks、pieces、pipeline 等 bespoke 可视化与响应式断点；状态色阶使用 `index.css` 的状态 token（`--status-*`），不手写 hex 或按类做 `.dark` 覆盖。
+切片不引用其他切片内部实现，通过 URL 关联。公共层不反向依赖页面。新增 UI 原语使用仓库已有 shadcn CLI，不另建图表框架。`app/styles.css` 只保留布局骨架（app-shell、sidebar、topbar）、flow、stepper、waterfall、piece-bar 等 bespoke 可视化与响应式断点；状态色阶使用 `index.css` 的状态 token（`--status-*`），不手写 hex 或按类做 `.dark` 覆盖。
 
 每标签页一个 SSE，从 snapshot 游标开始，接纳完整事件批次后推进序号；snapshot 消息不推进事件游标。普通断线有限退避续传，运行或窗口 reset 清除过程并重新获取快照。容量 reset 与不兼容格式停止自动同步，提供手动重新同步入口。数据库读取失败保留上次值并标记陈旧。
 

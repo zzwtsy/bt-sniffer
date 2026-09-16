@@ -13,10 +13,6 @@ import { EventTable } from "@/components/observation/event-table";
 import { HistoryPanel } from "@/components/observation/history";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
 import { useRead } from "@/lib/api/queries";
 import { usePageSearch } from "@/lib/api/search";
 import { useDisplayed, useEngine, useMonitor } from "@/lib/observation/context";
@@ -29,8 +25,11 @@ import {
   rows,
   string,
 } from "@/lib/observation/contracts";
-import { bytes, count, duration, label, time } from "@/lib/observation/format";
+import { bytes, count, label, time } from "@/lib/observation/format";
 import { generations, peerEvents, pieces, spans } from "./model";
+import { PieceBar } from "./piece-bar";
+import { Stepper } from "./stepper";
+import { Waterfall } from "./waterfall";
 
 export function HashDetailPage() {
   const { hash = "" } = useParams({ strict: false });
@@ -94,8 +93,13 @@ function HashDetail({ hash }: { hash: string }) {
     );
   });
   const track = spans(selected);
-  const start = track[0]?.at ?? 0;
-  const end = Math.max(start + 1, ...track.map(t => t.at + (t.elapsed ?? 0)));
+  const pieceModel = pieces(current, active);
+  const lastResultByGeneration = new Map(
+    (attempts.data?.items ?? []).flatMap((r) => {
+      const g = number(r.generation);
+      return g === undefined ? [] : [[g, r.last_result] as const];
+    }),
+  );
   const origin = events.find(
     e =>
       e.kind === "discovery"
@@ -129,56 +133,72 @@ function HashDetail({ hash }: { hash: string }) {
           {monitor.evicted > 0 ? "浏览器也已淘汰旧记录。" : ""}
         </AlertDescription>
       </Alert>
+      <Panel
+        title="采集链路"
+        description="点击 generation 或 peer 切换视角；每轮领取和每个 peer 的结果独立关联。"
+      >
+        <Stepper
+          origin={
+            (originId != null && originId !== "")
+              ? { id: originId, batch: (origin?.context.batch_id) != null }
+              : undefined
+          }
+          generations={available.map(g => ({
+            value: g,
+            lastResult: g === generation
+              ? selected.at(-1)?.result ?? summary?.last_result
+              : lastResultByGeneration.get(g),
+          }))}
+          generation={generation}
+          peers={peers}
+          peer={peer}
+          transfer={
+            (peer != null && peer !== "")
+              ? (
+                  <span>
+                    有效
+                    {count(pieceModel.received)}
+                    {" "}
+                    /
+                    {count(pieceModel.total)}
+                  </span>
+                )
+              : (
+                  <span className="muted">未选择 peer</span>
+                )
+          }
+          commit={(
+            <span className="row">
+              <Status value={job.state} />
+              <span className="muted">
+                {fact.data?.metadata === undefined
+                  ? "保存状态未知"
+                  : fact.data.metadata === null
+                    ? "无保存记录"
+                    : `已保存 ${bytes(metadata.bytes)}`}
+              </span>
+            </span>
+          )}
+          onSelect={(next) => {
+            page.change(
+              next.generation !== undefined
+                ? { generation: next.generation, peer: undefined }
+                : { peer: next.peer },
+            );
+          }}
+        />
+      </Panel>
       <div className="detail-grid">
         <div>
           <Panel
-            title="领取与 peer 尝试"
-            description="每轮 generation 和每个 peer 的结果独立关联。"
+            title="时间轴与分片"
+            description="当前选中 generation 的阶段起止和选中 peer 的分片进度。"
           >
             <QueryState
               loading={attempts.isPending}
               error={attempts.error}
               hasData={!!attempts.data}
             />
-            <div className="filter-bar">
-              <label>
-                领取
-                <NativeSelect
-                  value={generation ?? ""}
-                  onChange={e =>
-                    page.change({
-                      generation: Number(e.target.value),
-                      peer: undefined,
-                    })}
-                >
-                  {available.length === 0 && (
-                    <NativeSelectOption value="">未知</NativeSelectOption>
-                  )}
-                  {available.map(g => (
-                    <NativeSelectOption key={g} value={g}>
-                      generation
-                      {g}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </label>
-              <label>
-                peer
-                <NativeSelect
-                  value={peer ?? ""}
-                  onChange={e => page.change({ peer: e.target.value })}
-                >
-                  {peers.length === 0 && (
-                    <NativeSelectOption value="">无保留尝试</NativeSelectOption>
-                  )}
-                  {peers.map(p => (
-                    <NativeSelectOption key={p} value={p}>
-                      {p}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </label>
-            </div>
             <p className="muted">
               {label(record(summary?.claim).attempt_kind)}
               {" "}
@@ -200,56 +220,9 @@ function HashDetail({ hash }: { hash: string }) {
                 加载后续领取摘要
               </Button>
             )}
-            {generation !== undefined && (
-              <p>
-                选中 generation
-                {generation}
-                ，最近保留结果：
-                <Status
-                  value={selected.at(-1)?.result ?? summary?.last_result}
-                />
-              </p>
-            )}
-            {(track.length > 0)
-              ? (
-                  <div className="tracks" aria-label="阶段并列时间轨道">
-                    {track.map(t => (
-                      <div className="track" key={t.id}>
-                        <div>
-                          <strong>
-                            {label(t.kind)}
-                            {" "}
-                            /
-                            {label(t.step)}
-                          </strong>
-                          <small>
-                            {duration(t.elapsed)}
-                            {" "}
-                            ·
-                            {label(t.result)}
-                          </small>
-                        </div>
-                        <div className="track-space">
-                          <span
-                            className={`track-bar ${t.elapsed === undefined ? "open" : ""}`}
-                            style={{
-                              left: `${((t.at - start) * 100) / (end - start)}%`,
-                              width: `${Math.max(1, ((t.elapsed ?? 0) * 100) / (end - start))}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )
-              : (
-                  <Empty>尚未载入可配对的阶段起止事件；不能据此断言未执行。</Empty>
-                )}
+            <Waterfall track={track} />
             {(peer != null && peer !== "") && (
-              <PieceView
-                key={`${generation}:${peer}`}
-                model={pieces(current, active)}
-              />
+              <PieceBar key={`${generation ?? "-"}:${peer}`} model={pieceModel} />
             )}
             <EventTable events={current.slice(-50)} />
           </Panel>
@@ -328,86 +301,5 @@ function HashDetail({ hash }: { hash: string }) {
         </div>
       </div>
     </>
-  );
-}
-function PieceView({ model }: { model: ReturnType<typeof pieces> }) {
-  const [offset, setOffset] = useState(0);
-  return (
-    <div className="piece-section">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <h3>本 peer 的分片</h3>
-        <span>
-          有效
-          {count(model.received)}
-          {" "}
-          /
-          {count(model.total)}
-        </span>
-      </div>
-      <p className="muted">
-        当前保留的重复接收
-        {model.duplicates}
-        {" "}
-        次；空白表示状态未知，不能算作尚未请求。
-      </p>
-      {model.total !== undefined
-        ? (
-            <>
-              <div className="pieces" role="list" aria-label="分片状态">
-                {Array.from(
-                  { length: Math.min(128, Math.max(0, model.total - offset)) },
-                  (_, i) => {
-                    const index = offset + i;
-                    const state = model.states.get(index) ?? "unknown";
-                    const text = {
-                      received: "有效",
-                      requested: "已请求",
-                      pending: "未收到",
-                      invalid: "错误",
-                      unknown: "未知",
-                    }[state];
-                    return (
-                      <span
-                        role="listitem"
-                        key={index}
-                        className={`piece ${state}`}
-                        title={`分片 ${index}：${text}`}
-                        aria-label={`分片 ${index}：${text}`}
-                      >
-                        {state === "received"
-                          ? "✓"
-                          : state === "invalid"
-                            ? "!"
-                            : "·"}
-                        <small>{index}</small>
-                      </span>
-                    );
-                  },
-                )}
-              </div>
-              <div className="flex gap-1.5">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={offset === 0}
-                  onClick={() => setOffset(Math.max(0, offset - 128))}
-                >
-                  前 128 片
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={offset + 128 >= model.total}
-                  onClick={() => setOffset(offset + 128)}
-                >
-                  后 128 片
-                </Button>
-              </div>
-            </>
-          )
-        : (
-            <Empty>分片总数未知，等待保留事件或当前状态。</Empty>
-          )}
-    </div>
   );
 }

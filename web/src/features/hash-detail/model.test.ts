@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { event } from "../../../tests/fixtures";
-import { generations, peerEvents, pieces, spans } from "./model";
+import { bucketPieces, generations, peerEvents, pieces, spans } from "./model";
 
 it("generation 与 peer 独立，重复分片不增加有效接收", () => {
   const one = {
@@ -37,4 +37,16 @@ it("阶段只匹配真实起点与后端耗时，不为 Stale 生成成功", () 
     result: "stale",
   });
   expect(spans([last])).toEqual([]);
+});
+it("分片聚合按优先级取代表状态，桶边界不越界", () => {
+  const states = new Map<number, string>([[1, "invalid"], [2, "received"]]);
+  const buckets = bucketPieces(states, 512, 256);
+  expect(buckets).toHaveLength(256);
+  expect(buckets[0]).toEqual({ start: 0, end: 1, state: "invalid" });
+  expect(buckets[1]).toEqual({ start: 2, end: 3, state: "received" });
+  expect(buckets[255]).toEqual({ start: 510, end: 511, state: "unknown" });
+  expect(bucketPieces(new Map([[0, "requested"]]), 2, 256)).toEqual([
+    { start: 0, end: 0, state: "requested" },
+    { start: 1, end: 1, state: "unknown" },
+  ]);
 });

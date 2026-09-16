@@ -211,42 +211,54 @@ main {
   flex-wrap: wrap;
   margin: 10px 2px 20px;
 }
-.pipeline {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.flow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.flow-node {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.pipeline > a {
-  display: block;
-  padding: 18px;
+  border-radius: 8px;
   color: var(--foreground);
-  border-right: 1px solid var(--border);
-  position: relative;
 }
-.pipeline > a:last-child {
-  border-right: 0;
-}
-.pipeline > a:hover {
+.flow-node:hover {
   background: var(--muted);
   text-decoration: none;
 }
-.pipeline p {
-  font-size: 11px;
-  color: var(--muted-foreground);
-  margin-bottom: 16px;
-}
-.pipeline > a > span:last-child {
-  font-size: 11px;
-}
-.stage-number {
+.flow-step {
   font:
     11px ui-monospace,
     monospace;
   color: var(--primary);
+}
+.flow-primary {
+  font-size: 20px;
+  font-weight: 620;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.flow-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+.flow-connector {
+  align-self: center;
+  width: 28px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.flow-connector svg {
   display: block;
-  margin-bottom: 10px;
+  width: 100%;
 }
 .overview-grid {
   display: grid;
@@ -356,42 +368,107 @@ main {
   display: block;
   color: var(--muted-foreground);
 }
-.tracks {
+.stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.step {
+  flex: 1;
+  min-width: 140px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.step-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.step-arrow {
+  align-self: center;
+  color: var(--muted-foreground);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--card-foreground);
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--primary);
+}
+.chip.selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
+}
+.chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.waterfall {
   margin: 20px 0;
   border: 1px solid var(--border);
   padding: 14px;
   border-radius: 6px;
 }
-.track {
+.waterfall-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  padding-left: 160px;
+  margin-bottom: 8px;
+}
+.waterfall-row {
   display: grid;
   grid-template-columns: 160px minmax(60px, 1fr);
   gap: 12px;
   align-items: center;
-  padding: 10px 0;
+  padding: 8px 0;
 }
-.track strong {
+.waterfall-label {
+  min-width: 0;
+}
+.waterfall-label strong {
   font-size: 11px;
 }
-.track small {
+.waterfall-label small {
   display: block;
   font-size: 10px;
   color: var(--muted-foreground);
 }
-.track-space {
-  height: 28px;
+.waterfall-track {
+  height: 22px;
   background: var(--muted);
   position: relative;
   overflow: hidden;
   border-radius: 3px;
 }
-.track-bar {
+.waterfall-bar {
   height: 12px;
-  top: 8px;
+  top: 5px;
   background: var(--primary);
   position: absolute;
   border-radius: 2px;
 }
-.track-bar.open {
+.waterfall-bar.open {
   background: var(--muted-foreground);
 }
 .piece-section {
@@ -399,36 +476,47 @@ main {
   padding: 18px 0;
   border-top: 1px solid var(--border);
 }
-.pieces {
+.piece-bar {
+  display: flex;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 14px 0;
+  border: 1px solid var(--border);
+}
+.piece-segment {
+  flex: 1;
+  display: inline-block;
+}
+.piece-segment.received {
+  background: var(--primary);
+}
+.piece-segment.requested {
+  background: color-mix(in srgb, var(--primary) 35%, var(--card));
+}
+.piece-segment.pending {
+  background: var(--muted);
+}
+.piece-segment.invalid {
+  background: var(--destructive);
+}
+.piece-segment.unknown {
+  background: transparent;
+}
+.piece-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin: 14px 0;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--muted-foreground);
 }
-.piece {
-  width: 34px;
-  height: 34px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-size: 12px;
+.piece-legend .piece-segment {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 2px;
   border: 1px solid var(--border);
-  border-radius: 3px;
-}
-.piece small {
-  font-size: 8px;
-  line-height: 10px;
-}
-.piece.received {
-  background: color-mix(in srgb, var(--primary) 12%, var(--card));
-  color: var(--primary);
-}
-.piece.invalid {
-  background: color-mix(in oklch, var(--destructive) 8%, transparent);
-  color: var(--destructive);
-}
-.piece.unknown {
-  border-style: dashed;
+  margin-right: 4px;
 }
 .node-grid {
   display: grid;
@@ -505,14 +593,14 @@ summary {
   .detail-grid {
     grid-template-columns: 1fr;
   }
-  .pipeline {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .flow {
+    flex-wrap: wrap;
   }
-  .pipeline > a:nth-child(2) {
-    border-right: 0;
+  .flow-node {
+    flex: 1 1 45%;
   }
-  .pipeline > a:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--border);
+  .flow-connector {
+    display: none;
   }
   .topbar {
     padding: 0 24px;
@@ -542,6 +630,9 @@ summary {
   .node-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .flow-node {
+    flex: 1 1 100%;
+  }
   .topbar {
     height: auto;
     min-height: 64px;
@@ -558,8 +649,17 @@ summary {
   .pager > .muted {
     display: none;
   }
-  .track {
-    grid-template-columns: 130px minmax(60px, 1fr);
+  .waterfall-axis {
+    padding-left: 110px;
+  }
+  .waterfall-row {
+    grid-template-columns: 110px minmax(60px, 1fr);
+  }
+  .step-arrow {
+    display: none;
+  }
+  .step {
+    flex: 1 1 100%;
   }
   .node-grid {
     grid-template-columns: 1fr;

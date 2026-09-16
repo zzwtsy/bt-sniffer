@@ -26,6 +26,8 @@ import {
 import { useDisplayed, useEngine, useMonitor } from "@/lib/observation/context";
 import { record, rows, source } from "@/lib/observation/contracts";
 import { count, label, time } from "@/lib/observation/format";
+import { FlowDiagram } from "./flow";
+import { flowStats } from "./flow-stats";
 
 const chartConfig = {
   commits: { label: "metadata 提交 / 秒", color: "var(--chart-2)" },
@@ -35,6 +37,10 @@ export function OverviewPage() {
   const engine = useEngine();
   const snapshot = useDisplayed("overview:snapshot", monitor.snapshot);
   const points = useDisplayed("overview:points", engine.trends.points);
+  const flow = useDisplayed(
+    "overview:flow",
+    flowStats(monitor.snapshot, engine.buffer.select({}, 5000)),
+  );
   const nodes = rows(snapshot?.cached.nodes);
   const collector = source(snapshot, "collector");
   const config = source(snapshot, "config");
@@ -90,52 +96,12 @@ export function OverviewPage() {
       </div>
       <Panel
         title="发现与采集链路"
-        description="阶段可并行推进；未观察到活跃阶段不代表没有发生过。"
+        description="节点只陈述对应来源的事实；窗口计数来自浏览器事件缓冲，连接初期为空。"
       >
-        <div className="pipeline">
-          <Link to="/discoveries">
-            <span className="stage-number">01</span>
-            <h3>发现</h3>
-            <p>采样 · announce · 历史回填</p>
-            <Status
-              value={config.sample === false ? "主动采样未启用" : config.sample === true ? "sampling" : "未知"}
-            />
-          </Link>
-          <Link to="/jobs">
-            <span className="stage-number">02</span>
-            <h3>接纳与调度</h3>
-            <p>领取、资源等待与重试</p>
-            <Status
-              value={
-                (Boolean(collector.capacity_paused))
-                || (Boolean(collector.backlog_paused))
-                || (Boolean(collector.storage_paused))
-                  ? "local_wait"
-                  : "当前状态见任务"
-              }
-            />
-          </Link>
-          <Link to="/events" search={{ kind: "peer", mode: "live" }}>
-            <span className="stage-number">03</span>
-            <h3>查找与下载</h3>
-            <p>双栈查找、握手与分片</p>
-            <span>
-              {
-                active.filter(a =>
-                  ["lookup", "connect", "transfer"].includes(String(a.step)),
-                ).length
-              }
-              {" "}
-              个保留活跃阶段
-            </span>
-          </Link>
-          <Link to="/metadata">
-            <span className="stage-number">04</span>
-            <h3>校验与提交</h3>
-            <p>原始字节校验与事务结果</p>
-            <span>只有 Applied 计提交</span>
-          </Link>
-        </div>
+        <FlowDiagram
+          stats={flow}
+          perSecond={points.findLast(p => p.commits !== null)?.commits}
+        />
       </Panel>
       <div className="overview-grid">
         <Panel

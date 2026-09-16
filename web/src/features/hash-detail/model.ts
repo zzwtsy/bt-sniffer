@@ -62,6 +62,7 @@ export function spans(events: ObservationEvent[]) {
   const starts = new Map<string, ObservationEvent>();
   const result: {
     id: string;
+    parent?: string;
     kind: string;
     step: string;
     at: number;
@@ -79,6 +80,7 @@ export function spans(events: ObservationEvent[]) {
       if (start) {
         result.push({
           id,
+          parent: start.context.parent_span_id,
           kind: start.kind,
           step: start.step,
           at: start.at_ms,
@@ -92,6 +94,7 @@ export function spans(events: ObservationEvent[]) {
   for (const [id, start] of starts) {
     result.push({
       id,
+      parent: start.context.parent_span_id,
       kind: start.kind,
       step: start.step,
       at: start.at_ms,
@@ -99,4 +102,33 @@ export function spans(events: ObservationEvent[]) {
     });
   }
   return result.sort((a, b) => a.at - b.at);
+}
+
+const piecePriority = ["invalid", "received", "requested", "pending", "unknown"];
+export interface PieceBucket {
+  start: number;
+  end: number;
+  state: string;
+}
+/** 分片状态条按 max 桶聚合；桶内多状态按 invalid > received > requested > pending > unknown 取代表。 */
+export function bucketPieces(
+  states: Map<number, string>,
+  total: number,
+  max = 256,
+): PieceBucket[] {
+  const size = Math.max(1, Math.ceil(total / max));
+  const buckets: PieceBucket[] = [];
+  for (let start = 0; start < total; start += size) {
+    const end = Math.min(total - 1, start + size - 1);
+    let state = "unknown";
+    for (let i = start; i <= end; i++) {
+      const current = states.get(i) ?? "unknown";
+      if (piecePriority.indexOf(current) < piecePriority.indexOf(state))
+        state = current;
+      if (state === "invalid")
+        break;
+    }
+    buckets.push({ start, end, state });
+  }
+  return buckets;
 }

@@ -79,7 +79,7 @@ test("总览、详情、证据与所有功能页面连接真实同源接口", as
   }
   await page.goto(`/hashes/${hash}`);
   await expect(
-    page.getByRole("option", { name: /generation\s*2/ }).first(),
+    page.getByRole("button", { name: /^generation 2/ }).first(),
   ).toBeAttached();
   const trigger = page.getByRole("button", { name: /查看 #/ }).first();
   await expect(trigger).toBeVisible();
@@ -214,19 +214,15 @@ test("分页游标往返、generation 选择和键盘证据关闭", async ({ pag
   await page.getByRole("button", { name: "上一页" }).click();
   await expect(page.locator("tbody")).toContainText("aaaaaaaa");
   await page.locator("tbody a").first().click();
-  await page
-    .getByRole("combobox", { name: "领取", exact: true })
-    .selectOption("1");
+  await page.getByRole("button", { name: /^generation 1/ }).click();
   await expect(page).toHaveURL(/generation=1/);
   await expect(
-    page.getByRole("combobox", { name: "peer", exact: true }),
-  ).toHaveValue("peer-1");
-  await page
-    .getByRole("combobox", { name: "领取", exact: true })
-    .selectOption("2");
+    page.getByRole("button", { name: "peer-1", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /^generation 2/ }).click();
   await expect(
-    page.getByRole("combobox", { name: "peer", exact: true }),
-  ).toHaveValue("peer-2");
+    page.getByRole("button", { name: "peer-2", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page
     .getByRole("button", { name: /查看 #/ })
     .first()
