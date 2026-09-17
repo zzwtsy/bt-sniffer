@@ -6,7 +6,7 @@ import type {
   ThroughputPoint,
 } from "./model";
 import { useNavigate } from "@tanstack/react-router";
-import { memo } from "react";
+import { Fragment, memo } from "react";
 import {
   Bar,
   BarChart,
@@ -29,54 +29,108 @@ import {
 import { count, label, time, timeTick } from "@/lib/observation/format";
 import { JOB_STATES, quantileLabel } from "./model";
 
-const funnelConfig = {
-  count: { label: "窗口计数", color: "var(--chart-2)" },
+/** 漏斗四级颜色与七泳道一致，跨面板扫读时保持同一阶段的同色联想。 */
+const funnelColors: Record<string, string> = {
+  discovery: "var(--chart-1)",
+  admission: "var(--chart-2)",
+  claim: "var(--chart-3)",
+  commit: "var(--status-success)",
 };
-/** 转化漏斗：发现 → 接纳 → 领取 → 提交四级窗口计数与级间转化率。 */
+/** 非零计数的最小可见高度占比，保证数量级悬殊时末级仍可辨认。 */
+const MIN_LEVEL_HEIGHT = 0.12;
+/** 级间连接带宽度（px）：越宽斜边越平缓，越窄流失感越尖锐。 */
+const CONNECTOR_WIDTH = 56;
+/**
+ * 转化漏斗：发现 → 接纳 → 领取 → 提交四级窗口计数，横向排列与七泳道方向一致。
+ * 每级为垂直居中的矩形，高度 ∝ 窗口计数；级间斜边连接带的收窄坡度即转化率的几何表达。
+ * recharts FunnelChart 不支持横向（recharts/recharts#2799），故自绘；窗口口径下级间计数
+ * 不保证单调，连接带如实扩张或收窄，零计数级退化为参考细线而非消失。
+ */
 export const FunnelChart = memo(({ data }: { data: Funnel | undefined }) => {
   if (data === undefined)
     return <Empty>窗口内尚无记录，连接初期或缓冲为空时不展示漏斗。</Empty>;
   const levels = data.levels;
+  const max = Math.max(...levels.map(level => level.count), 1);
+  const heights = levels.map(level =>
+    level.count > 0 ? Math.max(level.count / max, MIN_LEVEL_HEIGHT) : 0,
+  );
   return (
-    <>
-      <ChartContainer config={funnelConfig} className="h-45 w-full">
-        <BarChart
-          data={levels}
-          layout="vertical"
-          accessibilityLayer
-          margin={{ left: 8, right: 32 }}
-        >
-          <XAxis type="number" hide />
-          <YAxis
-            type="category"
-            dataKey="title"
-            width={44}
-            tickLine={false}
-            axisLine={false}
-          />
-          <ChartTooltip content={<ChartTooltipContent />} />
-          <Bar
-            dataKey="count"
-            fill="var(--color-count)"
-            radius={3}
-            isAnimationActive={false}
-            label={{
-              position: "right",
-              fill: "var(--muted-foreground)",
-              fontSize: 11,
-            }}
-          />
-        </BarChart>
-      </ChartContainer>
-      <p className="text-xs text-muted-foreground">
-        {levels.slice(1).map((level, i) => {
-          const before = levels[i].count;
-          const rate
-            = before > 0 ? `${((level.count / before) * 100).toFixed(1)}%` : "样本不足";
-          return `${levels[i].title}→${level.title} ${rate}`;
-        }).join(" · ")}
-      </p>
-    </>
+    <div data-slot="funnel-chart" className="overflow-x-auto">
+      <div
+        className="grid min-w-115 gap-y-1"
+        style={{
+          gridTemplateColumns: levels.map(() => "minmax(0,1fr)").join(` ${CONNECTOR_WIDTH}px `),
+          gridTemplateRows: "auto 144px auto",
+        }}
+      >
+        {levels.map((level, i) => {
+          const color = funnelColors[level.id] ?? "var(--chart-2)";
+          const before = i > 0 ? levels[i - 1] : undefined;
+          const rate = before === undefined
+            ? undefined
+            : before.count > 0
+              ? `${(level.count / before.count * 100).toFixed(1)}%`
+              : "样本不足";
+          const h = heights[i];
+          const column = i * 2 + 1;
+          // 连接带左右缘高度；零计数级收成细尖，如实表达断流而非维持形状
+          const from = Math.max(i > 0 ? heights[i - 1] : h, 0.015);
+          const to = Math.max(h, 0.015);
+          return (
+            <Fragment key={level.id}>
+              <div
+                className="min-w-0 text-center"
+                style={{ gridColumn: column, gridRow: 1 }}
+              >
+                <p className="text-[11px] text-muted-foreground">{level.title}</p>
+                <p
+                  className="text-sm font-semibold tabular-nums"
+                  style={{ color }}
+                >
+                  {count(level.count)}
+                </p>
+              </div>
+              <div
+                className="relative min-w-0"
+                style={{ gridColumn: column, gridRow: 2 }}
+                title={`${level.title} ${count(level.count)}`}
+              >
+                <div
+                  className="absolute inset-x-0"
+                  style={h > 0
+                    ? { top: `${(1 - h) / 2 * 100}%`, height: `${h * 100}%`, background: color }
+                    : { top: "calc(50% - 1px)", height: 2, background: "var(--muted)" }}
+                />
+              </div>
+              {before !== undefined && rate !== undefined && (
+                <>
+                  <div
+                    aria-hidden="true"
+                    className="relative"
+                    style={{ gridColumn: column - 1, gridRow: 2 }}
+                  >
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        clipPath: `polygon(0% ${(1 - from) / 2 * 100}%, 100% ${(1 - to) / 2 * 100}%, 100% ${(1 + to) / 2 * 100}%, 0% ${(1 + from) / 2 * 100}%)`,
+                        background: `linear-gradient(to right, color-mix(in oklab, ${funnelColors[before.id] ?? "var(--chart-2)"} 55%, transparent), color-mix(in oklab, ${color} 55%, transparent))`,
+                      }}
+                    />
+                  </div>
+                  <p
+                    className="text-center text-[10px] text-muted-foreground tabular-nums"
+                    style={{ gridColumn: column - 1, gridRow: 3 }}
+                    aria-label={`${before.title}到${level.title}的转化率 ${rate}`}
+                  >
+                    {rate}
+                  </p>
+                </>
+              )}
+            </Fragment>
+          );
+        })}
+      </div>
+    </div>
   );
 }, (before, after) => before.data === after.data || (
   before.data !== undefined && after.data !== undefined

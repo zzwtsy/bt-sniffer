@@ -31,20 +31,42 @@ it("无关快照及陈旧元数据不重绘图形，计数、桶边界及可用�
     </>
   );
   const view = render(ui());
-  expect(container).toHaveBeenCalledTimes(3);
+  expect(container).toHaveBeenCalledTimes(2);
   jobs = { ...structuredClone(jobs), stale: true, observedAt: 2 };
   entries = structuredClone(entries);
   funnel = structuredClone(funnel);
   view.rerender(ui());
-  expect(container).toHaveBeenCalledTimes(3);
+  expect(container).toHaveBeenCalledTimes(2);
   jobs = { ...jobs, states: [{ state: "running", count: 2 }] };
   entries = [{ ...entries[0], p99: { upperBoundMs: null, exceedsMs: 40 } }];
   funnel = { levels: [{ id: "commit", title: "提交", count: 2 }] };
   view.rerender(ui());
-  expect(container).toHaveBeenCalledTimes(6);
+  expect(container).toHaveBeenCalledTimes(4);
   jobs = undefined;
   view.rerender(ui());
   expect(view.getByText("数据库统计尚不可用。")).toBeInTheDocument();
+});
+
+it("漏斗渲染各级计数与级间转化率，上级为零时标注样本不足，空缓冲有明确文案", () => {
+  const view = render(<FunnelChart data={undefined} />);
+  expect(view.getByText(/窗口内尚无记录/)).toBeInTheDocument();
+  view.rerender(
+    <FunnelChart
+      data={{
+        levels: [
+          { id: "discovery", title: "发现", count: 1000 },
+          { id: "admission", title: "接纳", count: 500 },
+          { id: "claim", title: "领取", count: 0 },
+          { id: "commit", title: "提交", count: 0 },
+        ],
+      }}
+    />,
+  );
+  expect(view.getByText("发现")).toBeInTheDocument();
+  expect(view.getByText("1,000")).toBeInTheDocument();
+  expect(view.getByLabelText("发现到接纳的转化率 50.0%")).toBeInTheDocument();
+  expect(view.getByLabelText("接纳到领取的转化率 0.0%")).toBeInTheDocument();
+  expect(view.getByLabelText("领取到提交的转化率 样本不足")).toBeInTheDocument();
 });
 
 it("结果汇总渲染三档与失败原因，无失败与空数据有明确文案", () => {
