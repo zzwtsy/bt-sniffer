@@ -95,7 +95,7 @@ export function Records({
         </Table>
         {query.data?.items.length === 0 && <Empty />}
         {query.data?.window && (
-          <p className="muted">
+          <p className="text-xs text-muted-foreground">
             {query.data.window.evicted > 0 ? "历史部分保留" : "当前窗口内记录"}
             {" "}
             · 过程仅属于当前运行

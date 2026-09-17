@@ -1,31 +1,20 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { cn } from "cn";
-import { Status } from "@/components/observation/common";
+import { Chip, Status } from "@/components/observation/common";
 
 function Arrow() {
-  return <span aria-hidden="true" className="step-arrow">→</span>;
-}
-function Chip({
-  selected,
-  onClick,
-  children,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
   return (
-    <button
-      type="button"
-      className={cn("chip", selected && "selected")}
-      aria-pressed={selected}
-      onClick={onClick}
+    <span
+      aria-hidden="true"
+      className="self-center text-muted-foreground max-[760px]:hidden"
     >
-      {children}
-    </button>
+      →
+    </span>
   );
 }
+const stepClass
+  = "flex min-w-[140px] flex-1 flex-col gap-1.5 rounded-md border px-3 py-2.5 text-xs max-[760px]:flex-[1_1_100%]";
+const stepLabelClass = "text-[11px] font-semibold text-muted-foreground";
 /** 单个 hash 的链路步骤条：领取与 peer 用 chip 直选，写回 URL search。 */
 export function Stepper({
   origin,
@@ -47,9 +36,9 @@ export function Stepper({
   onSelect: (next: { generation?: number; peer?: string }) => void;
 }) {
   return (
-    <div className="stepper" aria-label="采集链路">
-      <div className="step">
-        <span className="step-label">发现</span>
+    <div className="flex flex-wrap items-stretch gap-2.5" aria-label="采集链路">
+      <div className={stepClass}>
+        <span className={stepLabelClass}>发现</span>
         {origin
           ? (
               <Link to="/discoveries/$id" params={{ id: origin.id }}>
@@ -59,18 +48,18 @@ export function Stepper({
               </Link>
             )
           : (
-              <span className="muted">来源未知或未载入</span>
+              <span className="text-xs text-muted-foreground">来源未知或未载入</span>
             )}
       </div>
       <Arrow />
-      <div className="step">
-        <span className="step-label">领取</span>
+      <div className={stepClass}>
+        <span className={stepLabelClass}>领取</span>
         {generations.length === 0
           ? (
-              <span className="muted">未知</span>
+              <span className="text-xs text-muted-foreground">未知</span>
             )
           : (
-              <div className="chips" role="group" aria-label="领取 generation">
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="领取 generation">
                 {generations.map(g => (
                   <Chip
                     key={g.value}
@@ -89,14 +78,14 @@ export function Stepper({
             )}
       </div>
       <Arrow />
-      <div className="step">
-        <span className="step-label">peer</span>
+      <div className={stepClass}>
+        <span className={stepLabelClass}>peer</span>
         {peers.length === 0
           ? (
-              <span className="muted">无保留尝试</span>
+              <span className="text-xs text-muted-foreground">无保留尝试</span>
             )
           : (
-              <div className="chips" role="group" aria-label="peer 尝试">
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="peer 尝试">
                 {peers.map(p => (
                   <Chip
                     key={p}
@@ -110,13 +99,13 @@ export function Stepper({
             )}
       </div>
       <Arrow />
-      <div className="step">
-        <span className="step-label">传输</span>
+      <div className={stepClass}>
+        <span className={stepLabelClass}>传输</span>
         {transfer}
       </div>
       <Arrow />
-      <div className="step">
-        <span className="step-label">校验与提交</span>
+      <div className={stepClass}>
+        <span className={stepLabelClass}>校验与提交</span>
         {commit}
       </div>
     </div>

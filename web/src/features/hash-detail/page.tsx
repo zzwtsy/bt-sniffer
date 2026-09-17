@@ -114,7 +114,7 @@ function HashDetail({ hash }: { hash: string }) {
         eyebrow="TRACE DETAIL"
         description="数据库事实、当前运行和有限历史分别展示。未知步骤不会被补造为成功。"
       />
-      <div className="hash-heading">
+      <div className="mb-5 flex items-center justify-between gap-3">
         <CopyText value={hash} />
         <Status value={job.state} />
       </div>
@@ -164,13 +164,13 @@ function HashDetail({ hash }: { hash: string }) {
                   </span>
                 )
               : (
-                  <span className="muted">未选择 peer</span>
+                  <span className="text-xs text-muted-foreground">未选择 peer</span>
                 )
           }
           commit={(
-            <span className="row">
+            <span className="flex flex-wrap items-center gap-2.5">
               <Status value={job.state} />
-              <span className="muted">
+              <span className="text-xs text-muted-foreground">
                 {fact.data?.metadata === undefined
                   ? "保存状态未知"
                   : fact.data.metadata === null
@@ -188,7 +188,7 @@ function HashDetail({ hash }: { hash: string }) {
           }}
         />
       </Panel>
-      <div className="detail-grid">
+      <div className="grid grid-cols-[minmax(0,2.2fr)_minmax(250px,1fr)] gap-5 max-[1200px]:grid-cols-1">
         <div>
           <Panel
             title="时间轴与分片"
@@ -199,7 +199,7 @@ function HashDetail({ hash }: { hash: string }) {
               error={attempts.error}
               hasData={!!attempts.data}
             />
-            <p className="muted">
+            <p className="text-xs text-muted-foreground">
               {label(record(summary?.claim).attempt_kind)}
               {" "}
               · 领取前远端失败
@@ -239,29 +239,29 @@ function HashDetail({ hash }: { hash: string }) {
               />
             )}
           >
-            <dl className="facts">
-              <dt>任务状态</dt>
-              <dd>
+            <dl className="grid grid-cols-[100px_minmax(0,1fr)] gap-3.5 text-xs">
+              <dt className="text-muted-foreground">任务状态</dt>
+              <dd className="m-0 wrap-anywhere">
                 <Status value={job.state} />
               </dd>
-              <dt>generation</dt>
-              <dd>{count(job.generation)}</dd>
-              <dt>远端失败次数</dt>
-              <dd>{count(job.remote_failures)}</dd>
-              <dt>首次发现</dt>
-              <dd>{time(fact.data?.first_seen_ms)}</dd>
-              <dt>最近观察</dt>
-              <dd>{time(fact.data?.last_seen_ms)}</dd>
-              <dt>重试到期</dt>
-              <dd>{time(job.due_at_ms)}</dd>
-              <dt>metadata</dt>
-              <dd>
+              <dt className="text-muted-foreground">generation</dt>
+              <dd className="m-0 wrap-anywhere">{count(job.generation)}</dd>
+              <dt className="text-muted-foreground">远端失败次数</dt>
+              <dd className="m-0 wrap-anywhere">{count(job.remote_failures)}</dd>
+              <dt className="text-muted-foreground">首次发现</dt>
+              <dd className="m-0 wrap-anywhere">{time(fact.data?.first_seen_ms)}</dd>
+              <dt className="text-muted-foreground">最近观察</dt>
+              <dd className="m-0 wrap-anywhere">{time(fact.data?.last_seen_ms)}</dd>
+              <dt className="text-muted-foreground">重试到期</dt>
+              <dd className="m-0 wrap-anywhere">{time(job.due_at_ms)}</dd>
+              <dt className="text-muted-foreground">metadata</dt>
+              <dd className="m-0 wrap-anywhere">
                 {fact.data?.metadata === null
                   ? "无保存记录"
                   : bytes(metadata.bytes)}
               </dd>
-              <dt>校验摘要</dt>
-              <dd>
+              <dt className="text-muted-foreground">校验摘要</dt>
+              <dd className="m-0 wrap-anywhere">
                 {metadata.verification === "validated_before_commit"
                   ? "提交前已校验，查询未重校验"
                   : "未知"}
@@ -283,11 +283,11 @@ function HashDetail({ hash }: { hash: string }) {
                     "最初来源未知或尚未载入"
                   )}
             </p>
-            <p className="muted">当前有效提示不能证明最初发现来源。</p>
+            <p className="text-xs text-muted-foreground">当前有效提示不能证明最初发现来源。</p>
             {rows(fact.data?.peer_hints).map(h => (
-              <div className="hint" key={string(h.peer)}>
+              <div className="border-t py-2.5" key={string(h.peer)}>
                 <code>{string(h.peer)}</code>
-                <small>{time(h.observed_at_ms)}</small>
+                <small className="block text-muted-foreground">{time(h.observed_at_ms)}</small>
               </div>
             ))}
           </Panel>

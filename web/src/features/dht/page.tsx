@@ -47,7 +47,7 @@ export function DhtPage() {
         eyebrow="NETWORK"
         description="双栈节点独立观察，共享流量预算。无路由与本地限流不等同于远端失败。"
       />
-      <div className="node-grid">
+      <div className="grid grid-cols-2 gap-5 max-[760px]:grid-cols-1">
         {nodes.map(node => (
           <Panel
             key={string(node.id)}
@@ -57,21 +57,21 @@ export function DhtPage() {
               <Status value={((node.available === true)) ? "ready" : "数据源不可用"} />
             }
           >
-            <p className="node-id">
+            <p className="wrap-anywhere">
               <code>{string(node.node_id)}</code>
             </p>
-            <div className="node-stats">
+            <div className="my-5 flex flex-wrap gap-5 text-xs">
               <span>
                 在途
-                <strong>{count(node.pending)}</strong>
+                <strong className="ml-1.5 text-[22px]">{count(node.pending)}</strong>
               </span>
               <span>
                 排队
-                <strong>{count(node.queued)}</strong>
+                <strong className="ml-1.5 text-[22px]">{count(node.queued)}</strong>
               </span>
               <span>
                 联系人
-                <strong>{count(record(node.routing).contact_count)}</strong>
+                <strong className="ml-1.5 text-[22px]">{count(record(node.routing).contact_count)}</strong>
               </span>
             </div>
             <Freshness at={node.observed_at_ms} />
@@ -140,7 +140,7 @@ export function DhtDetailPage() {
         />
         <ChartContainer
           config={{ count: { label: "联系人", color: "var(--chart-2)" } }}
-          className="h-[220px] w-full"
+          className="h-55 w-full"
         >
           <BarChart data={buckets} accessibilityLayer>
             <CartesianGrid vertical={false} />
@@ -219,7 +219,7 @@ export function DhtDetailPage() {
             page.change({ limit, after: undefined, trail: undefined })}
         />
       </Panel>
-      <div className="overview-grid">
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(240px,1fr)] gap-5 max-[1200px]:grid-cols-1">
         <Panel
           title="主动采样"
           description="target、候选、回退与冷却来自当前节点状态。"
@@ -228,7 +228,7 @@ export function DhtDetailPage() {
             target
             <code className="break-all">{string(detail.target)}</code>
           </p>
-          <div className="node-stats">
+          <div className="my-5 flex flex-wrap gap-5 text-xs">
             <span>
               在途
               {count(sampling.in_flight)}
@@ -269,7 +269,7 @@ export function DhtDetailPage() {
             </TableBody>
           </Table>
           {!((sampling.running === true)) && (
-            <p className="muted">当前没有运行中的主动采样轮次。</p>
+            <p className="text-xs text-muted-foreground">当前没有运行中的主动采样轮次。</p>
           )}
         </Panel>
         <Panel
@@ -284,7 +284,10 @@ export function DhtDetailPage() {
             .map((r) => {
               const c = record(record(r).context);
               return (
-                <div className="rpc-row" key={string(c.rpc_id)}>
+                <div
+                  className="flex flex-wrap items-center gap-2.5 border-b py-3 text-xs"
+                  key={string(c.rpc_id)}
+                >
                   <Status value={r.state} />
                   <code>{string(record(r).peer)}</code>
                   <Link

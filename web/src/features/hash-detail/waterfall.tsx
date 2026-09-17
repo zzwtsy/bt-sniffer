@@ -36,8 +36,11 @@ export function Waterfall({ track }: { track: Span[] }) {
   }
   const ticks = [0, 1, 2, 3].map(i => start + (span * i) / 3);
   return (
-    <div className="waterfall" role="list" aria-label="阶段时间轴">
-      <div className="waterfall-axis" aria-hidden="true">
+    <div className="my-5 rounded-md border p-3.5" role="list" aria-label="阶段时间轴">
+      <div
+        className="mb-2 flex justify-between pl-40 text-[10px] text-muted-foreground max-[760px]:pl-27.5"
+        aria-hidden="true"
+      >
         {ticks.map(t => (
           <span key={t}>{tick(t)}</span>
         ))}
@@ -49,27 +52,31 @@ export function Waterfall({ track }: { track: Span[] }) {
           ? 100 - left
           : Math.max(1, ((t.elapsed ?? 0) * 100) / span);
         return (
-          <div className="waterfall-row" role="listitem" key={t.id}>
+          <div
+            className="grid grid-cols-[160px_minmax(60px,1fr)] items-center gap-3 py-2 max-[760px]:grid-cols-[110px_minmax(60px,1fr)]"
+            role="listitem"
+            key={t.id}
+          >
             <div
-              className="waterfall-label"
+              className="min-w-0"
               style={{ paddingLeft: `${(depthOf.get(t.id) ?? 0) * 14}px` }}
             >
-              <strong>
+              <strong className="text-[11px]">
                 {label(t.kind)}
                 {" "}
                 /
                 {label(t.step)}
               </strong>
-              <small>
+              <small className="block text-[10px] text-muted-foreground">
                 {open ? "进行中" : duration(t.elapsed)}
                 {" "}
                 ·
                 {label(t.result)}
               </small>
             </div>
-            <div className="waterfall-track">
+            <div className="relative h-5.5 overflow-hidden rounded-[3px] bg-muted">
               <span
-                className={`waterfall-bar ${open ? "open" : ""}`}
+                className={`absolute top-1.25 h-3 rounded-sm ${open ? "bg-muted-foreground" : "bg-primary"}`}
                 style={{ left: `${left}%`, width: `${width}%` }}
                 title={`${label(t.kind)} / ${label(t.step)} · ${open ? "进行中" : duration(t.elapsed)} · ${label(t.result)}`}
               />

@@ -25,7 +25,7 @@ export function HashesPage() {
       ]}
       controls={(
         <form
-          className="filter-bar"
+          className="mb-3 flex flex-wrap items-center gap-3 py-3.5"
           onSubmit={(e) => {
             e.preventDefault();
             const value = hash.trim().toLowerCase();
@@ -41,6 +41,7 @@ export function HashesPage() {
           <Input
             aria-label="完整 hash"
             placeholder="输入 40 位 hash，查看采集链路"
+            className="min-w-45 max-w-110 flex-1"
             value={hash}
             onChange={e => setHash(e.target.value)}
           />

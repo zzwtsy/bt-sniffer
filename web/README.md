@@ -1,6 +1,6 @@
 # 发现流程观测前端
 
-只读中文观测台，包含总览、DHT、发现、任务、hash 详情、metadata 摘要与事件证据。后端接口和字段以[观测专题](../docs/domains/monitoring.md)为准；过程仅在当前运行的有限窗口内可用。
+只读中文观测台，包含流程总览、DHT、发现、任务、hash 详情、metadata 摘要与事件证据。流程总览（`/`）是七泳道粒子流水线：六指标卡、发现到提交的实时泳道、联动事件流与转化漏斗、吞吐曲线、阶段耗时分布、任务状态环四张辅图；粒子动画只是事件窗口内的示意，事件页才是证据。后端接口和字段以[观测专题](../docs/domains/monitoring.md)为准；过程仅在当前运行的有限窗口内可用。
 
 ## 开发与检查
 
@@ -30,7 +30,7 @@ pnpm --dir web preview
 - `src/components/observation` 保存跨切片复用的分页、状态、证据与 hash 链接。
 - `src/lib/api` 负责参数、错误、请求限额及 Query 适配；`src/lib/observation` 负责公共契约、SSE、历史缓存和趋势。
 
-切片不引用其他切片内部实现，通过 URL 关联。公共层不反向依赖页面。新增 UI 原语使用仓库已有 shadcn CLI，不另建图表框架。`app/styles.css` 只保留布局骨架（app-shell、sidebar、topbar）、flow、stepper、waterfall、piece-bar 等 bespoke 可视化与响应式断点；状态色阶使用 `index.css` 的状态 token（`--status-*`），不手写 hex 或按类做 `.dark` 覆盖。
+切片不引用其他切片内部实现，通过 URL 关联。公共层不反向依赖页面。新增 UI 原语使用仓库已有 shadcn CLI，不另建图表框架。样式一律使用 Tailwind utility 写在组件上（含响应式断点），元素级基础样式集中在 `index.css` 的 `@layer base`；状态色阶使用 `index.css` 的状态 token（`--status-*`），不手写 hex 或按类做 `.dark` 覆盖。
 
 每标签页一个 SSE，从 snapshot 游标开始，接纳完整事件批次后推进序号；snapshot 消息不推进事件游标。普通断线有限退避续传，运行或窗口 reset 清除过程并重新获取快照。容量 reset 与不兼容格式停止自动同步，提供手动重新同步入口。数据库读取失败保留上次值并标记陈旧。
 

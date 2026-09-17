@@ -89,14 +89,29 @@ export function bytes(value: unknown): string {
     return `${(n / 1024).toFixed(1)} KiB`;
   return `${(n / 1024 ** 2).toFixed(1)} MiB`;
 }
+const fullTime = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+  hour12: false,
+  timeZoneName: "short",
+});
+const axisTime = new Intl.DateTimeFormat("zh-CN", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+export function timeTick(value: unknown): string {
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= 8.64e15 ? axisTime.format(n) : "Invalid Date";
+}
 export function time(value: unknown): string {
   const n = number(value);
   return n === undefined
     ? "未知"
-    : new Date(n).toLocaleString("zh-CN", {
-        hour12: false,
-        timeZoneName: "short",
-      });
+    : Math.abs(n) <= 8.64e15 ? fullTime.format(n) : "Invalid Date";
 }
 export function duration(value: unknown): string {
   const n = number(value);

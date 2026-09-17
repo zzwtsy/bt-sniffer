@@ -10,10 +10,17 @@ const stateText: Record<string, string> = {
   invalid: "错误",
   unknown: "未知",
 };
+const stateColor: Record<string, string> = {
+  received: "bg-primary",
+  requested: "bg-primary/35",
+  pending: "bg-muted",
+  invalid: "bg-destructive",
+  unknown: "bg-transparent",
+};
 /** 连续分片进度条；超过 256 片聚合，桶内多状态按优先级取代表。 */
 export function PieceBar({ model }: { model: ReturnType<typeof pieces> }) {
   return (
-    <div className="piece-section">
+    <div className="my-5 border-t py-4.5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <h3>本 peer 的分片</h3>
         <span>
@@ -24,7 +31,7 @@ export function PieceBar({ model }: { model: ReturnType<typeof pieces> }) {
           {count(model.total)}
         </span>
       </div>
-      <p className="muted">
+      <p className="text-xs text-muted-foreground">
         当前保留的重复接收
         {model.duplicates}
         {" "}
@@ -34,7 +41,7 @@ export function PieceBar({ model }: { model: ReturnType<typeof pieces> }) {
         ? (
             <>
               <div
-                className="piece-bar"
+                className="my-3.5 flex h-5.5 overflow-hidden rounded border"
                 role="img"
                 aria-label={`分片进度：有效 ${count(model.received)} / ${count(model.total)}`}
               >
@@ -42,7 +49,7 @@ export function PieceBar({ model }: { model: ReturnType<typeof pieces> }) {
                   <span
                     key={b.start}
                     aria-hidden="true"
-                    className={`piece-segment ${b.state}`}
+                    className={`flex-1 ${stateColor[b.state] ?? "bg-transparent"}`}
                     title={
                       b.start === b.end
                         ? `分片 ${b.start}：${stateText[b.state] ?? b.state}`
@@ -51,16 +58,21 @@ export function PieceBar({ model }: { model: ReturnType<typeof pieces> }) {
                   />
                 ))}
               </div>
-              <div className="piece-legend" aria-hidden="true">
+              <div
+                className="flex flex-wrap gap-3 text-[10px] text-muted-foreground"
+                aria-hidden="true"
+              >
                 {Object.entries(stateText).map(([state, text]) => (
                   <span key={state}>
-                    <i className={`piece-segment ${state}`} />
+                    <i
+                      className={`mr-1 inline-block size-2.5 rounded-sm border align-middle ${stateColor[state]}`}
+                    />
                     {text}
                   </span>
                 ))}
               </div>
               {model.total > 256 && (
-                <p className="muted">
+                <p className="text-xs text-muted-foreground">
                   共
                   {count(model.total)}
                   {" "}

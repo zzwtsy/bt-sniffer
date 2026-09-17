@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { ArrowUpRight, Copy, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Copy, Info, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import {
   Alert,
@@ -25,35 +25,72 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { label, shortHash, time } from "@/lib/observation/format";
+
+/** 口径说明入口：hover/focus 信息图标时以 Tooltip 展示，不占正文版面。 */
+export function Hint({ text }: { text: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          delay={0}
+          aria-label="口径说明"
+          className="inline-flex cursor-help items-center text-muted-foreground/70 hover:text-muted-foreground"
+        >
+          <Info size={13} aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent>{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 export function Panel({
   title,
   description,
+  hint,
   children,
   action,
   className = "",
+  contentClassName = "",
 }: {
   title: string;
   description?: string;
+  hint?: string;
   children: ReactNode;
   action?: ReactNode;
   className?: string;
+  contentClassName?: string;
 }) {
   return (
     <Card className={cn("mb-5", className)}>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle>
+          <span className="inline-flex items-center gap-1.5">
+            {title}
+            {hint !== undefined && hint !== "" && <Hint text={hint} />}
+          </span>
+        </CardTitle>
         {description !== undefined && description !== "" && (
           <CardDescription>{description}</CardDescription>
         )}
         {action !== undefined && <CardAction>{action}</CardAction>}
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className={contentClassName}>{children}</CardContent>
     </Card>
   );
 }
@@ -69,11 +106,13 @@ export function PageTitle({
   children?: ReactNode;
 }) {
   return (
-    <div className="page-title">
+    <div className="mb-6.5 flex items-center justify-between gap-4">
       <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-        <p className="muted">{description}</p>
+        <p className="m-0 mb-2 text-[10px] font-[650] tracking-[2px] text-primary">
+          {eyebrow}
+        </p>
+        <h1 className="max-[760px]:text-[25px]">{title}</h1>
+        <p className="mt-2.5 text-xs text-muted-foreground">{description}</p>
       </div>
       {children}
     </div>
@@ -104,6 +143,26 @@ export function Status({ value }: { value: unknown }) {
     </Badge>
   );
 }
+/** 胶囊筛选按钮：选中态高亮边框与底色，用于泳道过滤、状态图例与链路直选。 */
+export function Chip({
+  selected = false,
+  className,
+  type = "button",
+  ...props
+}: { selected?: boolean } & ComponentProps<"button">) {
+  return (
+    <button
+      type={type}
+      aria-pressed={selected}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.75 text-[11px] text-card-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        selected && "border-primary bg-primary/12",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 export function HashLink({
   hash,
   full = false,
@@ -115,7 +174,7 @@ export function HashLink({
     <Link
       to="/hashes/$hash"
       params={{ hash }}
-      className="hash-link"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap"
       title={hash}
     >
       <code>{full ? hash : shortHash(hash)}</code>
@@ -126,8 +185,8 @@ export function HashLink({
 export function CopyText({ value }: { value: string }) {
   const [message, setMessage] = useState("");
   return (
-    <span className="copy-wrap">
-      <code>{value}</code>
+    <span className="flex flex-wrap items-center gap-2.5">
+      <code className="wrap-anywhere">{value}</code>
       <Button
         variant="outline"
         size="icon-sm"
@@ -141,7 +200,7 @@ export function CopyText({ value }: { value: string }) {
       >
         <Copy />
       </Button>
-      <span className="muted" role="status">
+      <span className="text-xs text-muted-foreground" role="status">
         {message}
       </span>
     </span>
@@ -203,7 +262,8 @@ export function QueryState({
   }
   return null;
 }
-export function Freshness({ at, stale, queried = false }: { at?: unknown; stale?: boolean; queried?: boolean }) {
+export function Freshness({ at, stale, queried = false, source }: { at?: unknown; stale?: boolean; queried?: boolean; source?: string }) {
+  const prefix = source ?? (stale ? "陈旧数据" : queried ? "查询时间" : "观察时间");
   return (
     <span
       className={cn(
@@ -211,7 +271,9 @@ export function Freshness({ at, stale, queried = false }: { at?: unknown; stale?
         stale && "text-status-warning",
       )}
     >
-      {stale ? "陈旧数据 · " : queried ? "查询时间 · " : "观察时间 · "}
+      {prefix}
+      {source !== undefined && source !== "" && stale ? " · 陈旧" : ""}
+      {" · "}
       {time(at)}
     </span>
   );
@@ -236,21 +298,31 @@ export function Pager({
   onLimit: (limit: 50 | 100) => void;
 }) {
   return (
-    <nav aria-label="分页" className="pager">
-      <label className="flex items-center gap-2 text-xs">
+    <nav
+      aria-label="分页"
+      className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-[11px]"
+    >
+      <div className="flex items-center gap-2 text-xs">
         每页
-        <NativeSelect
-          size="sm"
-          aria-label="每页条数"
+        <Select
           value={limit}
-          onChange={e => onLimit(e.target.value === "100" ? 100 : 50)}
+          onValueChange={value => onLimit(value === 100 ? 100 : 50)}
         >
-          <NativeSelectOption value={50}>50</NativeSelectOption>
-          <NativeSelectOption value={100}>100</NativeSelectOption>
-        </NativeSelect>
+          <SelectTrigger size="sm" aria-label="每页条数">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value={50}>50</SelectItem>
+              <SelectItem value={100}>100</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
         条
-      </label>
-      <span className="muted">固定顺序 · 分页期间数据可能变化</span>
+      </div>
+      <span className="text-xs text-muted-foreground max-[760px]:hidden">
+        固定顺序 · 分页期间数据可能变化
+      </span>
       <div className="flex gap-1.5">
         <Button
           variant="outline"
@@ -284,18 +356,23 @@ export function Metric({
   title,
   value,
   detail,
+  hint,
   icon,
 }: {
   title: string;
   value: string;
   detail: string;
+  hint?: string;
   icon: ReactNode;
 }) {
   return (
     <Card size="sm" className="metric">
       <CardContent>
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          {title}
+          <span className="inline-flex items-center gap-1">
+            {title}
+            {hint !== undefined && hint !== "" && <Hint text={hint} />}
+          </span>
           {icon}
         </div>
         <div className="metric-value mt-2 text-2xl font-semibold tracking-tight tabular-nums">

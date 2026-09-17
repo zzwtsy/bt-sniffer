@@ -1,7 +1,7 @@
-/* eslint-disable react-refresh/only-export-components */
+import type { Theme } from "@/hooks/use-theme";
 import * as React from "react";
+import { ThemeProviderContext } from "@/hooks/use-theme";
 
-type Theme = "dark" | "light" | "system";
 type ResolvedTheme = "dark" | "light";
 
 interface ThemeProviderProps {
@@ -11,17 +11,8 @@ interface ThemeProviderProps {
   disableTransitionOnChange?: boolean;
 }
 
-interface ThemeProviderState {
-  theme: Theme;
-  setTheme: (theme: Theme) => void;
-}
-
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 const THEME_VALUES: Theme[] = ["dark", "light", "system"];
-
-const ThemeProviderContext = React.createContext<
-  ThemeProviderState | undefined
->(undefined);
 
 function isTheme(value: string | null): value is Theme {
   if (value === null) {
@@ -84,7 +75,7 @@ export function ThemeProvider({
   disableTransitionOnChange = true,
   ...props
 }: ThemeProviderProps) {
-  const [theme, setThemeState] = React.useState<Theme>(() => {
+  const [themeState, setThemeState] = React.useState<Theme>(() => {
     const storedTheme = localStorage.getItem(storageKey);
     if (isTheme(storedTheme)) {
       return storedTheme;
@@ -121,9 +112,9 @@ export function ThemeProvider({
   );
 
   React.useEffect(() => {
-    applyTheme(theme);
+    applyTheme(themeState);
 
-    if (theme !== "system") {
+    if (themeState !== "system") {
       return undefined;
     }
 
@@ -137,7 +128,7 @@ export function ThemeProvider({
     return () => {
       mediaQuery.removeEventListener("change", handleChange);
     };
-  }, [theme, applyTheme]);
+  }, [themeState, applyTheme]);
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -206,25 +197,15 @@ export function ThemeProvider({
 
   const value = React.useMemo(
     () => ({
-      theme,
+      theme: themeState,
       setTheme,
     }),
-    [theme, setTheme],
+    [themeState, setTheme],
   );
 
   return (
-    <ThemeProviderContext.Provider {...props} value={value}>
+    <ThemeProviderContext {...props} value={value}>
       {children}
-    </ThemeProviderContext.Provider>
+    </ThemeProviderContext>
   );
-}
-
-export function useTheme() {
-  const context = React.useContext(ThemeProviderContext);
-
-  if (context === undefined) {
-    throw new Error("useTheme must be used within a ThemeProvider");
-  }
-
-  return context;
 }

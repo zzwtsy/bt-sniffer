@@ -5,9 +5,13 @@ import { HistoryPanel } from "@/components/observation/history";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageSearch } from "@/lib/api/search";
 import { useDisplayed, useEngine, useMonitor } from "@/lib/observation/context";
@@ -30,6 +34,10 @@ const kinds = [
   "commit",
   "retry",
   "backpressure",
+];
+const kindOptions = [
+  { value: "all", label: "全部类别" },
+  ...kinds.map(kind => ({ value: kind, label: label(kind) })),
 ];
 export function EventsPage() {
   const { search, change } = usePageSearch();
@@ -54,7 +62,7 @@ export function EventsPage() {
         description="结构化事件是判断依据；实时窗口与后端历史分页分开查看。"
       />
       <form
-        className="filter-bar"
+        className="mb-3 flex flex-wrap items-center gap-3 py-3.5"
         key={`${search.hash}-${search.object}-${search.kind}`}
         onSubmit={(e) => {
           e.preventDefault();
@@ -65,10 +73,11 @@ export function EventsPage() {
             return;
           }
           setError("");
+          const kind = String(data.get("kind") ?? "all");
           change({
             hash: hash.toLowerCase() || undefined,
             object: String(data.get("object") ?? "") || undefined,
-            kind: String(data.get("kind") ?? "") || undefined,
+            kind: kind === "all" ? undefined : kind,
             after: undefined,
             trail: undefined,
           });
@@ -78,27 +87,35 @@ export function EventsPage() {
           name="hash"
           aria-label="按 hash 筛选"
           placeholder="完整 hash"
+          className="min-w-45 max-w-110 flex-1"
           defaultValue={search.hash}
         />
         <Input
           name="object"
           aria-label="关联对象"
           placeholder="关联对象 ID"
+          className="min-w-45 max-w-110 flex-1"
           maxLength={128}
           defaultValue={search.object}
         />
-        <NativeSelect
+        <Select
+          items={kindOptions}
           name="kind"
-          aria-label="事件类别"
-          defaultValue={search.kind ?? ""}
+          defaultValue={search.kind ?? "all"}
         >
-          <NativeSelectOption value="">全部类别</NativeSelectOption>
-          {kinds.map(k => (
-            <NativeSelectOption key={k} value={k}>
-              {label(k)}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+          <SelectTrigger aria-label="事件类别">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {kindOptions.map(option => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
         <Button>应用筛选</Button>
         {error && <span role="alert">{error}</span>}
       </form>
@@ -131,7 +148,7 @@ export function EventsPage() {
               }
             >
               <div
-                className="live-events"
+                className="max-h-[65vh] overflow-auto"
                 onWheel={(e) => {
                   if (e.deltaY < 0)
                     setFollow(false);

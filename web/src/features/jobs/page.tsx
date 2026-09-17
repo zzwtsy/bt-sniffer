@@ -1,13 +1,24 @@
 import { HashLink, Status } from "@/components/observation/common";
 import { Records } from "@/components/observation/records";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { usePageSearch } from "@/lib/api/search";
 import { useDisplayed, useMonitor } from "@/lib/observation/context";
 import { string } from "@/lib/observation/contracts";
 import { count, label, time } from "@/lib/observation/format";
+
+const stateOptions = [
+  { value: "all", label: "全部状态" },
+  ...["pending", "running", "retry_wait", "dormant", "succeeded"].map(
+    state => ({ value: state, label: label(state) }),
+  ),
+];
 
 export function JobsPage() {
   const page = usePageSearch();
@@ -21,30 +32,37 @@ export function JobsPage() {
       endpoint="/jobs"
       state={page.search.state}
       controls={(
-        <div className="filter-bar">
-          <label>
-            任务状态
-            <NativeSelect
-              value={page.search.state ?? ""}
-              onChange={e =>
+        <div className="mb-3 flex flex-wrap items-center gap-3 py-3.5">
+          <div className="flex items-center gap-2 text-xs">
+            <span>任务状态</span>
+            <Select
+              items={stateOptions}
+              value={page.search.state ?? "all"}
+              onValueChange={value =>
                 page.change({
                   state:
-                    (e.target.value as typeof page.search.state) || undefined,
+                    value === "all"
+                      ? undefined
+                      : (value as typeof page.search.state),
                   after: undefined,
                   trail: undefined,
                 })}
             >
-              <NativeSelectOption value="">全部状态</NativeSelectOption>
-              {["pending", "running", "retry_wait", "dormant", "succeeded"].map(
-                s => (
-                  <NativeSelectOption key={s} value={s}>
-                    {label(s)}
-                  </NativeSelectOption>
-                ),
-              )}
-            </NativeSelect>
-          </label>
-          <span className="muted">
+              <SelectTrigger aria-label="任务状态">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {stateOptions.map(option => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <span className="text-xs text-muted-foreground">
             单状态按到期时间排列，全部状态按 hash 排列
           </span>
         </div>
