@@ -63,18 +63,10 @@ export const eventPageSchema = z.object({
   window: windowSchema,
   completeness: z.enum(["complete", "partial", "unavailable"]),
 });
-export const listSchema = z
-  .object({
-    items: z.array(fieldsSchema).max(100),
-    next: z.string().nullable(),
-    window: windowSchema.optional(),
-  })
-  .passthrough();
 export type ObservationEvent = z.infer<typeof eventSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type ObservationWindow = z.infer<typeof windowSchema>;
 export type EventPage = z.infer<typeof eventPageSchema>;
-export type ListPage = z.infer<typeof listSchema>;
 export function record(value: unknown): Fields {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Fields)
@@ -97,4 +89,3 @@ export function source(snapshot: Snapshot | undefined, name: string): Fields {
 export function encodedBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
-export const hashPattern = /^[a-f\d]{40}$/i;

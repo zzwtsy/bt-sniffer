@@ -1,10 +1,10 @@
-//! HTTP DTO、分页与共享历史 SSE；错误响应不解析底层错误文字。
+//! 最小监控 HTTP/SSE 接口；错误响应不解析底层错误文字。
 use super::*;
-use crate::observation::{Filter, Kind, hex, parse_hash};
+use crate::observation::Filter;
 use axum::{
     Router,
     extract::Request,
-    extract::{Path, Query as Params, State as Extract},
+    extract::{Query as Params, State as Extract},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
@@ -20,16 +20,6 @@ pub(super) fn router(state: Arc<State>) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/snapshot", get(snapshot))
-        .route("/api/v1/dht/nodes", get(nodes))
-        .route("/api/v1/dht/nodes/{id}/routing", get(routing))
-        .route("/api/v1/discoveries", get(discoveries))
-        .route("/api/v1/discoveries/{id}", get(discovery))
-        .route("/api/v1/hashes", get(hashes))
-        .route("/api/v1/hashes/{hash}", get(hash))
-        .route("/api/v1/hashes/{hash}/attempts", get(attempts))
-        .route("/api/v1/jobs", get(jobs))
-        .route("/api/v1/metadata", get(metadata))
-        .route("/api/v1/events", get(events))
         .route("/api/v1/stream", get(stream))
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found") })
         .layer(middleware::from_fn_with_state(state.clone(), limit))
@@ -64,16 +54,6 @@ fn response(value: Value) -> Response {
     )
         .into_response()
 }
-fn read_response(result: Result<Value, ReadError>) -> Response {
-    match result {
-        Ok(v) => response(v),
-        Err(ReadError::Invalid) => error(StatusCode::BAD_REQUEST, "invalid_query"),
-        Err(ReadError::Missing) => error(StatusCode::NOT_FOUND, "not_found"),
-        Err(ReadError::Cancelled) => error(StatusCode::GATEWAY_TIMEOUT, "query_timeout"),
-        Err(ReadError::Busy) => error(StatusCode::TOO_MANY_REQUESTS, "database_capacity"),
-        Err(ReadError::Unavailable) => error(StatusCode::SERVICE_UNAVAILABLE, "source_unavailable"),
-    }
-}
 async fn limit(Extract(state): Extract<Arc<State>>, request: Request, next: Next) -> Response {
     if state.stop.is_cancelled() {
         return error(StatusCode::SERVICE_UNAVAILABLE, "shutting_down");
@@ -100,31 +80,6 @@ async fn limit(Extract(state): Extract<Arc<State>>, request: Request, next: Next
     }
     response
 }
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PageQuery {
-    after: Option<String>,
-    limit: Option<usize>,
-    state: Option<String>,
-    hash: Option<String>,
-    object: Option<String>,
-    kind: Option<Kind>,
-}
-impl PageQuery {
-    fn size(&self) -> Result<usize, ReadError> {
-        let n = self.limit.unwrap_or(50);
-        if (1..=100).contains(&n) {
-            Ok(n)
-        } else {
-            Err(ReadError::Invalid)
-        }
-    }
-    fn sequence(&self) -> Result<u64, ReadError> {
-        self.after
-            .as_ref()
-            .map_or(Ok(0), |s| s.parse().map_err(|_| ReadError::Invalid))
-    }
-}
 async fn health(Extract(s): Extract<Arc<State>>) -> Response {
     response(
         json!({"phase":if s.stop.is_cancelled(){"shutting_down"}else{"running"},"sources":s.cached_summary(),"collector":s.observer.get_state("collector")}),
@@ -132,140 +87,6 @@ async fn health(Extract(s): Extract<Arc<State>>) -> Response {
 }
 async fn snapshot(Extract(s): Extract<Arc<State>>) -> Response {
     response(s.snapshot())
-}
-async fn nodes(Extract(s): Extract<Arc<State>>) -> Response {
-    response(s.cached_summary()["nodes"].clone())
-}
-async fn routing(
-    Extract(s): Extract<Arc<State>>,
-    Path(id): Path<usize>,
-    Params(q): Params<PageQuery>,
-) -> Response {
-    let Ok(limit) = q.size() else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    let Ok(after) = q.sequence() else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    let cache = s.cache.lock().expect("监控缓存锁");
-    let Some(node) = cache["nodes"].as_array().and_then(|a| a.get(id)) else {
-        return error(StatusCode::NOT_FOUND, "node_not_found");
-    };
-    let Some(routing) = node.get("routing").filter(|v| !v.is_null()) else {
-        return error(StatusCode::SERVICE_UNAVAILABLE, "routing_unavailable");
-    };
-    let contacts = routing["contacts"].as_array().cloned().unwrap_or_default();
-    let start = (after as usize).min(contacts.len());
-    let end = (start + limit).min(contacts.len());
-    response(
-        json!({"observed_at_ms":routing["observed_at_ms"],"buckets":routing["buckets"],"items":contacts[start..end],"next":if end<contacts.len(){Some(end.to_string())}else{None}}),
-    )
-}
-async fn hashes(Extract(s): Extract<Arc<State>>, Params(q): Params<PageQuery>) -> Response {
-    let Ok(limit) = q.size() else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    read_response(
-        s.query(Query::Hashes {
-            after: q.after,
-            limit,
-        })
-        .await,
-    )
-}
-async fn jobs(Extract(s): Extract<Arc<State>>, Params(q): Params<PageQuery>) -> Response {
-    let Ok(limit) = q.size() else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    read_response(
-        s.query(Query::Jobs {
-            after: q.after,
-            limit,
-            state: q.state,
-        })
-        .await,
-    )
-}
-async fn metadata(Extract(s): Extract<Arc<State>>, Params(q): Params<PageQuery>) -> Response {
-    let Ok(limit) = q.size() else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    read_response(
-        s.query(Query::Metadata {
-            after: q.after,
-            limit,
-        })
-        .await,
-    )
-}
-async fn hash(Extract(s): Extract<Arc<State>>, Path(hash): Path<String>) -> Response {
-    let Some(hash) = parse_hash(&hash) else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    read_response(s.query(Query::Hash(hash)).await)
-}
-fn history(s: &State, q: PageQuery) -> Response {
-    let (Ok(after), Ok(limit)) = (q.sequence(), q.size()) else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    let hash = match q.hash {
-        Some(h) => match parse_hash(&h) {
-            Some(h) => Some(hex(&h)),
-            None => return read_response(Err(ReadError::Invalid)),
-        },
-        None => None,
-    };
-    if q.object.as_ref().is_some_and(|s| s.len() > 128) {
-        return read_response(Err(ReadError::Invalid));
-    }
-    response(
-        serde_json::to_value(s.observer.page(
-            after,
-            limit,
-            &Filter {
-                hash,
-                object: q.object,
-                kind: q.kind,
-            },
-        ))
-        .expect("事件页可序列化"),
-    )
-}
-async fn events(Extract(s): Extract<Arc<State>>, Params(q): Params<PageQuery>) -> Response {
-    history(&s, q)
-}
-async fn discoveries(Extract(s): Extract<Arc<State>>, Params(q): Params<PageQuery>) -> Response {
-    let (Ok(after), Ok(limit)) = (q.sequence(), q.size()) else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    response(s.observer.discoveries(after, limit))
-}
-async fn discovery(
-    Extract(s): Extract<Arc<State>>,
-    Path(id): Path<String>,
-    Params(mut q): Params<PageQuery>,
-) -> Response {
-    if id.is_empty() || id.len() > 128 {
-        return read_response(Err(ReadError::Invalid));
-    }
-    if !s.observer.has_discovery(&id) {
-        return error(StatusCode::NOT_FOUND, "history_unavailable");
-    }
-    q.object = Some(id);
-    history(&s, q)
-}
-async fn attempts(
-    Extract(s): Extract<Arc<State>>,
-    Path(hash): Path<String>,
-    Params(q): Params<PageQuery>,
-) -> Response {
-    let Some(hash) = parse_hash(&hash) else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    let (Ok(after), Ok(limit)) = (q.sequence(), q.size()) else {
-        return read_response(Err(ReadError::Invalid));
-    };
-    response(s.observer.attempts(&hex(&hash), after, limit))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

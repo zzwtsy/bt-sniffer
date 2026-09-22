@@ -1,6 +1,5 @@
 //! 当前进程的只读观测：有界事件历史与独立当前状态，不参与业务决策。
 //! 生产者同步追加小事件，不执行 I/O；序号通知可合并，消费者按游标读取历史。
-mod queries;
 mod tests;
 
 use serde::{Deserialize, Serialize};
@@ -134,8 +133,6 @@ struct History {
     sequence: u64,
     evicted: u64,
     truncated: u64,
-    discoveries: BTreeMap<Arc<str>, BTreeMap<u64, queries::DiscoveryFact>>,
-    discovery_order: BTreeMap<u64, Arc<str>>,
     active: BTreeMap<String, Value>,
     states: BTreeMap<&'static str, Value>,
 }
@@ -204,8 +201,6 @@ impl Observer {
                     sequence: 0,
                     evicted: 0,
                     truncated: 0,
-                    discoveries: BTreeMap::new(),
-                    discovery_order: BTreeMap::new(),
                     active: BTreeMap::new(),
                     states: BTreeMap::new(),
                 }),
@@ -297,7 +292,6 @@ impl Observer {
             .flatten()
             .map(String::len)
             .sum::<usize>();
-        history.index_discovery(&self.context, sequence, at_ms, step, result);
         history.bytes += retained_bytes;
         history.events.push_back(Entry {
             sequence,
@@ -417,7 +411,6 @@ impl History {
                 || e.at.elapsed() >= limits.age
         }) {
             let entry = self.events.pop_front().expect("已有首项");
-            self.remove_discovery(&entry);
             self.bytes -= entry.retained_bytes;
             self.evicted += 1;
         }
@@ -494,16 +487,6 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
-}
-pub(crate) fn parse_hash(s: &str) -> Option<[u8; 20]> {
-    if s.len() != 40 || !s.is_ascii() {
-        return None;
-    }
-    let mut hash = [0; 20];
-    for (i, b) in hash.iter_mut().enumerate() {
-        *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(hash)
 }
 fn bound(value: &mut Value, truncated: &mut bool, depth: usize) {
     if depth > 8 {

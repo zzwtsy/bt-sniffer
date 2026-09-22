@@ -95,7 +95,7 @@ async function main() {
           long_task_ms: cdp ? stats.longTasks.reduce((sum, value) => sum + value, 0) : null,
           mutations: stats.mutations,
           react_commits: stats.commits,
-          rows: await page.locator("tbody tr").count(),
+          particles: await page.locator("[data-slot='pipeline-particle']").count(),
         };
         results.push(result);
         await writeFile(path.join(output, "results.json"), JSON.stringify({ browser: browser.version(), build: path.resolve(build), results }, null, 2));

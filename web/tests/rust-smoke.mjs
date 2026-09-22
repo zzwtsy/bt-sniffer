@@ -100,10 +100,8 @@ async function main() {
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(url);
     await page.getByText("实时连接", { exact: true }).waitFor();
-    await page.goto(`${url}/dht`);
-    await page.getByText("查看路由、采样与 RPC →").first().waitFor();
     await page.screenshot({
-      path: path.join(evidence, "dht.png"),
+      path: path.join(evidence, "overview.png"),
       fullPage: true,
     });
     assert.deepEqual(errors, []);

@@ -10,154 +10,33 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as EventsRouteImport } from './routes/events'
-import { Route as JobsRouteImport } from './routes/jobs'
-import { Route as MetadataRouteImport } from './routes/metadata'
-import { Route as DhtIndexRouteImport } from './routes/dht.index'
-import { Route as DhtIdRouteImport } from './routes/dht.$id'
-import { Route as DiscoveriesIndexRouteImport } from './routes/discoveries.index'
-import { Route as DiscoveriesIdRouteImport } from './routes/discoveries.$id'
-import { Route as HashesIndexRouteImport } from './routes/hashes.index'
-import { Route as HashesHashRouteImport } from './routes/hashes.$hash'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const EventsRoute = EventsRouteImport.update({
-  id: '/events',
-  path: '/events',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JobsRoute = JobsRouteImport.update({
-  id: '/jobs',
-  path: '/jobs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MetadataRoute = MetadataRouteImport.update({
-  id: '/metadata',
-  path: '/metadata',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DhtIndexRoute = DhtIndexRouteImport.update({
-  id: '/dht/',
-  path: '/dht/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DhtIdRoute = DhtIdRouteImport.update({
-  id: '/dht/$id',
-  path: '/dht/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DiscoveriesIndexRoute = DiscoveriesIndexRouteImport.update({
-  id: '/discoveries/',
-  path: '/discoveries/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DiscoveriesIdRoute = DiscoveriesIdRouteImport.update({
-  id: '/discoveries/$id',
-  path: '/discoveries/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HashesIndexRoute = HashesIndexRouteImport.update({
-  id: '/hashes/',
-  path: '/hashes/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HashesHashRoute = HashesHashRouteImport.update({
-  id: '/hashes/$hash',
-  path: '/hashes/$hash',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/events': typeof EventsRoute
-  '/jobs': typeof JobsRoute
-  '/metadata': typeof MetadataRoute
-  '/dht/$id': typeof DhtIdRoute
-  '/discoveries/$id': typeof DiscoveriesIdRoute
-  '/hashes/$hash': typeof HashesHashRoute
-  '/dht/': typeof DhtIndexRoute
-  '/discoveries/': typeof DiscoveriesIndexRoute
-  '/hashes/': typeof HashesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/events': typeof EventsRoute
-  '/jobs': typeof JobsRoute
-  '/metadata': typeof MetadataRoute
-  '/dht/$id': typeof DhtIdRoute
-  '/discoveries/$id': typeof DiscoveriesIdRoute
-  '/hashes/$hash': typeof HashesHashRoute
-  '/dht': typeof DhtIndexRoute
-  '/discoveries': typeof DiscoveriesIndexRoute
-  '/hashes': typeof HashesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/events': typeof EventsRoute
-  '/jobs': typeof JobsRoute
-  '/metadata': typeof MetadataRoute
-  '/dht/$id': typeof DhtIdRoute
-  '/discoveries/$id': typeof DiscoveriesIdRoute
-  '/hashes/$hash': typeof HashesHashRoute
-  '/dht/': typeof DhtIndexRoute
-  '/discoveries/': typeof DiscoveriesIndexRoute
-  '/hashes/': typeof HashesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/events'
-    | '/jobs'
-    | '/metadata'
-    | '/dht/$id'
-    | '/discoveries/$id'
-    | '/hashes/$hash'
-    | '/dht/'
-    | '/discoveries/'
-    | '/hashes/'
+  fullPaths: '/'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/events'
-    | '/jobs'
-    | '/metadata'
-    | '/dht/$id'
-    | '/discoveries/$id'
-    | '/hashes/$hash'
-    | '/dht'
-    | '/discoveries'
-    | '/hashes'
-  id:
-    | '__root__'
-    | '/'
-    | '/events'
-    | '/jobs'
-    | '/metadata'
-    | '/dht/$id'
-    | '/discoveries/$id'
-    | '/hashes/$hash'
-    | '/dht/'
-    | '/discoveries/'
-    | '/hashes/'
+  to: '/'
+  id: '__root__' | '/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  EventsRoute: typeof EventsRoute
-  JobsRoute: typeof JobsRoute
-  MetadataRoute: typeof MetadataRoute
-  DhtIdRoute: typeof DhtIdRoute
-  DiscoveriesIdRoute: typeof DiscoveriesIdRoute
-  HashesHashRoute: typeof HashesHashRoute
-  DhtIndexRoute: typeof DhtIndexRoute
-  DiscoveriesIndexRoute: typeof DiscoveriesIndexRoute
-  HashesIndexRoute: typeof HashesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -169,83 +48,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/events': {
-      id: '/events'
-      path: '/events'
-      fullPath: '/events'
-      preLoaderRoute: typeof EventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/jobs': {
-      id: '/jobs'
-      path: '/jobs'
-      fullPath: '/jobs'
-      preLoaderRoute: typeof JobsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/metadata': {
-      id: '/metadata'
-      path: '/metadata'
-      fullPath: '/metadata'
-      preLoaderRoute: typeof MetadataRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dht/': {
-      id: '/dht/'
-      path: '/dht'
-      fullPath: '/dht/'
-      preLoaderRoute: typeof DhtIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dht/$id': {
-      id: '/dht/$id'
-      path: '/dht/$id'
-      fullPath: '/dht/$id'
-      preLoaderRoute: typeof DhtIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/discoveries/': {
-      id: '/discoveries/'
-      path: '/discoveries'
-      fullPath: '/discoveries/'
-      preLoaderRoute: typeof DiscoveriesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/discoveries/$id': {
-      id: '/discoveries/$id'
-      path: '/discoveries/$id'
-      fullPath: '/discoveries/$id'
-      preLoaderRoute: typeof DiscoveriesIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hashes/': {
-      id: '/hashes/'
-      path: '/hashes'
-      fullPath: '/hashes/'
-      preLoaderRoute: typeof HashesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hashes/$hash': {
-      id: '/hashes/$hash'
-      path: '/hashes/$hash'
-      fullPath: '/hashes/$hash'
-      preLoaderRoute: typeof HashesHashRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  EventsRoute: EventsRoute,
-  JobsRoute: JobsRoute,
-  MetadataRoute: MetadataRoute,
-  DhtIdRoute: DhtIdRoute,
-  DiscoveriesIdRoute: DiscoveriesIdRoute,
-  HashesHashRoute: HashesHashRoute,
-  DhtIndexRoute: DhtIndexRoute,
-  DiscoveriesIndexRoute: DiscoveriesIndexRoute,
-  HashesIndexRoute: HashesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -4,8 +4,14 @@ import { expect, test } from "@playwright/test";
 
 const hash = "a".repeat(40);
 const themeNames = { light: "浅色", dark: "深色" } as const;
-async function selectTheme(page: Page, theme: keyof typeof themeNames) {
+async function selectTheme(
+  page: Page,
+  theme: keyof typeof themeNames,
+  options: { advanceClock?: boolean } = {},
+) {
   await page.getByLabel("主题", { exact: true }).click();
+  if (options.advanceClock)
+    await page.clock.runFor(100);
   await page
     .getByRole("menuitem", { name: themeNames[theme], exact: true })
     .click();
@@ -23,15 +29,10 @@ test("深浅主题的重要状态文字保持可读对比度", async ({ page, re
       fullPage: true,
     });
   }
-  // 状态徽章（.status）集中在事件浏览页；首页已改为结果分布图
-  await page.goto("/events?mode=live");
-  // goto 是整页加载，前端缓冲被清空；等 SSE 建立后再推送事件
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
-  await request.get("http://127.0.0.1:4311/control/update");
-  await expect(page.locator("main .status").first()).toBeVisible();
+  await expect(page.locator(".status").first()).toBeVisible();
   for (const theme of ["light", "dark"] as const) {
     await selectTheme(page, theme);
-    const ratios = await page.locator("main .status").evaluateAll(elements =>
+    const ratios = await page.locator(".status").evaluateAll(elements =>
       elements.map((element) => {
         const canvas = document.createElement("canvas");
         canvas.width = canvas.height = 1;
@@ -77,7 +78,7 @@ test("深浅主题的重要状态文字保持可读对比度", async ({ page, re
   }
 });
 
-test("总览、详情、证据与所有功能页面连接真实同源接口", async ({ page }) => {
+test("首页可用，旧前端 URL 与旧 API 均不再匹配", async ({ page, request }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.goto("/");
@@ -87,28 +88,31 @@ test("总览、详情、证据与所有功能页面连接真实同源接口", as
   ).toBeVisible();
   for (const path of [
     "/dht",
+    "/dht/0",
     "/discoveries",
+    "/discoveries/example",
     "/jobs",
     "/hashes",
+    `/hashes/${hash}`,
+    `/hashes/${hash}/attempts`,
     "/metadata",
     "/events",
   ]) {
     await page.goto(path);
-    await expect(page.locator("h1")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "页面不存在" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "返回流程总览" })).toBeVisible();
     await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
   }
-  await page.goto(`/hashes/${hash}`);
-  await expect(
-    page.getByRole("button", { name: /^generation 2/ }).first(),
-  ).toBeAttached();
-  const trigger = page.getByRole("button", { name: /查看 #/ }).first();
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-  await expect(page.getByRole("heading", { name: "事件证据" })).toBeVisible();
-  await page.getByRole("button", { name: "关闭", exact: true }).click();
-  await expect(trigger).toBeFocused();
-  await page.goto("/dht/0");
-  await expect(page.getByText("127.0.0.1:6881").first()).toBeVisible();
+  for (const path of [
+    "/api/v1/dht/nodes",
+    "/api/v1/discoveries",
+    "/api/v1/hashes",
+    "/api/v1/jobs",
+    "/api/v1/metadata",
+    "/api/v1/events",
+  ]) {
+    expect((await request.get(`http://127.0.0.1:4311${path}`)).status()).toBe(404);
+  }
   expect(errors).toEqual([]);
 });
 
@@ -147,7 +151,7 @@ test("冻结、断线续传、运行 reset 和容量 reset", async ({ page, requ
     .toBe(1);
 });
 
-test("首页七泳道渲染、泳道过滤结果分布与重试区下钻", async ({
+test("首页七泳道渲染与结果分布过滤", async ({
   page,
   request,
 }) => {
@@ -167,7 +171,7 @@ test("首页七泳道渲染、泳道过滤结果分布与重试区下钻", async
   await expect(success).toHaveText("50.0%");
   await expect(lanes.filter({ hasText: "提交" })).toContainText("1");
   const stream = page.locator("[data-slot='card']", {
-    has: page.getByText(/本页保留最近/),
+    has: page.getByText(/当前窗口保留最近/),
   });
   await expect(stream.getByText("主要失败原因")).toBeVisible();
   await expect(stream.locator("li", { hasText: "失败" })).toBeVisible();
@@ -179,9 +183,6 @@ test("首页七泳道渲染、泳道过滤结果分布与重试区下钻", async
   await expect(stream.getByText("窗口内无失败事件。")).toBeVisible();
   await stream.getByText(/已过滤：发现/).click();
   await expect(stream.locator("li", { hasText: "失败" })).toBeVisible();
-  await page.getByRole("link", { name: /重试区/ }).click();
-  await expect(page).toHaveURL(/\/jobs\?.*state=retry_wait/);
-  await expect(page.locator("h1")).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -193,7 +194,7 @@ test("窄屏、深浅主题、键盘和放大视图", async ({ page }) => {
   await selectTheme(page, "light");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "展开导航" }).click();
-  await page.getByRole("navigation").getByText("采集任务").click();
+  await page.getByRole("navigation").getByText("流程总览").click();
   await expect(page.locator("h1")).toBeVisible();
   await page.keyboard.press("Tab");
   expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe(
@@ -236,14 +237,14 @@ test("51,200 条事件的真实 SSE 有界负载", async ({ page, request }) => 
         { childList: true, subtree: true, characterData: true },
       ));
   });
-  await page.goto("/events?mode=live");
+  await page.goto("/");
   await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
   const started = Date.now();
   await request.get("http://127.0.0.1:4311/control/load");
-  await expect(page.getByText(/浏览器保留 5000 条/)).toBeVisible({
+  await expect(page.locator("[data-slot='results-chart']")).toBeVisible({
     timeout: 15000,
   });
-  expect(await page.locator("tbody tr").count()).toBeLessThanOrEqual(100);
+  expect(await page.locator("[data-slot='pipeline-particle']").count()).toBeLessThanOrEqual(500);
   const evidence = await page.evaluate(
     () => (window as unknown as { workload: unknown }).workload,
   );
@@ -261,34 +262,6 @@ test("51,200 条事件的真实 SSE 有界负载", async ({ page, request }) => 
       2,
     ),
   );
-});
-
-test("分页游标往返、generation 选择和键盘证据关闭", async ({ page }) => {
-  await page.goto("/hashes");
-  await expect(page.locator("tbody")).toContainText("aaaaaaaa");
-  await page.getByRole("button", { name: "下一页" }).click();
-  await expect(page).toHaveURL(/after=/);
-  await expect(page.locator("tbody")).toContainText("bbbbbbbb");
-  await page.getByRole("button", { name: "上一页" }).click();
-  await expect(page.locator("tbody")).toContainText("aaaaaaaa");
-  await page.locator("tbody a").first().click();
-  await page.getByRole("button", { name: /^generation 1/ }).click();
-  await expect(page).toHaveURL(/generation=1/);
-  await expect(
-    page.getByRole("button", { name: "peer-1", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: /^generation 2/ }).click();
-  await expect(
-    page.getByRole("button", { name: "peer-2", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await page
-    .getByRole("button", { name: /查看 #/ })
-    .first()
-    .click();
-  await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("heading", { name: "事件证据" }),
-  ).not.toBeVisible();
 });
 
 test("冻结保留粒子画面、主题色随变量自动生效，恢复延续寿命并处理运行切换", async ({ page, request }) => {
@@ -311,7 +284,7 @@ test("冻结保留粒子画面、主题色随变量自动生效，恢复延续�
   const frozen = await falling.boundingBox();
   await page.clock.runFor(2_000);
   expect(await falling.boundingBox()).toEqual(frozen);
-  await selectTheme(page, "dark");
+  await selectTheme(page, "dark", { advanceClock: true });
   expect(await fallingColor()).not.toBe(lightColor);
   await page.setViewportSize({ width: 1600, height: 1000 });
   const afterResize = await falling.boundingBox();
@@ -433,7 +406,7 @@ test("任务环图区分数据库不可用、完整零值和陈旧统计", async
   database = { available: true, stale: true, observed_at_ms: Date.now() - 60_000, value: { jobs: { ...jobs, pending: 3 } } };
   await page.reload();
   const chart = page.locator("[data-slot='card']").filter({ has: page.getByText("任务状态", { exact: true }) });
-  await expect(chart.getByRole("button", { name: /3/ })).toBeVisible();
+  await expect(chart).toContainText("3");
   await expect(chart).toContainText("陈旧");
   await expect(page.getByText("数据库中尚无采集任务。", { exact: true })).toHaveCount(0);
 });
@@ -446,7 +419,7 @@ test("总览洪峰下结果分布持续渲染，冻结不阻塞接收，恢复�
   try {
     // 结果汇总经 useDisplayed 冻结；description 的缓冲计数不经冻结，断言只覆盖图表区
     const chart = page
-      .locator("[data-slot='card']", { has: page.getByText(/本页保留最近/) })
+      .locator("[data-slot='card']", { has: page.getByText(/当前窗口保留最近/) })
       .locator("[data-slot='results-chart']");
     await expect(chart).toContainText("正常完成");
     await page.getByRole("button", { name: "冻结显示", exact: true }).click();

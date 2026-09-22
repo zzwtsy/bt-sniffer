@@ -198,7 +198,6 @@ impl Session {
         config: DhtDispatcherConfig,
         policy: AddressPolicy,
     ) -> Result<DhtHandle, StorageError> {
-        self.collection_store.inspection_policy = policy;
         let store = self.dht_store.clone();
         let address = transport
             .local_addr()

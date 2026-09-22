@@ -3,7 +3,7 @@
 use super::*;
 use crate::storage::{Storage, StorageConfig};
 use axum::{
-    body::{Body, to_bytes},
+    body::Body,
     http::{Request, StatusCode},
 };
 use futures_util::StreamExt;
@@ -36,64 +36,50 @@ async fn get(s: &Arc<State>, uri: &str) -> axum::response::Response {
         .await
         .unwrap()
 }
-async fn json_body(response: axum::response::Response) -> Value {
-    serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
-}
 #[tokio::test]
-async fn read_only_api_pages_and_input_errors() {
+async fn minimal_read_only_api_and_removed_routes() {
     let (_dir, storage, state) = fixture().await;
-    state
-        .store
-        .save_hashes(
-            &[
-                crate::info_hash::InfoHashV1([1; 20]),
-                crate::info_hash::InfoHashV1([2; 20]),
-            ],
-            10,
-        )
-        .await
-        .unwrap();
-    let response = get(&state, "/api/v1/hashes?limit=1").await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let first = json_body(response).await;
-    assert_eq!(first["items"].as_array().unwrap().len(), 1);
-    let second = json_body(
-        get(
-            &state,
-            &format!("/api/v1/hashes?after={}", first["next"].as_str().unwrap()),
-        )
-        .await,
-    )
-    .await;
+    assert_eq!(get(&state, "/api/v1/health").await.status(), StatusCode::OK);
     assert_eq!(
-        second["items"][0]["hash"],
-        crate::observation::hex(&[2; 20])
+        get(&state, "/api/v1/snapshot").await.status(),
+        StatusCode::OK
     );
-    assert_eq!(
-        get(&state, "/api/v1/hashes?limit=101").await.status(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        get(&state, "/api/v1/hashes/not-a-hash").await.status(),
-        StatusCode::BAD_REQUEST
-    );
-    let r = api::router(state.clone())
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/jobs")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r.status(), StatusCode::METHOD_NOT_ALLOWED);
-    let permit = state.database.clone().acquire_owned().await.unwrap();
-    assert_eq!(
-        get(&state, "/api/v1/jobs").await.status(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
-    drop(permit);
+
+    for path in [
+        "/api/v1/dht/nodes",
+        "/api/v1/dht/nodes/0/routing",
+        "/api/v1/discoveries",
+        "/api/v1/discoveries/example",
+        "/api/v1/hashes",
+        "/api/v1/hashes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/api/v1/hashes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/attempts",
+        "/api/v1/jobs",
+        "/api/v1/metadata",
+        "/api/v1/events",
+    ] {
+        // 速率桶是生产资源边界；单测逐次恢复突发额度，只验证路由匹配结果。
+        *state.rate.lock().unwrap() = (Instant::now(), 10.0);
+        assert_eq!(
+            get(&state, path).await.status(),
+            StatusCode::NOT_FOUND,
+            "{path}"
+        );
+    }
+
+    for path in ["/api/v1/health", "/api/v1/snapshot", "/api/v1/stream"] {
+        *state.rate.lock().unwrap() = (Instant::now(), 10.0);
+        let response = api::router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
+    }
     storage.shutdown().await.unwrap();
 }
 #[tokio::test(start_paused = true)]

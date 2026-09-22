@@ -5,7 +5,6 @@ import type {
   ResultsSummary,
   ThroughputPoint,
 } from "./model";
-import { useNavigate } from "@tanstack/react-router";
 import { Fragment, memo } from "react";
 import {
   Bar,
@@ -19,7 +18,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Chip, Empty } from "@/components/observation/common";
+import { Empty } from "@/components/observation/common";
 import {
   ChartContainer,
   ChartTooltip,
@@ -183,7 +182,7 @@ function ResultRow({ name, tone, value, total, max }: {
   );
 }
 
-/** 事件结果分布：先回答"有没有错"，再列出主要失败原因；明细在事件浏览页。 */
+/** 事件结果分布：先回答"有没有错"，再列出主要失败原因。 */
 export const ResultsChart = memo(({ data }: { data: ResultsSummary | undefined }) => {
   if (data === undefined)
     return <Empty>窗口内尚无匹配事件；连接初期、缓冲为空或过滤阶段无事件时不展示分布。</Empty>;
@@ -379,20 +378,14 @@ const stateConfig = Object.fromEntries(JOB_STATES.map(state => [
   state,
   { label: label(state), color: stateColors[state] },
 ]));
-/** 任务状态环图：数据库 30 秒统计；点击扇区下钻到对应状态的任务列表。 */
+/** 任务状态环图：数据库 30 秒统计；图例只用于解释当前快照。 */
 export const JobStatesChart = memo(({ data }: { data: Pick<JobStates, "states"> | undefined }) => {
-  const navigate = useNavigate();
   if (data === undefined)
     return <Empty>数据库统计尚不可用。</Empty>;
   const states = data.states.map(s => ({ ...s, value: s.count }));
   const total = states.reduce((sum, s) => sum + s.value, 0);
   if (total === 0)
     return <Empty>数据库中尚无采集任务。</Empty>;
-  const open = (state: (typeof JOB_STATES)[number]) =>
-    void navigate({
-      to: "/jobs",
-      search: { state },
-    });
   return (
     <>
       <ChartContainer
@@ -408,12 +401,6 @@ export const JobStatesChart = memo(({ data }: { data: Pick<JobStates, "states"> 
             innerRadius="55%"
             outerRadius="85%"
             isAnimationActive={false}
-            onClick={(entry) => {
-              const state = (entry as { state?: unknown }).state;
-              if (JOB_STATES.includes(state as (typeof JOB_STATES)[number]))
-                open(state as (typeof JOB_STATES)[number]);
-            }}
-            cursor="pointer"
           >
             {states.map(s => (
               <Cell key={s.state} fill={stateColors[s.state]} />
@@ -423,7 +410,7 @@ export const JobStatesChart = memo(({ data }: { data: Pick<JobStates, "states"> 
       </ChartContainer>
       <div className="flex flex-wrap gap-1.5">
         {states.map(s => (
-          <Chip key={s.state} onClick={() => open(s.state)}>
+          <span key={s.state} className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.75 text-[11px] text-card-foreground">
             <span
               aria-hidden="true"
               className="inline-block size-2 rounded-full"
@@ -432,7 +419,7 @@ export const JobStatesChart = memo(({ data }: { data: Pick<JobStates, "states"> 
             {label(s.state)}
             {" "}
             {count(s.count)}
-          </Chip>
+          </span>
         ))}
       </div>
     </>

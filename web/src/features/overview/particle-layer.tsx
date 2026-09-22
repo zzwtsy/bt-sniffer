@@ -89,7 +89,6 @@ interface ParticleNodeProps {
   falling: boolean;
   leaving: boolean;
   reducedMotion: boolean;
-  onActivate: (hash: string) => void;
 }
 
 const ParticleNode = memo(({
@@ -99,7 +98,6 @@ const ParticleNode = memo(({
   falling,
   leaving,
   reducedMotion,
-  onActivate,
 }: ParticleNodeProps) => {
   const motionRef = useRef<HTMLDivElement>(null);
   const previousRef = useRef<Point | undefined>(undefined);
@@ -176,17 +174,14 @@ const ParticleNode = memo(({
         data-slot="pipeline-particle-motion"
         style={{ opacity: target.opacity }}
       >
-        <button
-          type="button"
+        <span
           data-slot="pipeline-particle"
+          data-testid="pipeline-particle"
           data-hash={hash}
           aria-label={`${shortHash(hash)} · ${STAGES[stage].title}`}
-          className="absolute flex size-4.5 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => onActivate(hash)}
+          className="absolute flex size-4.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
           onMouseEnter={() => setTooltip(true)}
           onMouseLeave={() => setTooltip(false)}
-          onFocus={() => setTooltip(true)}
-          onBlur={() => setTooltip(false)}
         >
           <span
             className="size-1.75 rounded-full"
@@ -196,7 +191,7 @@ const ParticleNode = memo(({
                 : sourceColors[source],
             }}
           />
-        </button>
+        </span>
         {tooltip && (
           <div className="pointer-events-none absolute top-3 left-3 z-10 rounded-md border bg-popover px-2 py-1 text-[11px] whitespace-nowrap text-popover-foreground">
             <code>{shortHash(hash)}</code>
@@ -219,11 +214,9 @@ export interface ParticleView {
 export function ParticleLayer({
   particles,
   frozen,
-  onActivate,
 }: {
   particles: ParticleView[];
   frozen: boolean;
-  onActivate: (hash: string) => void;
 }) {
   const layerRef = useRef<HTMLDivElement>(null);
   const [reducedMotion, setReducedMotion] = useState(
@@ -277,7 +270,6 @@ export function ParticleLayer({
           key={particle.hash}
           {...particle}
           reducedMotion={reducedMotion}
-          onActivate={onActivate}
         />
       ))}
     </div>

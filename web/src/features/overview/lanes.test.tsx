@@ -1,18 +1,11 @@
-import type { ReactNode } from "react";
 import { fireEvent, render } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { eventSchema } from "@/lib/observation/contracts";
-import { shortHash } from "@/lib/observation/format";
 import { Pipeline } from "./lanes";
 
-const { navigate, display, monitor } = vi.hoisted(() => ({
-  navigate: vi.fn(),
+const { display, monitor } = vi.hoisted(() => ({
   display: { frozen: false },
   monitor: { revision: 1, epoch: 0 },
-}));
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => navigate,
-  Link: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
 vi.mock("@/lib/observation/context", () => ({
   useMonitor: () => monitor,
@@ -32,7 +25,6 @@ let reducedMotion = false;
 const mediaListeners = new Set<() => void>();
 
 beforeEach(() => {
-  navigate.mockReset();
   display.frozen = false;
   monitor.revision = 1;
   monitor.epoch = 0;
@@ -101,20 +93,14 @@ function pipeline(events: ReturnType<typeof event>[]) {
   );
 }
 
-it("粒子保持按钮语义，可聚焦显示详情并点击导航", () => {
+it("粒子保持可观察的视觉标识，但不再导航到 hash 详情", () => {
   const hash = "0123456789abcdef0123456789abcdef01234567";
   const screen = render(pipeline([event(1, "discovery", "hash_saved", "new", hash)]));
-  const particle = screen.getByRole("button", {
-    name: `${shortHash(hash)} · 发现`,
-  });
+  const particle = screen.getByTestId("pipeline-particle");
   expect(particle.dataset.hash).toBe(hash);
-  fireEvent.focus(particle);
+  fireEvent.mouseEnter(particle);
   expect(screen.getByText(/发现 · 主动采样/)).toBeVisible();
-  fireEvent.click(particle);
-  expect(navigate).toHaveBeenCalledWith({
-    to: "/hashes/$hash",
-    params: { hash },
-  });
+  expect(particle.tagName).toBe("SPAN");
 });
 
 it("普通移动只生成 transform/opacity keyframe，时长为 180ms", () => {
@@ -133,9 +119,7 @@ it("普通移动只生成 transform/opacity keyframe，时长为 180ms", () => {
 it("新失败粒子从正常位置坠落，使用危险色并延迟淡出", () => {
   const hash = "b".repeat(40);
   const screen = render(pipeline([event(1, "peer", "connect", "failed", hash)]));
-  const particle = screen.getByRole("button", {
-    name: `${shortHash(hash)} · 下载`,
-  });
+  const particle = screen.getByTestId("pipeline-particle");
   const motion = particle.parentElement!;
   expect(motion.style.opacity).toBe("0");
   const fall = animationCalls.find(call => call.options.duration === 600)!;
@@ -162,7 +146,7 @@ it("reduced motion 取消动画并直接展示目标状态", () => {
   reducedMotion = true;
   const screen = render(pipeline([event(1, "peer", "connect", "failed")]));
   expect(animationCalls).toHaveLength(0);
-  const particle = screen.getByRole("button", { name: /· 下载/ });
+  const particle = screen.getByTestId("pipeline-particle");
   expect(particle.parentElement).toHaveStyle({ opacity: "0" });
 });
 

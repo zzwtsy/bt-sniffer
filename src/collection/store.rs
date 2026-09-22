@@ -12,7 +12,6 @@ use std::sync::{
 /// 一个采集能力共享一份接纳状态；克隆不创建连接，也不重置计数。
 #[derive(Clone)]
 pub(crate) struct CollectionStore {
-    pub(crate) inspection_policy: crate::address::AddressPolicy,
     pub(crate) observer: crate::observation::Observer,
     #[cfg(test)]
     pub(super) test_barrier: Arc<
@@ -35,7 +34,6 @@ impl CollectionStore {
     pub(crate) fn new(database: StorageHandle) -> Self {
         Self {
             observer: Default::default(),
-            inspection_policy: crate::address::AddressPolicy::PublicOnly,
             #[cfg(test)]
             test_barrier: Arc::default(),
             database,

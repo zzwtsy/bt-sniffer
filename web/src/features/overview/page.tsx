@@ -79,7 +79,7 @@ export function OverviewPage() {
       <PageTitle
         eyebrow="PIPELINE"
         title="采集流水线"
-        description="发现 → 接纳 → 领取 → 查找 → 下载 → 校验 → 提交；泳道动画为窗口示意，完整记录见「事件浏览」。"
+        description="发现 → 接纳 → 领取 → 查找 → 下载 → 校验 → 提交；泳道动画仅为当前窗口示意。"
       />
       <div className="grid grid-cols-6 gap-4 max-[1200px]:grid-cols-3 max-[1200px]:gap-2.5 max-[760px]:grid-cols-2">
         <Metric
@@ -143,7 +143,7 @@ export function OverviewPage() {
               ? "采集未启用"
               : paused.length === 0
                 ? "容量、积压、存储均未触发暂停"
-                : "后端背压策略暂停中，背压事件见「事件浏览」页"
+                : "后端背压策略暂停中"
           }
           icon={<Gauge size={17} />}
         />
@@ -162,7 +162,7 @@ export function OverviewPage() {
       <div className="grid grid-cols-[minmax(0,3fr)_minmax(320px,2fr)] gap-5 max-[1200px]:grid-cols-1">
         <Panel
           title="七泳道流水线"
-          description="点击泳道过滤右侧事件，点击粒子查看 hash 详情。"
+          description="点击泳道过滤右侧结果分布；粒子仅为窗口内的视觉示意。"
           hint="读数口径：发现、接纳、校验、提交为事件窗口计数；领取为数据库 30 秒统计；查找、下载为实时快照在途数。"
           className="min-w-0"
         >
@@ -176,7 +176,7 @@ export function OverviewPage() {
         </Panel>
         <Panel
           title="事件结果分布"
-          description={`本页保留最近 ${count(monitor.events)} 条事件（已丢弃 ${count(monitor.evicted)} 条）按结果归类；明细见「事件浏览」。`}
+          description={`当前窗口保留最近 ${count(monitor.events)} 条事件（已丢弃 ${count(monitor.evicted)} 条），按结果归类。`}
           className="min-w-0"
           action={stageFilter !== null && (
             <Chip selected onClick={() => setStageFilter(null)}>
@@ -218,7 +218,7 @@ export function OverviewPage() {
         </Panel>
         <Panel
           title="任务状态"
-          description="数据库 30 秒统计；点击扇区或图例查看对应状态的任务列表。"
+          description="数据库 30 秒统计；图例展示当前各状态数量。"
           className="min-w-0"
         >
           <div className="mb-2 flex flex-wrap items-center gap-2.5">

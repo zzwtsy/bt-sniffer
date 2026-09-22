@@ -5,7 +5,6 @@ import { expect, it, vi } from "vitest";
 import { DurationsChart, FunnelChart, JobStatesChart, ResultsChart } from "./charts";
 
 const { container } = vi.hoisted(() => ({ container: vi.fn() }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("@/components/ui/chart", () => ({
   ChartContainer: ({ children }: { children: ReactNode }) => {
     container();

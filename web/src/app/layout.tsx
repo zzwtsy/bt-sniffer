@@ -2,16 +2,10 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
   Activity,
-  Boxes,
-  Database,
-  Fingerprint,
-  Globe2,
-  ListTree,
   Menu,
   Network,
   Pause,
   Play,
-  Radio,
   RefreshCw,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -25,12 +19,6 @@ import { time } from "@/lib/observation/format";
 
 const navigation = [
   { to: "/", title: "流程总览", icon: Activity },
-  { to: "/dht", title: "DHT 网络", icon: Globe2 },
-  { to: "/discoveries", title: "发现记录", icon: Radio },
-  { to: "/jobs", title: "采集任务", icon: Boxes },
-  { to: "/hashes", title: "Hash 索引", icon: Fingerprint },
-  { to: "/metadata", title: "Metadata", icon: Database },
-  { to: "/events", title: "事件浏览", icon: ListTree },
 ];
 export function Layout() {
   const monitor = useMonitor();

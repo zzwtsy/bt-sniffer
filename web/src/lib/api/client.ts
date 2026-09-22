@@ -234,13 +234,3 @@ export function retry(failures: number, error: Error): boolean {
     && [0, 429, 503, 504].includes(error.status)
   );
 }
-export function queryString(
-  values: Record<string, string | number | undefined>,
-): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined && value !== "")
-      params.set(key, String(value));
-  }
-  return (params.size !== 0) ? `?${params}` : "";
-}

@@ -2,10 +2,7 @@
 mod api;
 mod tests;
 use crate::{
-    collection::{
-        inspection::{Query, ReadError},
-        store::CollectionStore,
-    },
+    collection::{inspection::ReadError, store::CollectionStore},
     dht::dispatcher::DhtHandle,
     observation::{Kind, Observer, wall_ms},
 };
@@ -143,7 +140,7 @@ impl Drop for Monitor {
     }
 }
 impl State {
-    async fn query(&self, query: Query) -> Result<Value, ReadError> {
+    async fn stats(&self) -> Result<Value, ReadError> {
         let permit = self
             .database
             .clone()
@@ -151,14 +148,11 @@ impl State {
             .map_err(|_| ReadError::Busy)?;
         let cancel = self.stop.child_token();
         let _guard = cancel.clone().drop_guard();
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            self.store.inspect(query, permit, cancel),
-        )
-        .await
-        .map_err(|_| ReadError::Cancelled)?
+        tokio::time::timeout(Duration::from_secs(2), self.store.inspect(permit, cancel))
+            .await
+            .map_err(|_| ReadError::Cancelled)?
     }
-    /// 概览不复制路由联系人；明细只通过分页接口读取。
+    /// 概览不复制路由联系人；首页只读取缓存中的摘要统计。
     fn cached_summary(&self) -> Value {
         let mut cache = self.cache.lock().expect("监控缓存锁").clone();
         if let Some(nodes) = cache["nodes"].as_array_mut() {
@@ -230,7 +224,7 @@ async fn refresh(state: Arc<State>) {
                     state.cache.lock().expect("监控缓存锁")["database"] = json!({"available":true,"stale":false,"observed_at_ms":database["observed_at_ms"],"value":database["value"]});
                     return;
                 }
-                let result = state.query(Query::Stats).await;
+                let result = state.stats().await;
                 let mut cache = state.cache.lock().expect("监控缓存锁");
                 match result {
                     Ok(value) => {

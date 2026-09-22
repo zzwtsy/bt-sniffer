@@ -69,31 +69,6 @@ const node = {
   sampling: { running: false },
   rpc: { pending: [], queued: [] },
 };
-const job = {
-  hash,
-  state: "succeeded",
-  generation: 2,
-  remote_failures: 1,
-  due_at_ms: 1000,
-  updated_at_ms: 2000,
-  error: null,
-};
-const metadata = {
-  hash,
-  bytes: 32768,
-  fetched_at_ms: 2000,
-  verification: "validated_before_commit",
-  content_rechecked: false,
-};
-const fact = {
-  hash,
-  first_seen_ms: 1000,
-  last_seen_ms: 2000,
-  job,
-  metadata,
-  peer_hints: [],
-  original_source: null,
-};
 function snapshot() {
   if (Date.now() - databaseObservedAt >= 30_000)
     databaseObservedAt = Date.now();
@@ -200,7 +175,6 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(value));
   };
-  const page = items => ({ items, next: null });
   if (url.pathname.startsWith("/control/")) {
     if (url.pathname === "/control/replay") {
       replay(url.searchParams.get("count") === "100" ? 100 : 20);
@@ -312,91 +286,6 @@ const server = createServer(async (req, res) => {
     return json({ phase: "running" });
   if (url.pathname === "/api/v1/snapshot")
     return json(snapshot());
-  if (url.pathname === "/api/v1/hashes") {
-    return json({
-      items: [
-        {
-          hash: url.searchParams.has("after") ? "b".repeat(40) : hash,
-          first_seen_ms: 1000,
-          last_seen_ms: 2000,
-        },
-      ],
-      next: url.searchParams.has("after") ? null : hash,
-    });
-  }
-  if (url.pathname === `/api/v1/hashes/${hash}`)
-    return json(fact);
-  if (url.pathname.endsWith("/attempts")) {
-    return json({
-      ...page(
-        [1, 2].map(generation => ({
-          generation,
-          claim: { attempt_kind: "repeat", failed_attempts_before: 1 },
-          peers: [{ peer_attempt_id: `peer-${generation}` }],
-          last_result: generation === 2 ? "applied" : "failed",
-        })),
-      ),
-      window: window(),
-      completeness: "partial",
-    });
-  }
-  if (url.pathname === "/api/v1/jobs")
-    return json(page([job]));
-  if (url.pathname === "/api/v1/metadata")
-    return json(page([metadata]));
-  if (url.pathname === "/api/v1/discoveries") {
-    return json({
-      ...page([
-        {
-          id: "batch-1",
-          source: "sample",
-          first_sequence: "1",
-          last_sequence: "6",
-          first_retained_at_ms: 1000,
-          last_retained_at_ms: 2000,
-          last_step: "save",
-          last_result: "applied",
-          completeness: "complete",
-        },
-      ]),
-      window: window(),
-    });
-  }
-  if (url.pathname === "/api/v1/dht/nodes")
-    return json([node]);
-  if (url.pathname.endsWith("/routing")) {
-    return json({
-      ...page([
-        {
-          node_id: node.node_id,
-          address: node.address,
-          status: "good",
-          last_response_age_ms: 100,
-        },
-      ]),
-      observed_at_ms: Date.now(),
-      buckets: [{ id: "0", count: 1, capacity: 8 }],
-    });
-  }
-  if (
-    url.pathname === "/api/v1/events"
-    || url.pathname.startsWith("/api/v1/discoveries/")
-  ) {
-    const selected = events
-      .filter(
-        e =>
-          BigInt(e.sequence) > BigInt(url.searchParams.get("after") || "0")
-          && (!url.searchParams.get("kind")
-            || e.kind === url.searchParams.get("kind")),
-      )
-      .slice(0, Number(url.searchParams.get("limit") || 50));
-    return json({
-      events: selected,
-      next: selected.at(-1)?.sequence ?? String(latest),
-      window: window(),
-      completeness: "complete",
-    });
-  }
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(
     JSON.stringify({ error: { code: "not_found", message: "记录不存在" } }),

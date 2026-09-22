@@ -1,10 +1,8 @@
 import { createRootRoute, Link } from "@tanstack/react-router";
 import { Layout } from "@/app/layout";
-import { searchSchema } from "@/lib/api/search";
 
 export const Route = createRootRoute({
   component: Layout,
-  validateSearch: input => searchSchema.parse(input),
   notFoundComponent: () => (
     <div className="empty">
       <h1>页面不存在</h1>

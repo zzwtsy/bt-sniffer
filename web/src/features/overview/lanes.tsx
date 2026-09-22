@@ -1,7 +1,6 @@
 import type { ObservationEvent, Snapshot } from "@/lib/observation/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import { cn } from "cn";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useDisplay, useMonitor } from "@/lib/observation/context";
 import { number, record, source } from "@/lib/observation/contracts";
 import { count } from "@/lib/observation/format";
@@ -133,7 +132,6 @@ export function Pipeline({
 }) {
   const monitor = useMonitor();
   const display = useDisplay();
-  const navigate = useNavigate();
   const [clock] = useState(() => new AnimationClock());
   const [pool] = useState(() => new ParticlePool(() => clock.time));
   const consumedRef = useRef("0");
@@ -185,13 +183,6 @@ export function Pipeline({
       ? particles.sort((a, b) => b.changedAt - a.changedAt).slice(0, RENDER_LIMIT)
       : particles;
   }, [pool, version]);
-  const activateParticle = useCallback((hash: string) => {
-    void navigate({
-      to: "/hashes/$hash",
-      params: { hash },
-    });
-  }, [navigate]);
-
   return (
     <div>
       <div className="overflow-x-auto">
@@ -233,7 +224,6 @@ export function Pipeline({
         <ParticleLayer
           particles={visible}
           frozen={display.frozen}
-          onActivate={activateParticle}
         />
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
