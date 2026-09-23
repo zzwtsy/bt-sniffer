@@ -17,6 +17,7 @@ src/
 ├── dht/                    DHT 协议与节点状态
 │   ├── dispatcher/         单节点状态与事件循环
 │   │   ├── runtime/        dispatcher 状态、事件循环、命令与出站查询接线
+│   │   ├── response/       出站响应匹配、方法校验、结果结算与路由后续动作
 │   │   ├── peer_queries/   get_peers 与 announce 请求处理
 │   │   ├── sampler/        主动采样协议、调度、结果、dispatcher 接线及 durable 冷却预约
 │   │   └── sampling/       采样查询与结果处理
