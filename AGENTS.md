@@ -16,6 +16,7 @@
 | Rust 实现或审查 | [Rust 主 skill](.agents/skills/rust-readable-apps/SKILL.md) → 受影响专题、调用者与测试 |
 | 异步、取消或关闭 | Rust 主 skill → [异步专项](.agents/skills/rust-async-patterns/SKILL.md) → [生命周期](docs/architecture/lifecycle.md)与相关专题 |
 | 日志或消费者修改 | [日志专项](.agents/skills/bt-sniffer-logging/SKILL.md) → [日志机制](docs/domains/logging.md)，涉及字段再读[事件参考](docs/domains/log-events.md) |
+| 前端实现或审查 | [前端说明](web/README.md) → [shadcn 专项](.agents/skills/shadcn/SKILL.md) → 页面切片、公共契约与测试 |
 | 文档修改 | [docs/AGENTS](docs/AGENTS.md) → 文档目录设计与写作规则 → 对应源码 |
 | Python、检查工具或 CI | [开发流程](docs/development/workflow.md)、[验证指南](docs/development/validation.md) → 脚本调用者和离线测试 |
 | 运行或排障 | [运行](docs/operations/running.md)或[诊断](docs/operations/diagnostics.md) → 必要业务定义 |
