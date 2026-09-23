@@ -32,3 +32,22 @@ governor = { version = "0.10", default-features = false, features = ["std"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+[workspace.lints.rust]
+# unsafe fn 内的危险操作仍须显式包在 unsafe 块中
+unsafe_op_in_unsafe_fn = "deny"
+
+# 不允许无意忽略 Result 等 #[must_use] 返回值
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# 避免提交调试代码和未完成的实现
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+# unsafe 块和 unsafe impl 需要解释安全性的注释
+undocumented_unsafe_blocks = "warn"
+
+# 生产代码中的 unwrap 需要重新审视
+unwrap_used = "warn"

@@ -1,0 +1,3 @@
+# 测试函数和 #[cfg(test)] 代码允许使用 unwrap
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
