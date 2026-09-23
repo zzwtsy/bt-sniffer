@@ -10,6 +10,7 @@ import { detailOptions } from "@/lib/api/torrents";
 import { CopyMagnet } from "./copy-magnet";
 import { FileTree } from "./file-tree";
 import { bytes, fetchedAt } from "./format";
+import { PreviewImages } from "./preview-images";
 
 export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string; from?: string }) {
   const detail = useQuery(detailOptions(hash));
@@ -60,6 +61,9 @@ export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string;
                   </div>
                 )}
             {(detail.data.encoding_lossy || detail.data.name_truncated) && <Badge variant="outline" className="mt-4">{detail.data.encoding_lossy ? "文本含有损显示" : "名称已截断"}</Badge>}
+          </Panel>
+          <Panel title="预览图" description="截图来自 whatslink.info 第三方公开索引，点击加载后才发起查询。">
+            <PreviewImages hash={hash} />
           </Panel>
           {detail.data.parse_status === "parsed" && (
             <Panel title="文件清单" description="路径仅作为安全文本展示，不解释为本地文件系统路径。">

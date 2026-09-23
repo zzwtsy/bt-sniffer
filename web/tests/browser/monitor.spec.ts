@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { Buffer } from "node:buffer";
 import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
@@ -233,6 +234,57 @@ test("超大文件清单顺序拉取并在 5000 条截断", async ({ page }) => 
   await expect(tree.getByText("仅展示前 5000 个文件")).toBeVisible({ timeout: 60_000 });
   await expect(tree.getByRole("button", { name: "group" })).toBeVisible();
   await expect(tree.getByText("已加载", { exact: false })).toHaveCount(0);
+});
+
+test("详情预览图手动加载、未收录空态与错误重试", async ({ page }) => {
+  let mode: "ok" | "null" | "error" = "ok";
+  let apiHits = 0;
+  const pixel = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.route("https://whatslink.info/api/v1/link**", async (route) => {
+    apiHits++;
+    const body = mode === "ok"
+      ? { error: "", screenshots: [{ screenshot: "https://img.example/1.jpg" }, { screenshot: "https://img.example/2.jpg" }] }
+      : { error: mode === "error" ? "rate limited" : "", screenshots: null };
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
+  });
+  await page.route("https://img.example/**", async route =>
+    route.fulfill({ contentType: "image/png", body: pixel }));
+
+  await page.goto(`/torrents/${hash}`);
+  const preview = page.locator("[data-slot='preview-images']");
+  await expect(preview.getByRole("button", { name: "加载预览图" })).toBeVisible();
+  expect(apiHits).toBe(0);
+
+  await preview.getByRole("button", { name: "加载预览图" }).click();
+  const thumbs = preview.getByRole("button", { name: /预览截图 \d/ });
+  await expect(thumbs).toHaveCount(2);
+  // 缩略图 img 的 alt 为空（按钮自带标签），不在可访问树中，用标签选择器确认加载成功
+  await expect(preview.locator("img")).toHaveCount(2);
+
+  await thumbs.first().click();
+  const dialog = page.locator("[data-slot='dialog-content']");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("1 / 2")).toBeVisible();
+  await dialog.getByRole("button", { name: "下一张" }).click();
+  await expect(dialog.getByText("2 / 2")).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  mode = "null";
+  await page.reload();
+  await preview.getByRole("button", { name: "加载预览图" }).click();
+  await expect(preview.getByText("whatslink.info 未收录该种子的预览截图")).toBeVisible();
+
+  mode = "error";
+  await page.reload();
+  await preview.getByRole("button", { name: "加载预览图" }).click();
+  await expect(preview.locator("[data-slot='alert']")).toContainText("rate limited");
+  mode = "ok";
+  await preview.getByRole("button", { name: "重试" }).click();
+  await expect(thumbs).toHaveCount(2);
 });
 
 test("冻结、断线续传、运行 reset 和容量 reset", async ({ page, request }) => {
