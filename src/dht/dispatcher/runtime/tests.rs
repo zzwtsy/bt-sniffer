@@ -1,10 +1,16 @@
 //! 暂停时间后逐轮驱动真实事件循环，直接检查物理清理而不只是查询过滤。
+use super::super::api::{Command, DhtDispatcherConfig, DhtHandle, QueryError, RemoteNode};
 use super::*;
 use crate::dht::dispatcher::MaintenanceConfig;
+use crate::dht::krpc::{NodeId, QueryMethod};
 use crate::dht::peer_store::PeerAddressPolicy;
 use crate::dht::peer_store::PeerStoreConfig;
+use crate::dht::routing::{AddressFamily, RoutingTable};
+use crate::dht::transaction::TransactionManager;
+use crate::dht::udp::UdpTransport;
 use crate::info_hash::InfoHashV1;
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
+use tokio::sync::oneshot;
 
 /// 维护关闭时仍会分批清理超过 256 条的到期记录；清空后不再产生过期唤醒。
 #[tokio::test(start_paused = true)]

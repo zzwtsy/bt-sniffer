@@ -16,7 +16,7 @@ src/
 │   └── sockets.rs          地址族与 socket 绑定策略
 ├── dht/                    DHT 协议与节点状态
 │   ├── dispatcher/         单节点状态与事件循环
-│   │   ├── runtime/        接收、命令、计时器和任务推进
+│   │   ├── runtime/        dispatcher 状态、事件循环、命令与出站查询接线
 │   │   ├── peer_queries/   get_peers 与 announce 请求处理
 │   │   ├── sampler/        主动采样协议、调度、结果、dispatcher 接线及 durable 冷却预约
 │   │   └── sampling/       采样查询与结果处理
