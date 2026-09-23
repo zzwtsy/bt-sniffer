@@ -50,7 +50,7 @@ src/
 │   ├── records.rs         持久化记录类型
 │   ├── failure.rs         失败分类
 │   └── tests/             离线链路、恢复、边界和 ignored 验收
-├── observation/            强类型事件、关联上下文、有界历史和当前状态
+├── observation/            关联上下文、有界历史、Observer 状态与 Span 生命周期
 ├── monitor/                只读 HTTP/SSE、刷新和连接所有权
 ├── storage/                SQLite 线程、命令预算、schema 和地址表示
 ├── address.rs              网络地址策略
