@@ -255,12 +255,19 @@ class DatabaseTests(unittest.TestCase):
         (root / "state").mkdir()
         path = root / "state/state.sqlite3"
         with closing(sqlite3.connect(path)) as connection, connection:
-            connection.executescript('''PRAGMA user_version=2;
+            connection.executescript('''PRAGMA user_version=3;
                 CREATE TABLE infohashes(hash BLOB PRIMARY KEY, first_seen INTEGER);
                 CREATE TABLE fetch_jobs(hash BLOB, generation INTEGER, state TEXT, due_at INTEGER);
                 CREATE INDEX fetch_claim_due ON fetch_jobs(due_at);
-                CREATE TABLE metadata(hash BLOB, info BLOB);''')
-            connection.execute("INSERT INTO metadata VALUES(?,?)", (hashlib.sha1(b"de").digest(), b"de"))
+                CREATE TABLE metadata(hash BLOB, info BLOB);
+                CREATE TABLE torrent_catalog(id INTEGER PRIMARY KEY, hash BLOB UNIQUE, search_text TEXT);
+                CREATE VIRTUAL TABLE torrent_catalog_fts USING fts5(search_text, tokenize='trigram');
+                CREATE TABLE torrent_catalog_state(singleton INTEGER PRIMARY KEY, indexed INTEGER, total INTEGER);''')
+            hash_value = hashlib.sha1(b"de").digest()
+            connection.execute("INSERT INTO metadata VALUES(?,?)", (hash_value, b"de"))
+            connection.execute("INSERT INTO torrent_catalog VALUES(1,?,'fixture')", (hash_value,))
+            connection.execute("INSERT INTO torrent_catalog_fts(rowid,search_text) VALUES(1,'fixture')")
+            connection.execute("INSERT INTO torrent_catalog_state VALUES(1,1,1)")
         e.write_json(root / "observation.json", {"status": "observed", "exit_code": 0, "ended_at": e.utc()})
         return path
 

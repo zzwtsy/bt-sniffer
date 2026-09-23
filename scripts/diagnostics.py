@@ -281,15 +281,29 @@ def verify(run):
         for expected, info in connection.execute("SELECT hash, info FROM metadata"):
             count += 1
             failures += hashlib.sha1(info).digest() != expected
+        catalog_count = connection.execute("SELECT count(*) FROM torrent_catalog").fetchone()[0]
+        fts_count = connection.execute("SELECT count(*) FROM torrent_catalog_fts").fetchone()[0]
+        indexed, catalog_total = connection.execute(
+            "SELECT indexed,total FROM torrent_catalog_state WHERE singleton=1").fetchone()
+        missing_catalog = connection.execute('''
+            SELECT count(*) FROM metadata m
+            WHERE NOT EXISTS(SELECT 1 FROM torrent_catalog c WHERE c.hash=m.hash)
+        ''').fetchone()[0]
     finally:
         connection.close()
+    catalog_consistent = (catalog_total == count and indexed == catalog_count == fts_count
+                          and missing_catalog == count - catalog_count)
     passed = (observation.get("status") == "observed" and integrity == ["ok"]
-              and not foreign_keys and not failures and states.get("running", 0) == 0 and schema == 2)
+              and not foreign_keys and not failures and states.get("running", 0) == 0
+              and schema == 3 and catalog_consistent and indexed == catalog_total)
     result = {"report_version": 2, "status": "passed" if passed else "failed",
               "scope": "automated_shutdown_and_database_checks", "manual_review_required": True,
               "checked_at": utc(), "snapshot_time_ms": now_ms, "integrity_check": integrity,
               "schema_version": schema, "foreign_key_violation_count": len(foreign_keys),
               "states": states, "metadata_count": count, "sha1_failure_count": failures,
+              "catalog": {"count": catalog_count, "fts_count": fts_count,
+                          "indexed": indexed, "total": catalog_total,
+                          "missing": missing_catalog, "consistent": catalog_consistent},
               "first_attempt_backlog": dict(zip(["waiting", "older_than_30m", "oldest_discovery_age_ms", "oldest_due_wait_ms", "not_due"], backlog))}
     write_json(run / "database-verification.json", result)
     return result

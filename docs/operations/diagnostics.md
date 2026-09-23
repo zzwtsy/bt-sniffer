@@ -34,7 +34,7 @@ python3 scripts/diagnostics.py verify RUN
 
 observe 校验产物并独占一次运行目录，启用双栈随机监听端口、sample、fetch 与并发 4，固定日志过滤；首次有效采样后观察 35 分钟。它写 state、logs、command.json、stdout.log、observation.json 并产生公网 UDP/TCP 流量。Ctrl-C 或 SIGTERM 请求收尾；若 40 秒后仍未确认退出，记录 still_running_pid 留待人工处理，不宣称正常结束，不强杀产品后继续复核。
 
-verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema 版本、running 为 0、metadata 的 SHA1 和积压，输出 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
+verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema v3、running 为 0、metadata 的 SHA1、metadata/catalog/FTS/索引状态计数一致且回填完成，以及任务积压，输出 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
 
 ## Rust 验收报告
 
