@@ -26,7 +26,8 @@ const catalogItem = z.object({
 
 const catalogPage = z.object({
   items: z.array(catalogItem),
-  next: z.string().nullable(),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().min(1),
   index: indexState,
 });
 
@@ -63,10 +64,13 @@ function queryString(values: Record<string, string | number | undefined>) {
   return encoded === "" ? "" : `?${encoded}`;
 }
 
-export function catalogOptions(q?: string, after?: string) {
-  const path = `/torrents${queryString({ q, after, limit: 50 })}`;
+/** 目录每页条数：前端按 total 换算总页数，必须与请求 limit 一致。 */
+export const CATALOG_PAGE_SIZE = 50;
+
+export function catalogOptions(q?: string, page = 1) {
+  const path = `/torrents${queryString({ q, page, limit: CATALOG_PAGE_SIZE })}`;
   return queryOptions({
-    queryKey: ["torrent-catalog", q ?? "", after ?? ""],
+    queryKey: ["torrent-catalog", q ?? "", page],
     queryFn: async ({ signal }) => read(path, catalogPage, signal, true),
   });
 }

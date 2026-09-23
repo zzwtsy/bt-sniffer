@@ -160,12 +160,15 @@ async fn torrent_catalog_api_lists_searches_and_reads_files() {
     assert_eq!(list.status(), StatusCode::OK);
     let list = body_json(list).await;
     assert_eq!(list["items"][0]["hash"], hash);
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["page"], 1);
     assert_eq!(list["index"]["complete"], true);
     assert_eq!(list["index"]["search_complete"], true);
 
     let search = body_json(get(&state, "/api/v1/torrents?q=AMPLE").await).await;
     assert_eq!(search["items"][0]["name"], "example-file");
     assert!(search["items"][0]["match_excerpt"].is_string());
+    assert_eq!(search["total"], 1);
 
     let detail = body_json(get(&state, &format!("/api/v1/torrents/{hash}")).await).await;
     assert_eq!(detail["total_length"], "42");
@@ -178,6 +181,15 @@ async fn torrent_catalog_api_lists_searches_and_reads_files() {
 
     assert_eq!(
         get(&state, "/api/v1/torrents?q=ab").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        get(&state, "/api/v1/torrents?page=0").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    // 旧游标参数不再是契约的一部分。
+    assert_eq!(
+        get(&state, "/api/v1/torrents?after=page2").await.status(),
         StatusCode::BAD_REQUEST
     );
     assert_eq!(

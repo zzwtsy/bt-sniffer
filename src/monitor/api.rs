@@ -92,7 +92,7 @@ fn parse_hash(value: &str) -> Result<InfoHashV1, ReadError> {
 #[serde(deny_unknown_fields)]
 struct TorrentsQuery {
     q: Option<String>,
-    after: Option<String>,
+    page: Option<usize>,
     limit: Option<usize>,
 }
 
@@ -110,7 +110,7 @@ async fn torrents(
         .store
         .catalog_page(
             query.q,
-            query.after,
+            query.page.unwrap_or(1),
             query.limit.unwrap_or(50),
             permit,
             cancel,

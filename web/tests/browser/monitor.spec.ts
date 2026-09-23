@@ -117,6 +117,51 @@ test("首页可用，旧前端 URL 与旧 API 均不再匹配", async ({ page, r
   expect(errors).toEqual([]);
 });
 
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`目录与文件树滚动受限，表头吸顶 ${viewport.width}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/torrents");
+    await expect(page.getByRole("link", { name: "Fixture Torrent", exact: true })).toBeVisible();
+    const container = page.locator("[data-slot='table-container']");
+    const header = page.locator("thead");
+    const pagination = page.getByRole("navigation", { name: "pagination" });
+    const dimensions = await container.evaluate(element => ({ height: element.clientHeight, total: element.scrollHeight }));
+    expect(dimensions.total).toBeGreaterThan(dimensions.height);
+    const headerBefore = (await header.boundingBox())!;
+    const paginationBefore = (await pagination.boundingBox())!;
+    const footer = (await page.locator("footer").boundingBox())!;
+    expect(paginationBefore.y + paginationBefore.height).toBeLessThanOrEqual(viewport.height);
+    expect(footer.y + footer.height).toBeLessThanOrEqual(viewport.height + 1);
+    await container.evaluate((element) => {
+      element.scrollTop = 200;
+    });
+    await expect.poll(async () => container.evaluate(element => element.scrollTop)).toBe(200);
+    expect(Math.abs((await header.boundingBox())!.y - headerBefore.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs((await pagination.boundingBox())!.y - paginationBefore.y)).toBeLessThanOrEqual(1);
+    if (viewport.width === 390) {
+      await container.evaluate((element) => {
+        element.scrollLeft = 150;
+      });
+      expect(await container.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(viewport.height + 1);
+
+    await page.goto(`/torrents/${hash}`);
+    const tree = page.locator("[data-slot='file-tree']");
+    await expect(tree.getByText("movie.mkv", { exact: true })).toBeVisible();
+    const files = tree.locator(":scope > .overflow-y-auto");
+    await expect.poll(async () => files.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(200);
+    await files.evaluate((element) => {
+      element.scrollTop = 200;
+    });
+    await expect.poll(async () => files.evaluate(element => element.scrollTop)).toBe(200);
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(viewport.height + 1);
+    await tree.scrollIntoViewIfNeeded();
+    await expect(tree).toBeInViewport();
+  });
+}
+
 test("种子目录支持即时搜索、索引提示、hash 详情和窄屏文件树", async ({ page }) => {
   await page.goto("/torrents");
   await expect(page.getByRole("heading", { name: "种子查询" })).toBeVisible();
@@ -162,23 +207,23 @@ test("种子目录无效查询终态、SPA 翻页与详情上下文往返", asyn
   await page.evaluate(() => {
     (window as unknown as { __spaAlive: number }).__spaAlive = 1;
   });
-  await page.getByRole("link", { name: "下一页" }).click();
-  await expect(page).toHaveURL(/\/torrents\?after=page2/);
+  await page.getByRole("link", { name: "第 2 页" }).click();
+  await expect(page).toHaveURL(/\/torrents\?page=2/);
   await expect(page.getByRole("link", { name: "Fixture Archive" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Fixture Torrent" })).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __spaAlive?: number }).__spaAlive)).toBe(1);
 
   await input.fill("fixture");
   await expect(page).toHaveURL(/\/torrents\?q=fixture/);
-  await page.getByRole("link", { name: "下一页" }).click();
+  await page.getByRole("link", { name: "第 2 页" }).click();
   await expect(page).toHaveURL(/q=fixture/);
-  await expect(page).toHaveURL(/after=page2/);
+  await expect(page).toHaveURL(/page=2/);
   await expect(page.getByRole("link", { name: "Fixture Archive" })).toBeVisible();
 
   await page.getByRole("link", { name: "Fixture Archive" }).click();
   await expect(page).toHaveURL(new RegExp(`/torrents/${archiveHash}\\?`));
   await expect(page).toHaveURL(/q=fixture/);
-  await expect(page).toHaveURL(/from=page2/);
+  await expect(page).toHaveURL(/from=2/);
   await expect(page.getByRole("heading", { name: "Fixture Archive" })).toBeVisible();
   const tree = page.locator("[data-slot='file-tree']");
   await expect(tree.getByText("movie.mkv", { exact: true })).toBeVisible();
@@ -187,7 +232,7 @@ test("种子目录无效查询终态、SPA 翻页与详情上下文往返", asyn
   await page.getByRole("button", { name: "返回目录" }).click();
   await expect(page).toHaveURL(/\/torrents\?/);
   await expect(page).toHaveURL(/q=fixture/);
-  await expect(page).toHaveURL(/after=page2/);
+  await expect(page).toHaveURL(/page=2/);
   await expect(input).toHaveValue("fixture");
   await expect(page.getByRole("link", { name: "Fixture Archive" })).toBeVisible();
 });

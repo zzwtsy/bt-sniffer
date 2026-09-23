@@ -13,19 +13,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio_util::sync::CancellationToken;
 
-const RECENT_FIRST_PAGE_SQL: &str =
+const RECENT_PAGE_SQL: &str =
     "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
     c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,m.fetched_at,NULL
     FROM metadata AS m INDEXED BY metadata_fetched_at_hash
     JOIN torrent_catalog c ON c.hash=m.hash
-    ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?1";
-const RECENT_AFTER_PAGE_SQL: &str =
-    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
-    c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,m.fetched_at,NULL
-    FROM metadata AS m INDEXED BY metadata_fetched_at_hash
-    JOIN torrent_catalog c ON c.hash=m.hash
-    WHERE (m.fetched_at,m.hash)<(?1,?2)
-    ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?3";
+    ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?1 OFFSET ?2";
+// 外键保证目录行关联 metadata；直接计数避免每次读取首页都逐行联表。
+const RECENT_TOTAL_SQL: &str = "SELECT COUNT(*) FROM torrent_catalog";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct IndexState {
@@ -57,7 +52,10 @@ pub(crate) struct CatalogItem {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CatalogPage {
     items: Vec<CatalogItem>,
-    next: Option<String>,
+    /// 当前查询条件下的结果总条数，不是本页条数；页越界时 items 为空、total 不变。
+    total: i64,
+    /// 回显请求的 1 起始页码，便于客户端核对响应归属。
+    page: usize,
     index: IndexState,
 }
 
@@ -120,7 +118,7 @@ impl CollectionStore {
     pub(crate) async fn catalog_page(
         &self,
         query: Option<String>,
-        after: Option<String>,
+        page: usize,
         limit: usize,
         permit: OwnedSemaphorePermit,
         cancel: CancellationToken,
@@ -131,7 +129,7 @@ impl CollectionStore {
                 return Ok(Err(ReadError::Cancelled));
             }
             let _progress = Progress::install(connection, cancel)?;
-            Ok(read_catalog_page(connection, query, after, limit))
+            Ok(read_catalog_page(connection, query, page, limit))
         })
         .await
         .map_err(|_| ReadError::Unavailable)?
@@ -197,10 +195,10 @@ impl CollectionStore {
 fn read_catalog_page(
     connection: &Connection,
     query: Option<String>,
-    after: Option<String>,
+    page: usize,
     limit: usize,
 ) -> Result<CatalogPage, ReadError> {
-    if !(1..=100).contains(&limit) {
+    if !(1..=100).contains(&limit) || page == 0 {
         return Err(ReadError::Invalid);
     }
     let query = query.map(|q| q.trim().to_owned()).filter(|q| !q.is_empty());
@@ -210,86 +208,63 @@ fn read_catalog_page(
     {
         return Err(ReadError::Invalid);
     }
-    let cursor = after.map(|value| parse_cursor(&value)).transpose()?;
+    // 页码先在本类型内饱和再换算 i64，极端页码不会溢出，只是返回空页。
+    let offset = i64::try_from(page.saturating_sub(1).saturating_mul(limit)).unwrap_or(i64::MAX);
     let tx = connection.unchecked_transaction().map_err(sql_error)?;
-    let items = if let Some(query) = query {
+    let (items, total) = if let Some(query) = query {
         let literal = format!("\"{}\"", query.replace('"', "\"\""));
-        if let Some((fetched_at, hash)) = cursor.as_ref() {
-            let mut statement = tx
-                .prepare(
-                    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
-                            c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
-                            m.fetched_at,snippet(torrent_catalog_fts,0,'','', ' … ',24)
-                     FROM torrent_catalog_fts
-                     JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
-                     JOIN metadata m ON m.hash=c.hash
-                     WHERE torrent_catalog_fts MATCH ?1
-                       AND (m.fetched_at,m.hash)<(?2,?3)
-                     ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?4",
-                )
-                .map_err(sql_error)?;
-            statement
-                .query_map(
-                    params![literal, fetched_at, hash.as_slice(), (limit + 1) as i64],
-                    |row| catalog_item(row, true),
-                )
-                .map_err(sql_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error)?
-        } else {
-            let mut statement = tx
-                .prepare(
-                    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
-                            c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
-                            m.fetched_at,snippet(torrent_catalog_fts,0,'','', ' … ',24)
-                     FROM torrent_catalog_fts
-                     JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
-                     JOIN metadata m ON m.hash=c.hash
-                     WHERE torrent_catalog_fts MATCH ?1
-                     ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?2",
-                )
-                .map_err(sql_error)?;
-            statement
-                .query_map(params![literal, (limit + 1) as i64], |row| {
-                    catalog_item(row, true)
-                })
-                .map_err(sql_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error)?
-        }
+        let total = tx
+            .query_row(
+                "SELECT COUNT(*) FROM torrent_catalog_fts
+                 JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
+                 JOIN metadata m ON m.hash=c.hash
+                 WHERE torrent_catalog_fts MATCH ?1",
+                [&literal],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(sql_error)?;
+        let mut statement = tx
+            .prepare(
+                "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
+                        c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
+                        m.fetched_at,snippet(torrent_catalog_fts,0,'','', ' … ',24)
+                 FROM torrent_catalog_fts
+                 JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
+                 JOIN metadata m ON m.hash=c.hash
+                 WHERE torrent_catalog_fts MATCH ?1
+                 ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?2 OFFSET ?3",
+            )
+            .map_err(sql_error)?;
+        let items = statement
+            .query_map(params![literal, limit as i64, offset], |row| {
+                catalog_item(row, true)
+            })
+            .map_err(sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_error)?;
+        (items, total)
     } else {
-        if let Some((fetched_at, hash)) = cursor.as_ref() {
-            let mut statement = tx.prepare(RECENT_AFTER_PAGE_SQL).map_err(sql_error)?;
-            statement
-                .query_map(
-                    params![fetched_at, hash.as_slice(), (limit + 1) as i64],
-                    |row| catalog_item(row, false),
-                )
-                .map_err(sql_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error)?
-        } else {
-            let mut statement = tx.prepare(RECENT_FIRST_PAGE_SQL).map_err(sql_error)?;
-            statement
-                .query_map(params![(limit + 1) as i64], |row| catalog_item(row, false))
-                .map_err(sql_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error)?
-        }
-    };
-    let mut items = items;
-    let more = items.len() > limit;
-    items.truncate(limit);
-    let next = if more {
-        items.last().and_then(|item| {
-            parse_hash(&item.hash).map(|hash| encode_catalog_cursor(item.fetched_at_ms, hash))
-        })
-    } else {
-        None
+        let total = tx
+            .query_row(RECENT_TOTAL_SQL, [], |row| row.get::<_, i64>(0))
+            .map_err(sql_error)?;
+        let mut statement = tx.prepare(RECENT_PAGE_SQL).map_err(sql_error)?;
+        let items = statement
+            .query_map(params![limit as i64, offset], |row| {
+                catalog_item(row, false)
+            })
+            .map_err(sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_error)?;
+        (items, total)
     };
     let index = index_state(&tx)?;
     tx.commit().map_err(sql_error)?;
-    Ok(CatalogPage { items, next, index })
+    Ok(CatalogPage {
+        items,
+        total,
+        page,
+        index,
+    })
 }
 
 fn catalog_item(row: &rusqlite::Row<'_>, matched: bool) -> rusqlite::Result<CatalogItem> {
@@ -478,44 +453,12 @@ fn index_state(transaction: &Transaction<'_>) -> Result<IndexState, ReadError> {
     })
 }
 
-fn parse_cursor(value: &str) -> Result<(i64, [u8; 20]), ReadError> {
-    if value.len() != 56 {
-        return Err(ReadError::Invalid);
-    }
-    let mut at = [0; 8];
-    for (index, byte) in at.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-            .map_err(|_| ReadError::Invalid)?;
-    }
-    let at = i64::try_from(u64::from_be_bytes(at)).map_err(|_| ReadError::Invalid)?;
-    let hash = parse_hash(&value[16..]).ok_or(ReadError::Invalid)?;
-    Ok((at, hash))
-}
-
-fn encode_catalog_cursor(at: i64, hash: [u8; 20]) -> String {
-    let mut bytes = Vec::with_capacity(28);
-    bytes.extend_from_slice(&(at as u64).to_be_bytes());
-    bytes.extend_from_slice(&hash);
-    hex(&bytes)
-}
-
 fn parse_file_cursor(value: &str) -> Result<usize, ReadError> {
     if value.len() != 16 {
         return Err(ReadError::Invalid);
     }
     let offset = u64::from_str_radix(value, 16).map_err(|_| ReadError::Invalid)?;
     usize::try_from(offset).map_err(|_| ReadError::Invalid)
-}
-
-fn parse_hash(value: &str) -> Option<[u8; 20]> {
-    if value.len() != 40 {
-        return None;
-    }
-    let mut output = [0; 20];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
-    }
-    Some(output)
 }
 
 fn sql_error(error: rusqlite::Error) -> ReadError {
@@ -580,7 +523,79 @@ mod tests {
     }
 
     #[test]
-    fn recent_search_cursor_detail_and_files_share_validated_source() {
+    fn recent_total_counts_catalog_rows_independently_of_backfill_status() {
+        let mut connection = connection();
+        assert_eq!(
+            read_catalog_page(&connection, None, 1, 50).unwrap().total,
+            0
+        );
+        insert_without_catalog(&mut connection, InfoHashV1([9; 20]), b"de", 1);
+        assert_eq!(
+            read_catalog_page(&connection, None, 1, 50).unwrap().total,
+            0
+        );
+        let parsed = insert(&mut connection, MULTI, 2);
+        insert(&mut connection, b"de", 3);
+        let page = read_catalog_page(&connection, None, 1, 50).unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.index.total, 3);
+        assert_eq!(page.index.indexed, 2);
+        connection
+            .execute(
+                "UPDATE torrent_catalog SET search_incomplete=NULL WHERE hash=?1",
+                [parsed.0.as_slice()],
+            )
+            .unwrap();
+        let page = read_catalog_page(&connection, None, 1, 50).unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.index.indexed, 1);
+    }
+
+    #[test]
+    fn recent_total_does_not_execute_per_row_joins() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let mut connection = connection();
+        let tx = connection.transaction().unwrap();
+        for number in 0_u64..10_000 {
+            let mut hash = [0; 20];
+            hash[..8].copy_from_slice(&number.to_be_bytes());
+            tx.execute("INSERT INTO infohashes VALUES(?1,0,0)", [hash.as_slice()])
+                .unwrap();
+            tx.execute(
+                "INSERT INTO metadata VALUES(?1,X'6465',0)",
+                [hash.as_slice()],
+            )
+            .unwrap();
+            ensure_catalog(&tx, &hash, b"de").unwrap();
+        }
+        tx.commit().unwrap();
+        let callbacks = Arc::new(AtomicUsize::new(0));
+        let observed = callbacks.clone();
+        connection
+            .progress_handler(
+                1000,
+                Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
+            .unwrap();
+        let total: i64 = connection
+            .query_row(RECENT_TOTAL_SQL, [], |row| row.get(0))
+            .unwrap();
+        connection
+            .progress_handler(0, None::<fn() -> bool>)
+            .unwrap();
+        assert_eq!(total, 10_000);
+        // 不依赖机器耗时或精确 opcode 数；逐行 JOIN 会超过这个宽松上限。
+        assert!(callbacks.load(Ordering::Relaxed) < 5);
+    }
+
+    #[test]
+    fn recent_search_pages_detail_and_files_share_validated_source() {
         let mut connection = connection();
         let older = insert(
             &mut connection,
@@ -589,18 +604,21 @@ mod tests {
         );
         let newer = insert(&mut connection, MULTI, 20);
 
-        let first = read_catalog_page(&connection, None, None, 1).unwrap();
+        let first = read_catalog_page(&connection, None, 1, 1).unwrap();
         assert_eq!(first.items[0].hash, hex(&newer.0));
         assert_eq!(first.items[0].file_count, Some(2));
+        assert_eq!(first.total, 2);
+        assert_eq!(first.page, 1);
         assert_eq!(first.index.indexed, 2);
         assert!(first.index.complete);
-        let second = read_catalog_page(&connection, None, first.next, 1).unwrap();
+        let second = read_catalog_page(&connection, None, 2, 1).unwrap();
         assert_eq!(second.items[0].hash, hex(&older.0));
 
         for query in ["测试集", "folder/movie", "MOVIE.MKV"] {
-            let page = read_catalog_page(&connection, Some(query.into()), None, 50).unwrap();
+            let page = read_catalog_page(&connection, Some(query.into()), 1, 50).unwrap();
             assert_eq!(page.items.len(), 1, "{query}");
             assert_eq!(page.items[0].hash, hex(&newer.0));
+            assert_eq!(page.total, 1, "{query}");
             assert!(page.items[0].match_excerpt.is_some());
         }
 
@@ -618,7 +636,7 @@ mod tests {
         let mut connection = connection();
         let invalid = insert(&mut connection, b"de", 10);
         assert!(matches!(
-            read_catalog_page(&connection, Some("ab".into()), None, 50),
+            read_catalog_page(&connection, Some("ab".into()), 1, 50),
             Err(ReadError::Invalid)
         ));
         assert!(matches!(
@@ -676,7 +694,7 @@ mod tests {
             )
             .unwrap();
 
-        let state = read_catalog_page(&connection, None, None, 1).unwrap().index;
+        let state = read_catalog_page(&connection, None, 1, 1).unwrap().index;
         assert!(!state.complete);
         assert!(!state.search_complete);
 
@@ -686,7 +704,7 @@ mod tests {
         assert!(finished.complete);
         assert!(backfill_one(&mut connection, None).unwrap().complete);
 
-        let state = read_catalog_page(&connection, None, None, 1).unwrap().index;
+        let state = read_catalog_page(&connection, None, 1, 1).unwrap().index;
         assert!(state.complete);
         assert!(state.search_complete);
         let counts: (i64, i64) = connection
@@ -702,48 +720,30 @@ mod tests {
     #[test]
     fn recent_catalog_pages_use_ordered_metadata_index() {
         let connection = connection();
-        let explain = |sql: &str, after: bool| {
-            let mut statement = connection
-                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-                .unwrap();
-            if after {
-                statement
-                    .query_map(params![10_i64, [7_u8; 20].as_slice(), 51_i64], |row| {
-                        row.get::<_, String>(3)
-                    })
-                    .unwrap()
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap()
-            } else {
-                statement
-                    .query_map(params![51_i64], |row| row.get::<_, String>(3))
-                    .unwrap()
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap()
-            }
-        };
-
-        for details in [
-            explain(RECENT_FIRST_PAGE_SQL, false),
-            explain(RECENT_AFTER_PAGE_SQL, true),
-        ] {
-            assert!(
-                details
-                    .iter()
-                    .any(|detail| detail.contains("metadata_fetched_at_hash")),
-                "{details:?}"
-            );
-            assert!(
-                details
-                    .iter()
-                    .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
-                "{details:?}"
-            );
-        }
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {RECENT_PAGE_SQL}"))
+            .unwrap();
+        let details = statement
+            .query_map(params![50_i64, 50_i64], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            details
+                .iter()
+                .any(|detail| detail.contains("metadata_fetched_at_hash")),
+            "{details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+            "{details:?}"
+        );
     }
 
     #[test]
-    fn equal_timestamps_page_stably_by_hash_without_duplicates() {
+    fn equal_timestamps_page_stably_by_hash() {
         let mut connection = connection();
         let mut hashes = Vec::new();
         for name in ["one", "two", "six"] {
@@ -754,17 +754,17 @@ mod tests {
         }
         hashes.sort_by_key(|hash| std::cmp::Reverse(hash.0));
 
-        let first = read_catalog_page(&connection, None, None, 1).unwrap();
-        let second = read_catalog_page(&connection, None, first.next, 1).unwrap();
-        let third = read_catalog_page(&connection, None, second.next, 1).unwrap();
+        let first = read_catalog_page(&connection, None, 1, 1).unwrap();
+        let second = read_catalog_page(&connection, None, 2, 1).unwrap();
+        let third = read_catalog_page(&connection, None, 3, 1).unwrap();
         assert_eq!(first.items[0].hash, hex(&hashes[0].0));
         assert_eq!(second.items[0].hash, hex(&hashes[1].0));
         assert_eq!(third.items[0].hash, hex(&hashes[2].0));
-        assert!(third.next.is_none());
+        assert_eq!(third.total, 3);
     }
 
     #[test]
-    fn search_pages_apply_the_cursor_only_after_the_first_page() {
+    fn search_pages_share_the_same_offset_order() {
         let mut connection = connection();
         let newer = insert(
             &mut connection,
@@ -777,10 +777,49 @@ mod tests {
             8,
         );
 
-        let first = read_catalog_page(&connection, Some("hit".into()), None, 1).unwrap();
-        let second = read_catalog_page(&connection, Some("hit".into()), first.next, 1).unwrap();
+        let first = read_catalog_page(&connection, Some("hit".into()), 1, 1).unwrap();
+        let second = read_catalog_page(&connection, Some("hit".into()), 2, 1).unwrap();
         assert_eq!(first.items[0].hash, hex(&newer.0));
         assert_eq!(second.items[0].hash, hex(&older.0));
-        assert!(second.next.is_none());
+        assert_eq!(first.total, 2);
+        assert_eq!(second.total, 2);
+    }
+
+    #[test]
+    fn out_of_range_page_returns_empty_items_with_total() {
+        let mut connection = connection();
+        insert(
+            &mut connection,
+            b"d6:lengthi1e4:name3:one12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae",
+            1,
+        );
+        insert(
+            &mut connection,
+            b"d6:lengthi1e4:name3:two12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae",
+            2,
+        );
+
+        // 越界页不 clamp：空 items + 真实 total，由调用方决定纠正方向。
+        let page = read_catalog_page(&connection, None, 9, 50).unwrap();
+        assert!(page.items.is_empty());
+        assert_eq!(page.total, 2);
+        assert_eq!(page.page, 9);
+        let search = read_catalog_page(&connection, Some("one".into()), 9, 50).unwrap();
+        assert!(search.items.is_empty());
+        assert_eq!(search.total, 1);
+    }
+
+    #[test]
+    fn page_zero_and_limit_bounds_are_rejected() {
+        let connection = connection();
+        for (page, limit) in [(0_usize, 50_usize), (1, 0), (1, 101)] {
+            assert!(
+                matches!(
+                    read_catalog_page(&connection, None, page, limit),
+                    Err(ReadError::Invalid)
+                ),
+                "{page}/{limit}"
+            );
+        }
     }
 }

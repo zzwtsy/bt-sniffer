@@ -12,14 +12,14 @@ SQLite schema v4 是任务、metadata 和可重建查询目录的持久事实。
 
 ## GET 接口
 
-统一前缀 `/api/v1`。目录 JSON 使用不透明 keyset 游标；SSE 的 `after` 是 `run_id:sequence` 游标。
+统一前缀 `/api/v1`。目录列表使用页码偏移分页，文件清单使用 keyset 游标；SSE 的 `after` 是 `run_id:sequence` 游标。
 
 | 路径 | 参数与内容 |
 | --- | --- |
 | `/health` | 运行阶段和缓存数据源状态；collector 返回独立暂停状态，完整指标见 snapshot 的 runtime |
 | `/snapshot` | `schema_version`、`window`、`runtime` 当前状态及 `cached` 节点、共享流量和数据库统计 |
 | `/stream` | SSE，after 格式为 run_id:sequence |
-| `/torrents?q=&after=&limit=` | 空 q 返回最近目录；非空 q 为 3–200 字符名称/已纳入索引的完整文件路径字面子串；默认 50、最大 100 条，并返回 `index` 进度 |
+| `/torrents?q=&page=&limit=` | 空 q 返回最近目录；非空 q 为 3–200 字符名称/已纳入索引的完整文件路径字面子串；page 从 1 开始，默认 50、最大 100 条；响应含结果总数 `total`、回显页码 `page` 与 `index` 进度，越界页返回空 items |
 | `/torrents/{hash}` | 40 位 v1 hash 的摘要；读取原始 info 前重新核对 SHA1 和完整字典 |
 | `/torrents/{hash}/files?after=&limit=` | 原始顺序文件清单；默认及最大 100 条，单文件也返回一条 |
 

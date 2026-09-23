@@ -46,7 +46,7 @@ export function Layout() {
       >
         跳到主要内容
       </a>
-      <div className="grid min-h-screen grid-cols-[224px_minmax(0,1fr)] bg-[color-mix(in_oklch,var(--background)_96%,var(--muted-foreground))] max-[1200px]:grid-cols-[192px_minmax(0,1fr)] max-[760px]:block">
+      <div className="grid h-screen grid-cols-[224px_minmax(0,1fr)] bg-[color-mix(in_oklch,var(--background)_96%,var(--muted-foreground))] max-[1200px]:grid-cols-[192px_minmax(0,1fr)] max-[760px]:block">
         <aside
           className={cn(
             "sticky top-0 flex h-screen flex-col border-r bg-card px-4.5 pt-7 pb-5 max-[760px]:hidden",
@@ -97,8 +97,8 @@ export function Layout() {
             </p>
           </div>
         </aside>
-        <div className="min-w-0">
-          <header className="flex h-17 items-center justify-between gap-3 border-b bg-card px-8 max-[1200px]:px-6 max-[760px]:h-auto max-[760px]:min-h-16 max-[760px]:flex-wrap max-[760px]:px-4 max-[760px]:py-3">
+        <div className="flex h-full min-h-0 min-w-0 flex-col">
+          <header className="flex h-17 shrink-0 items-center justify-between gap-3 border-b bg-card px-8 max-[1200px]:px-6 max-[760px]:h-auto max-[760px]:min-h-16 max-[760px]:flex-wrap max-[760px]:px-4 max-[760px]:py-3">
             <div className="flex flex-wrap items-center gap-2.5">
               <Button
                 variant="ghost"
@@ -144,7 +144,7 @@ export function Layout() {
           </header>
           <main
             id="main-content"
-            className="mx-auto min-h-[calc(100vh-120px)] max-w-[1600px] p-8 max-[1200px]:p-6 max-[760px]:px-4 min-[1700px]:pt-10.5"
+            className="mx-auto min-h-0 w-full max-w-[1600px] flex-1 overflow-y-auto p-8 max-[1200px]:p-6 max-[760px]:px-4 min-[1700px]:pt-10.5"
           >
             {source(monitor.snapshot, "monitor").phase === "shutting_down" && (
               <Alert className="mb-4">
@@ -180,7 +180,7 @@ export function Layout() {
             )}
             <Outlet />
           </main>
-          <footer className="flex justify-between gap-4 px-8 py-4 text-[9px] tracking-[1px] text-muted-foreground max-[760px]:flex-wrap max-[760px]:p-4">
+          <footer className="flex shrink-0 justify-between gap-4 px-8 py-4 text-[9px] tracking-[1px] text-muted-foreground max-[760px]:flex-wrap max-[760px]:p-4">
             <span>BT-SNIFFER / READ-ONLY MONITOR</span>
           </footer>
         </div>

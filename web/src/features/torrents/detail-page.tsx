@@ -12,16 +12,16 @@ import { FileTree } from "./file-tree";
 import { bytes, fetchedAt } from "./format";
 import { PreviewImages } from "./preview-images";
 
-export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string; from?: string }) {
+export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string; from?: number }) {
   const detail = useQuery(detailOptions(hash));
   return (
-    <>
+    <div className="flex h-full min-h-0 flex-col">
       <PageTitle
         eyebrow="TORRENT DETAIL"
         title={detail.data?.name ?? "种子详情"}
         description="摘要和文件路径来自本地保存的原始 v1 info 字典。"
       >
-        <Button variant="outline" nativeButton={false} render={<Link to="/torrents" search={{ q, after: from }} />}>
+        <Button variant="outline" nativeButton={false} render={<Link to="/torrents" search={{ q, page: from }} />}>
           <ArrowLeft data-icon="inline-start" />
           返回目录
         </Button>
@@ -39,7 +39,7 @@ export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string;
       )}
       {detail.data != null && (
         <>
-          <Panel title="种子摘要" description={`采集于 ${fetchedAt(detail.data.fetched_at_ms)}`}>
+          <Panel title="种子摘要" description={`采集于 ${fetchedAt(detail.data.fetched_at_ms)}`} className="shrink-0">
             <div className="mb-4 flex items-center gap-1">
               <p className="break-all font-mono text-xs">{detail.data.hash}</p>
               <CopyMagnet hash={detail.data.hash} name={detail.data.parse_status === "parsed" ? detail.data.name : null} />
@@ -62,16 +62,21 @@ export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string;
                 )}
             {(detail.data.encoding_lossy || detail.data.name_truncated) && <Badge variant="outline" className="mt-4">{detail.data.encoding_lossy ? "文本含有损显示" : "名称已截断"}</Badge>}
           </Panel>
-          <Panel title="预览图" description="截图来自 whatslink.info 第三方公开索引，点击加载后才发起查询。">
+          <Panel title="预览图" description="截图来自 whatslink.info 第三方公开索引，点击加载后才发起查询。" className="shrink-0">
             <PreviewImages hash={hash} />
           </Panel>
           {detail.data.parse_status === "parsed" && (
-            <Panel title="文件清单" description="路径仅作为安全文本展示，不解释为本地文件系统路径。">
+            <Panel
+              title="文件清单"
+              description="路径仅作为安全文本展示，不解释为本地文件系统路径。"
+              className="mb-0 flex min-h-[240px] flex-1 flex-col"
+              contentClassName="flex min-h-0 flex-1 flex-col"
+            >
               <FileTree hash={hash} />
             </Panel>
           )}
         </>
       )}
-    </>
+    </div>
   );
 }

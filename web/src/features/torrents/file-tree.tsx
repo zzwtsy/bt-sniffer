@@ -37,7 +37,7 @@ export function FileTree({ hash }: { hash: string }) {
   }
 
   return (
-    <div data-slot="file-tree">
+    <div data-slot="file-tree" className="flex min-h-0 flex-1 flex-col">
       {files.isPending && (
         <div className="flex flex-col gap-3 px-2">
           <Skeleton className="h-8 w-full" />
@@ -64,12 +64,16 @@ export function FileTree({ hash }: { hash: string }) {
       {!files.isPending && files.error == null && loaded === 0 && !files.hasNextPage && (
         <Empty>该 metadata 没有可展示的文件记录。</Empty>
       )}
-      {roots.length > 0 && <TreeRows nodes={roots} toggled={toggled} onToggle={toggle} />}
+      {roots.length > 0 && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <TreeRows nodes={roots} toggled={toggled} onToggle={toggle} />
+        </div>
+      )}
       {loadingMore && (
-        <p className="px-2 pt-2 text-xs text-muted-foreground">{`已加载 ${loaded} 个文件…`}</p>
+        <p className="shrink-0 px-2 pt-2 text-xs text-muted-foreground">{`已加载 ${loaded} 个文件…`}</p>
       )}
       {capped && (
-        <p className="px-2 pt-2 text-xs text-status-warning">{`仅展示前 ${MAX_PAGES * PAGE_SIZE} 个文件`}</p>
+        <p className="shrink-0 px-2 pt-2 text-xs text-status-warning">{`仅展示前 ${MAX_PAGES * PAGE_SIZE} 个文件`}</p>
       )}
     </div>
   );

@@ -63,6 +63,22 @@ const long = {
   fetched_at_ms: Date.now() - 180_000,
 };
 const records = [torrent, archive, big, long];
+/** 填充记录：把目录撑到两页以覆盖页码分页；名称含 Fixture，在 fixture 搜索中同样出现。 */
+const fillers = Array.from({ length: 96 }, (_, index) => ({
+  hash: (index + 16).toString(16).padStart(40, "0"),
+  parse_status: "parsed",
+  name: `Fixture Filler ${String(index).padStart(3, "0")}`,
+  name_truncated: false,
+  encoding_lossy: false,
+  total_length: "64",
+  file_count: 1,
+  piece_length: "16384",
+  piece_count: 1,
+  private: false,
+  fetched_at_ms: Date.now() - 240_000 - index * 60_000,
+}));
+/** 目录顺序（采集时间倒序）：空 q 与 fixture 搜索下 torrent 都在第 1 页、archive 都在第 2 页。 */
+const catalogOrder = [torrent, long, ...fillers.slice(0, 49), archive, big, ...fillers.slice(49)];
 /** torrent 250 个文件覆盖嵌套目录与三层深度；archive 两个文件单页。 */
 function fixtureFiles(record) {
   const files = [
@@ -361,19 +377,21 @@ const server = createServer(async (req, res) => {
     return json(snapshot());
   if (url.pathname === "/api/v1/torrents") {
     const query = url.searchParams.get("q")?.toLowerCase();
-    const after = url.searchParams.get("after");
+    const page = Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1);
+    const limit = Math.max(1, Number(url.searchParams.get("limit") ?? 50) || 50);
     const path = "Fixture Torrent/folder/movie.mkv".toLowerCase();
-    const matched = records.filter(item =>
+    const matched = catalogOrder.filter(item =>
       query == null
       || item.name.toLowerCase().includes(query)
       || (item === torrent && path.includes(query)));
-    const page = matched.map(item =>
+    const items = matched.map(item =>
       query != null && item === torrent && path.includes(query)
         ? { ...item, match_excerpt: "Fixture Torrent/folder/movie.mkv" }
         : item);
     return json({
-      items: after === "page2" ? page.slice(1) : page.slice(0, 1),
-      next: after == null && page.length > 1 ? "page2" : null,
+      items: items.slice((page - 1) * limit, page * limit),
+      total: items.length,
+      page,
       index: query === "missing"
         ? { indexed: 2, total: 2, complete: true, search_complete: false }
         : { indexed: 1, total: 2, complete: false, search_complete: false },
