@@ -9,6 +9,49 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import {
+  snapshotSchema,
+  windowSchema,
+} from "../src/lib/observation/contracts.ts";
+
+async function* sseEvents(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      let event = "message";
+      const data = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:"))
+          event = line.slice(6).trim();
+        else if (line.startsWith("data:"))
+          data.push(line.slice(5).trimStart());
+      }
+      if (data.length > 0)
+        yield { event, data: data.join("\n") };
+      boundary = buffer.indexOf("\n\n");
+    }
+    if (done)
+      return;
+  }
+}
+
+async function nextEvent(events, expected) {
+  while (true) {
+    const { value: event, done } = await events.next();
+    if (done)
+      break;
+    if (event.event === expected)
+      return JSON.parse(event.data);
+  }
+  throw new Error(`SSE 在结束前没有发送 ${expected}`);
+}
 
 async function main() {
   const root = fileURLToPath(new URL("../", import.meta.url));
@@ -78,7 +121,7 @@ async function main() {
           signal: AbortSignal.timeout(1000),
         });
         if (response.ok) {
-          snapshot = await response.json();
+          snapshot = snapshotSchema.parse(await response.json());
           break;
         }
       } catch {
@@ -91,8 +134,10 @@ async function main() {
     const stream = await fetch(`${url}/api/v1/stream`, {
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
     });
-    const first = await stream.body.getReader().read();
-    assert.match(new TextDecoder().decode(first.value), /event: ?hello/);
+    assert.ok(stream.body);
+    const events = sseEvents(stream.body);
+    windowSchema.parse(await nextEvent(events, "hello"));
+    snapshotSchema.parse(await nextEvent(events, "snapshot"));
     abort.abort();
     browser = await chromium.launch();
     const page = await browser.newPage();
@@ -112,6 +157,7 @@ async function main() {
       state,
       proxy: true,
       sse: true,
+      contract: true,
     };
   } finally {
     await browser?.close();

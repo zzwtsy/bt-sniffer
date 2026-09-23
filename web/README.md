@@ -20,7 +20,7 @@ pnpm --dir web build
 pnpm --dir web preview
 ```
 
-检查依次执行 ESLint、引用项目类型检查、Vitest、构建及 Chromium 本机 HTTP/SSE 测试。测试不恢复既有采集状态，不访问公网 DHT。已构建 Rust binary 和前端后，可另外执行 `node web/tests/rust-smoke.mjs` 验证真实无引导节点的代理、SSE 和退出；独立状态与证据保存在 `target/checks/frontend-rust-smoke/`。证据保存在 `target/checks/`，负载时间只用于同机诊断。`dist/` 是站点根路径部署产物。
+检查依次执行 ESLint、引用项目类型检查、Vitest、构建及 Chromium 本机 HTTP/SSE 测试。`all` 或 `web rust` 联合范围还会构建 Rust binary，并以真实无引导节点验证 snapshot、SSE 契约、同源代理和退出；单独 `web` 不重复构建后端。测试不恢复既有采集状态，不访问公网 DHT。真实后端 smoke 的独立状态与证据保存在 `target/checks/frontend-rust-smoke/`；可在已构建前后端后单独执行 `node web/tests/rust-smoke.mjs`。证据保存在 `target/checks/`，负载时间只用于同机诊断。`dist/` 是站点根路径部署产物。
 
 ## 模块与数据所有权
 

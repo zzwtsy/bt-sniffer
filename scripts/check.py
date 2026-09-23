@@ -40,6 +40,11 @@ def stages(scopes):
             ('rust-clippy', ['cargo', 'clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings']),
             ('rust-tests', ['cargo', 'test', '--locked', '--workspace', '--all-targets']),
         ])
+    if {'web', 'rust'} <= selected:
+        result.extend([
+            ('rust-binary', ['cargo', 'build', '--locked', '--bin', 'bt-sniffer']),
+            ('web-rust-smoke', ['node', 'web/tests/rust-smoke.mjs']),
+        ])
     if 'docs' in selected:
         result.append(('documentation', [python, 'scripts/check_docs.py']))
     if 'tools' in selected:

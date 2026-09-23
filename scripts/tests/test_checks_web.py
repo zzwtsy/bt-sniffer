@@ -14,9 +14,19 @@ class WebChecks(unittest.TestCase):
     def test_web_order_and_all_inclusion(self):
         names = [name for name, _ in check.stages(['web'])]
         self.assertEqual(names, ['environment', 'web-lint', 'web-types', 'web-tests', 'web-build', 'web-browser'])
+        rust_names = [name for name, _ in check.stages(['rust'])]
+        self.assertNotIn('rust-binary', rust_names)
+        self.assertNotIn('web-rust-smoke', rust_names)
+        combined = [name for name, _ in check.stages(['web', 'rust'])]
+        self.assertEqual(combined.count('rust-binary'), 1)
+        self.assertEqual(combined.count('web-rust-smoke'), 1)
+        self.assertLess(combined.index('rust-tests'), combined.index('rust-binary'))
+        self.assertLess(combined.index('rust-binary'), combined.index('web-rust-smoke'))
         all_names = [name for name, _ in check.stages(['all', 'web'])]
         for name in names:
             self.assertEqual(all_names.count(name), 1)
+        self.assertEqual(all_names.count('rust-binary'), 1)
+        self.assertEqual(all_names.count('web-rust-smoke'), 1)
         self.assertTrue(all('install' not in command for _, command in check.stages(['web'])))
 
     def test_wrong_node_and_missing_dependency_are_blocked(self):
