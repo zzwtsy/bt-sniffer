@@ -150,8 +150,17 @@ async fn v1_upgrade_preserves_hashes_and_backfills_only_on_fetch() {
     storage.handle.save_hashes(&[hash], 1).await.unwrap();
     storage.shutdown().await.unwrap();
     let c = Connection::open(dir.path().join("state.sqlite3")).unwrap();
-    c.execute_batch("DROP TABLE peer_hints; DROP TABLE fetch_jobs; PRAGMA user_version=1;")
-        .unwrap();
+    c.execute_batch(
+        "DROP TRIGGER metadata_catalog_total_ai;
+         DROP TRIGGER metadata_catalog_total_ad;
+         DROP TABLE torrent_catalog_fts;
+         DROP TABLE torrent_catalog;
+         DROP TABLE torrent_catalog_state;
+         DROP TABLE peer_hints;
+         DROP TABLE fetch_jobs;
+         PRAGMA user_version=1;",
+    )
+    .unwrap();
     drop(c);
     let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
     assert_eq!(storage.handle.active_jobs().await.unwrap(), 0);

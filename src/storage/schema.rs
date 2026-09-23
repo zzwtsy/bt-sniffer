@@ -1,17 +1,17 @@
 //! Storage 打开连接时执行版本检查、版本迁移，再补充领取索引。
-//! v1/v2 的表、对应索引和版本号在同一迁移事务中提交；补充领取索引单独执行。
+//! v1/v2/v3 的表、对应索引和版本号在同一迁移事务中提交；补充领取索引单独执行。
 //! 拒绝较新版本；迁移事务失败会回滚，但补充索引失败不撤销已提交的版本迁移。
 use super::StorageError;
 use rusqlite::Connection;
 
-/// 新库顺序执行 v1 和 v2，旧库只执行缺少的版本；迁移提交后再补领取索引。
-/// 已是 v2 的数据库也会补索引；该步失败会返回错误，已有数据和版本迁移仍保留。
+/// 新库顺序执行全部版本，旧库只执行缺少的版本；迁移提交后再补领取索引。
+/// 已是 v3 的数据库也会补索引；该步失败会返回错误，已有数据和版本迁移仍保留。
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 2 {
+    if version > 3 {
         return Err(StorageError::Invalid("数据库由更新版本程序创建"));
     }
-    if version == 2 {
+    if version == 3 {
         return claim_index(connection);
     }
     let tx = connection.transaction()?;
@@ -64,8 +64,9 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         )?;
     }
     // v2 增加任务和 peer 提示；历史 hash 是否回填任务由显式启用采集决定。
-    tx.execute_batch(
-        r#"
+    if version < 2 {
+        tx.execute_batch(
+            r#"
         CREATE TABLE fetch_jobs (
             hash BLOB PRIMARY KEY NOT NULL REFERENCES infohashes(hash),
             state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','retry_wait','dormant')),
@@ -85,6 +86,65 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         ) STRICT;
         CREATE INDEX hint_expiry ON peer_hints(observed_at);
         PRAGMA user_version=2;
+    "#,
+        )?;
+    }
+    // v3 保存可重建的 torrent 展示目录；原始 info 仍是唯一持久事实。
+    tx.execute_batch(
+        r#"
+        CREATE TABLE torrent_catalog (
+            id INTEGER PRIMARY KEY,
+            hash BLOB NOT NULL UNIQUE REFERENCES metadata(hash) ON DELETE CASCADE,
+            parse_status TEXT NOT NULL CHECK(parse_status IN ('parsed','unavailable')),
+            name TEXT,
+            name_truncated INTEGER NOT NULL CHECK(name_truncated IN (0,1)),
+            encoding_lossy INTEGER NOT NULL CHECK(encoding_lossy IN (0,1)),
+            total_length TEXT,
+            file_count INTEGER,
+            piece_length TEXT,
+            piece_count INTEGER,
+            private INTEGER CHECK(private IN (0,1)),
+            search_text TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX torrent_catalog_hash ON torrent_catalog(hash);
+        CREATE VIRTUAL TABLE torrent_catalog_fts USING fts5(
+            search_text,
+            content='torrent_catalog',
+            content_rowid='id',
+            tokenize='trigram'
+        );
+        CREATE TRIGGER torrent_catalog_ai AFTER INSERT ON torrent_catalog BEGIN
+            INSERT INTO torrent_catalog_fts(rowid,search_text) VALUES(new.id,new.search_text);
+        END;
+        CREATE TRIGGER torrent_catalog_ad AFTER DELETE ON torrent_catalog BEGIN
+            INSERT INTO torrent_catalog_fts(torrent_catalog_fts,rowid,search_text)
+            VALUES('delete',old.id,old.search_text);
+        END;
+        CREATE TRIGGER torrent_catalog_au AFTER UPDATE ON torrent_catalog BEGIN
+            INSERT INTO torrent_catalog_fts(torrent_catalog_fts,rowid,search_text)
+            VALUES('delete',old.id,old.search_text);
+            INSERT INTO torrent_catalog_fts(rowid,search_text) VALUES(new.id,new.search_text);
+        END;
+        CREATE TABLE torrent_catalog_state (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            indexed INTEGER NOT NULL CHECK(indexed>=0),
+            total INTEGER NOT NULL CHECK(total>=indexed)
+        ) STRICT;
+        INSERT INTO torrent_catalog_state(singleton,indexed,total)
+        SELECT 1,0,count(*) FROM metadata;
+        CREATE TRIGGER metadata_catalog_total_ai AFTER INSERT ON metadata BEGIN
+            UPDATE torrent_catalog_state SET total=total+1 WHERE singleton=1;
+        END;
+        CREATE TRIGGER metadata_catalog_total_ad AFTER DELETE ON metadata BEGIN
+            UPDATE torrent_catalog_state SET total=total-1 WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_indexed_ai AFTER INSERT ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state SET indexed=indexed+1 WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_indexed_ad AFTER DELETE ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state SET indexed=indexed-1 WHERE singleton=1;
+        END;
+        PRAGMA user_version=3;
     "#,
     )?;
     tx.commit()?;

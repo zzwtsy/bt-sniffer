@@ -38,7 +38,7 @@ async fn schema_version_and_failed_migration_are_safe() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("state.sqlite3");
     let c = Connection::open(&db).unwrap();
-    c.execute_batch("PRAGMA user_version=3;").unwrap();
+    c.execute_batch("PRAGMA user_version=4;").unwrap();
     drop(c);
     assert!(matches!(
         Storage::open(StorageConfig::new(dir.path())).await,
@@ -68,6 +68,50 @@ async fn schema_version_and_failed_migration_are_safe() {
         c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
         0
+    );
+}
+
+#[test]
+fn schema_v2_upgrades_without_losing_metadata_and_starts_incomplete_catalog() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    schema::migrate(&mut connection).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO infohashes VALUES(zeroblob(20),1,1);
+             INSERT INTO metadata VALUES(zeroblob(20),X'6465',2);
+             DROP TRIGGER metadata_catalog_total_ai;
+             DROP TRIGGER metadata_catalog_total_ad;
+             DROP TABLE torrent_catalog_fts;
+             DROP TABLE torrent_catalog;
+             DROP TABLE torrent_catalog_state;
+             PRAGMA user_version=2;",
+        )
+        .unwrap();
+
+    schema::migrate(&mut connection).unwrap();
+
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM metadata", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT indexed,total FROM torrent_catalog_state WHERE singleton=1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        (0, 1)
     );
 }
 

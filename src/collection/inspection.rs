@@ -8,6 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub(crate) enum ReadError {
+    Invalid,
+    Missing,
     Cancelled,
     Unavailable,
     Busy,

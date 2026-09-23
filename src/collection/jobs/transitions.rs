@@ -3,7 +3,8 @@ use super::{
     Job, LOCAL_RETRY_DELAY_MS, MAX_FAILED_ATTEMPTS, RETRY_BASE_DELAY_MS, RetryReason, UpdateResult,
 };
 use crate::collection::{
-    peer::VerifiedMetadata, records::check_metadata_size, store::CollectionStore,
+    catalog::ensure_catalog, peer::VerifiedMetadata, records::check_metadata_size,
+    store::CollectionStore,
 };
 use crate::storage::StorageError;
 use rusqlite::{OptionalExtension, params};
@@ -200,6 +201,7 @@ impl CollectionStore {
                     now_ms,                // ?3：fetched_at
                 ],
             )?;
+            ensure_catalog(&tx, &job.hash.0, metadata.info())?;
             tx.execute(
                 "UPDATE fetch_jobs
                  SET state = 'succeeded',

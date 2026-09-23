@@ -197,7 +197,7 @@ fn open_database(directory: &Path) -> Result<(Connection, File), StorageError> {
     let mut connection = Connection::open(directory.join("state.sqlite3"))?;
     connection.busy_timeout(Duration::from_secs(5))?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 2 {
+    if version > 3 {
         return Err(StorageError::Invalid("数据库由更新版本程序创建"));
     }
     connection.execute_batch(
