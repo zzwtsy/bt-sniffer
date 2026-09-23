@@ -130,6 +130,12 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal(snapshot?.schema_version, 1);
+    const catalogResponse = await fetch(`${url}/api/v1/torrents`);
+    assert.equal(catalogResponse.status, 200);
+    const catalog = await catalogResponse.json();
+    assert.deepEqual(catalog.items, []);
+    assert.deepEqual(catalog.index, { indexed: 0, total: 0, complete: true });
+    assert.equal((await fetch(`${url}/api/v1/metadata`)).status, 404);
     const abort = new AbortController();
     const stream = await fetch(`${url}/api/v1/stream`, {
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
@@ -149,6 +155,9 @@ async function main() {
       path: path.join(evidence, "overview.png"),
       fullPage: true,
     });
+    await page.goto(`${url}/torrents`);
+    await page.getByRole("heading", { name: "种子查询" }).waitFor();
+    await page.getByText("尚未保存可展示的 metadata。", { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     result = {
       status: "passed",

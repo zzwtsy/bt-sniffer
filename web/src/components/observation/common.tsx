@@ -93,7 +93,7 @@ export function PageTitle({
         <p className="m-0 mb-2 text-[10px] font-[650] tracking-[2px] text-primary">
           {eyebrow}
         </p>
-        <h1 className="max-[760px]:text-[25px]">{title}</h1>
+        <h1 className="wrap-anywhere max-[760px]:text-[25px]">{title}</h1>
         <p className="mt-2.5 text-xs text-muted-foreground">{description}</p>
       </div>
       {children}

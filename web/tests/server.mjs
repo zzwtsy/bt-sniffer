@@ -9,6 +9,79 @@ let committed = 1;
 const streams = new Set();
 const cursors = [];
 const events = [];
+const torrent = {
+  hash,
+  parse_status: "parsed",
+  name: "Fixture Torrent",
+  name_truncated: false,
+  encoding_lossy: false,
+  total_length: "9007199254740993",
+  file_count: 2,
+  piece_length: "16384",
+  piece_count: 2,
+  private: false,
+  fetched_at_ms: Date.now(),
+};
+const archive = {
+  hash: "b".repeat(40),
+  parse_status: "parsed",
+  name: "Fixture Archive",
+  name_truncated: false,
+  encoding_lossy: false,
+  total_length: "1024",
+  file_count: 1,
+  piece_length: "16384",
+  piece_count: 1,
+  private: false,
+  fetched_at_ms: Date.now() - 60_000,
+};
+const big = {
+  hash: "c".repeat(40),
+  parse_status: "parsed",
+  name: "Fixture Big",
+  name_truncated: false,
+  encoding_lossy: false,
+  total_length: "1048576",
+  file_count: 8000,
+  piece_length: "16384",
+  piece_count: 64,
+  private: false,
+  fetched_at_ms: Date.now() - 120_000,
+};
+/** 无空格长名称 fixture：覆盖结果表名称列的换行与两行截断。 */
+const long = {
+  hash: "d".repeat(40),
+  parse_status: "parsed",
+  name: "NEW.Anna.Ralphs.Riding.After.Erotic.Massage.sxyprn.amateur.ass.bigass.bigtits.boobs.deepthroat.hardcore.hot.onlyfans.porn.hub.sexy.mp4",
+  name_truncated: false,
+  encoding_lossy: false,
+  total_length: "219785428",
+  file_count: 1,
+  piece_length: "16384",
+  piece_count: 13415,
+  private: false,
+  fetched_at_ms: Date.now() - 180_000,
+};
+const records = [torrent, archive, big, long];
+/** torrent 250 个文件覆盖嵌套目录与三层深度；archive 两个文件单页。 */
+function fixtureFiles(record) {
+  const files = [
+    { index: 0, path: `${record.name}/folder/movie.mkv`, path_truncated: false, encoding_lossy: false, length: "9007199254740000" },
+    { index: 1, path: `${record.name}/readme.txt`, path_truncated: false, encoding_lossy: false, length: "993" },
+  ];
+  if (record !== torrent)
+    return files;
+  for (let index = 2; index < 250; index++) {
+    const bucket = index % 3;
+    const path = bucket === 0
+      ? `${record.name}/folder/docs/doc-${index}.txt`
+      : bucket === 1
+        ? `${record.name}/photos/2024/raw/img-${index}.jpg`
+        : `${record.name}/extras/file-${index}.bin`;
+    files.push({ index, path, path_truncated: false, encoding_lossy: false, length: String(1000 + index) });
+  }
+  return files;
+}
 let databaseObservedAt = Date.now();
 let replayTimer;
 let replayBatches = 0;
@@ -286,6 +359,52 @@ const server = createServer(async (req, res) => {
     return json({ phase: "running" });
   if (url.pathname === "/api/v1/snapshot")
     return json(snapshot());
+  if (url.pathname === "/api/v1/torrents") {
+    const query = url.searchParams.get("q")?.toLowerCase();
+    const after = url.searchParams.get("after");
+    const path = "Fixture Torrent/folder/movie.mkv".toLowerCase();
+    const matched = records.filter(item =>
+      query == null
+      || item.name.toLowerCase().includes(query)
+      || (item === torrent && path.includes(query)));
+    const page = matched.map(item =>
+      query != null && item === torrent && path.includes(query)
+        ? { ...item, match_excerpt: "Fixture Torrent/folder/movie.mkv" }
+        : item);
+    return json({
+      items: after === "page2" ? page.slice(1) : page.slice(0, 1),
+      next: after == null && page.length > 1 ? "page2" : null,
+      index: { indexed: 1, total: 2, complete: false },
+    });
+  }
+  const detailMatch = /^\/api\/v1\/torrents\/([0-9a-f]{40})$/.exec(url.pathname);
+  if (detailMatch) {
+    const record = records.find(item => item.hash === detailMatch[1]);
+    if (record != null)
+      return json(record);
+  }
+  const filesMatch = /^\/api\/v1\/torrents\/([0-9a-f]{40})\/files$/.exec(url.pathname);
+  if (filesMatch) {
+    const record = records.find(item => item.hash === filesMatch[1]);
+    if (record != null) {
+      const start = Number(url.searchParams.get("after") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      if (record === big) {
+        // 无限页 fixture：供前端全量拉取上限（50 页 / 5000 条）测试
+        const items = Array.from({ length: limit }, (_, offset) => {
+          const index = start + offset;
+          return { index, path: `${record.name}/group/sub-${Math.floor(index / 100)}/file-${index}.bin`, path_truncated: false, encoding_lossy: false, length: "128" };
+        });
+        return json({ available: true, items, next: String(start + limit) });
+      }
+      const all = fixtureFiles(record);
+      return json({
+        available: true,
+        items: all.slice(start, start + limit),
+        next: start + limit < all.length ? String(start + limit) : null,
+      });
+    }
+  }
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(
     JSON.stringify({ error: { code: "not_found", message: "记录不存在" } }),

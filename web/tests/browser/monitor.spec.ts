@@ -116,6 +116,125 @@ test("首页可用，旧前端 URL 与旧 API 均不再匹配", async ({ page, r
   expect(errors).toEqual([]);
 });
 
+test("种子目录支持即时搜索、索引提示、hash 详情和窄屏文件树", async ({ page }) => {
+  await page.goto("/torrents");
+  await expect(page.getByRole("heading", { name: "种子查询" })).toBeVisible();
+  await expect(page.getByText("已索引 1/2 · 结果暂不完整")).toBeVisible();
+  await expect(page.getByText("Fixture Torrent", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "冻结显示" })).toHaveCount(0);
+
+  const input = page.getByLabel("名称、文件路径或完整 hash");
+  await input.fill("movie.mkv");
+  await expect(page).toHaveURL(/\/torrents\?q=movie.mkv/);
+  await expect(page.getByText(/路径命中：.*movie\.mkv/)).toBeVisible();
+
+  await input.fill("ab");
+  await expect(page.getByText("再输入 1 个字符开始搜索")).toBeVisible();
+  await expect(page).toHaveURL(/q=movie.mkv/);
+
+  await input.fill(hash);
+  await expect(page).toHaveURL(`/torrents/${hash}`);
+  await expect(page.getByText(hash, { exact: true })).toBeVisible();
+  const tree = page.locator("[data-slot='file-tree']");
+  await expect(tree.getByText("movie.mkv", { exact: true })).toBeVisible();
+  await expect(tree.getByText("readme.txt", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(tree).toBeVisible();
+});
+
+test("种子目录无效查询终态、SPA 翻页与详情上下文往返", async ({ page }) => {
+  const archiveHash = "b".repeat(40);
+  const input = page.getByLabel("名称、文件路径或完整 hash");
+
+  await page.goto("/torrents?q=ab");
+  const invalid = page.locator("[data-slot='alert']").filter({ hasText: "搜索条件无效" });
+  await expect(invalid).toBeVisible();
+  await expect(invalid).toContainText("请输入至少 3 个字符");
+  await expect(page.locator("[data-slot='skeleton']")).toHaveCount(0);
+
+  await page.goto("/torrents");
+  await expect(page.getByRole("link", { name: "Fixture Torrent" })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { __spaAlive: number }).__spaAlive = 1;
+  });
+  await page.getByRole("link", { name: "下一页" }).click();
+  await expect(page).toHaveURL(/\/torrents\?after=page2/);
+  await expect(page.getByRole("link", { name: "Fixture Archive" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Fixture Torrent" })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __spaAlive?: number }).__spaAlive)).toBe(1);
+
+  await input.fill("fixture");
+  await expect(page).toHaveURL(/\/torrents\?q=fixture/);
+  await page.getByRole("link", { name: "下一页" }).click();
+  await expect(page).toHaveURL(/q=fixture/);
+  await expect(page).toHaveURL(/after=page2/);
+  await expect(page.getByRole("link", { name: "Fixture Archive" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Fixture Archive" }).click();
+  await expect(page).toHaveURL(new RegExp(`/torrents/${archiveHash}\\?`));
+  await expect(page).toHaveURL(/q=fixture/);
+  await expect(page).toHaveURL(/from=page2/);
+  await expect(page.getByRole("heading", { name: "Fixture Archive" })).toBeVisible();
+  const tree = page.locator("[data-slot='file-tree']");
+  await expect(tree.getByText("movie.mkv", { exact: true })).toBeVisible();
+  await expect(tree.getByText("readme.txt", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "返回目录" }).click();
+  await expect(page).toHaveURL(/\/torrents\?/);
+  await expect(page).toHaveURL(/q=fixture/);
+  await expect(page).toHaveURL(/after=page2/);
+  await expect(input).toHaveValue("fixture");
+  await expect(page.getByRole("link", { name: "Fixture Archive" })).toBeVisible();
+});
+
+test("搜索快捷键、清除按钮与磁力链接复制", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/torrents");
+  const input = page.getByLabel("名称、文件路径或完整 hash");
+  await expect(page.getByRole("link", { name: "Fixture Torrent" })).toBeVisible();
+
+  await page.keyboard.press("/");
+  await expect(input).toBeFocused();
+
+  await input.fill("fixture");
+  await expect(page).toHaveURL(/\/torrents\?q=fixture/);
+  await page.getByRole("button", { name: "清空" }).click();
+  await expect(input).toHaveValue("");
+  await expect(input).toBeFocused();
+  await expect(page).not.toHaveURL(/q=/);
+
+  await page.getByRole("button", { name: "复制磁力链接" }).first().click();
+  await expect
+    .poll(async () => page.evaluate(async () => navigator.clipboard.readText()))
+    .toBe(`magnet:?xt=urn:btih:${hash}&dn=Fixture%20Torrent`);
+});
+
+test("详情文件树默认展开两层，深层折叠可切换", async ({ page }) => {
+  await page.goto(`/torrents/${hash}`);
+  const tree = page.locator("[data-slot='file-tree']");
+  await expect(tree.getByText("movie.mkv", { exact: true })).toBeVisible();
+  // photos/2024 之下的 raw 是第三层目录，默认折叠
+  await expect(tree.getByRole("button", { name: "2024" })).toBeVisible();
+  await expect(tree.getByText("img-4.jpg", { exact: true })).toHaveCount(0);
+
+  await tree.getByRole("button", { name: "2024" }).click();
+  await expect(tree.getByRole("button", { name: "raw" })).toBeVisible();
+  await tree.getByRole("button", { name: "raw" }).click();
+  await expect(tree.getByText("img-4.jpg", { exact: true })).toBeVisible();
+
+  await tree.getByRole("button", { name: "2024" }).click();
+  await expect(tree.getByText("img-4.jpg", { exact: true })).toHaveCount(0);
+});
+
+test("超大文件清单顺序拉取并在 5000 条截断", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto(`/torrents/${"c".repeat(40)}`);
+  const tree = page.locator("[data-slot='file-tree']");
+  await expect(tree.getByText("仅展示前 5000 个文件")).toBeVisible({ timeout: 60_000 });
+  await expect(tree.getByRole("button", { name: "group" })).toBeVisible();
+  await expect(tree.getByText("已加载", { exact: false })).toHaveCount(0);
+});
+
 test("冻结、断线续传、运行 reset 和容量 reset", async ({ page, request }) => {
   await page.goto("/");
   await expect(page.getByText("实时连接", { exact: true })).toBeVisible();

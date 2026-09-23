@@ -10,33 +10,53 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TorrentsIndexRouteImport } from './routes/torrents.index'
+import { Route as TorrentsHashRouteImport } from './routes/torrents.$hash'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TorrentsIndexRoute = TorrentsIndexRouteImport.update({
+  id: '/torrents/',
+  path: '/torrents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TorrentsHashRoute = TorrentsHashRouteImport.update({
+  id: '/torrents/$hash',
+  path: '/torrents/$hash',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/torrents/$hash': typeof TorrentsHashRoute
+  '/torrents/': typeof TorrentsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/torrents/$hash': typeof TorrentsHashRoute
+  '/torrents': typeof TorrentsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/torrents/$hash': typeof TorrentsHashRoute
+  '/torrents/': typeof TorrentsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/torrents/$hash' | '/torrents/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/torrents/$hash' | '/torrents'
+  id: '__root__' | '/' | '/torrents/$hash' | '/torrents/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  TorrentsHashRoute: typeof TorrentsHashRoute
+  TorrentsIndexRoute: typeof TorrentsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +68,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/torrents/': {
+      id: '/torrents/'
+      path: '/torrents'
+      fullPath: '/torrents/'
+      preLoaderRoute: typeof TorrentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/torrents/$hash': {
+      id: '/torrents/$hash'
+      path: '/torrents/$hash'
+      fullPath: '/torrents/$hash'
+      preLoaderRoute: typeof TorrentsHashRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  TorrentsHashRoute: TorrentsHashRoute,
+  TorrentsIndexRoute: TorrentsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

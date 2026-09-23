@@ -7,6 +7,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -19,12 +20,13 @@ import { time } from "@/lib/observation/format";
 
 const navigation = [
   { to: "/", title: "流程总览", icon: Activity },
+  { to: "/torrents", title: "种子查询", icon: Search },
 ];
 export function Layout() {
   const monitor = useMonitor();
   const engine = useEngine();
   const display = useDisplay();
-  const location = useRouterState({ select: s => s.location.href });
+  const location = useRouterState({ select: s => s.location.pathname });
   const [open, setOpen] = useState(false);
   useEffect(() => {
     display.store.resume();
@@ -126,15 +128,17 @@ export function Layout() {
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-pressed={display.frozen}
-                onClick={display.store.toggle}
-              >
-                {display.frozen ? <Play /> : <Pause />}
-                {display.frozen ? "恢复实时显示" : "冻结显示"}
-              </Button>
+              {location === "/" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={display.frozen}
+                  onClick={display.store.toggle}
+                >
+                  {display.frozen ? <Play /> : <Pause />}
+                  {display.frozen ? "恢复实时显示" : "冻结显示"}
+                </Button>
+              )}
               <ModeToggle />
             </div>
           </header>
@@ -149,7 +153,7 @@ export function Layout() {
                 </AlertDescription>
               </Alert>
             )}
-            {display.frozen && (
+            {location === "/" && display.frozen && (
               <Alert className="mb-4">
                 <AlertDescription>
                   画面已冻结于
