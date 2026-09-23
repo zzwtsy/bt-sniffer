@@ -1,14 +1,14 @@
+import type { CSSProperties } from "react";
 import type {
   DurationEntry,
   Funnel,
   JobStates,
+  QuantileBound,
   ResultsSummary,
   ThroughputPoint,
 } from "./model";
 import { Fragment, memo } from "react";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   Line,
@@ -280,7 +280,6 @@ export const ThroughputChart = memo(({ points }: { points: ThroughputPoint[] }) 
   );
 });
 
-const durationConfig = { ms: { label: "耗时（桶上界，毫秒）", color: "var(--chart-4)" } };
 const durationColors: Record<string, string> = {
   lookup: "var(--chart-4)",
   tcp_wait: "var(--chart-5)",
@@ -291,69 +290,119 @@ const timingLabels: Record<string, string> = {
   tcp_wait: "TCP 许可等待",
   first_peer: "首个 peer",
 };
-/** 阶段耗时：p50/p95/p99 为固定桶上界，溢出只标注超过最大桶。 */
+/** 与 src/histogram.rs NETWORK_BOUNDS 一一对应；后端调整桶边界时这里必须同步。 */
+const BUCKET_BOUNDS_MS: readonly number[] = [1, 5, 10, 50, 100, 500, 1000, 2000, 5000, 10000, 30000, 60000, 180000];
+/** 溢出槽位：超过最大桶的分位置于轴末端，不丢弃也不伪造位置。 */
+const OVERFLOW_SLOT = BUCKET_BOUNDS_MS.length;
+const SLOT_COUNT = BUCKET_BOUNDS_MS.length + 1;
+const QUANTILES = ["p50", "p95", "p99"] as const;
+
+function bucketTick(ms: number): string {
+  return ms < 1000 ? `${ms}` : `${ms / 1000}s`;
+}
+/** 溢出槽刻度不标毫秒数，避免与"超过"语义相混。 */
+const BUCKET_TICKS = [...BUCKET_BOUNDS_MS.map(bucketTick), "溢出"];
+
+interface SlotPosition {
+  index: number;
+  state: "bucket" | "overflow" | "unknown";
+}
+/** 分位值映射到固定槽位；未识别的上界归入排序位置并空心标记，避免静默错位。 */
+function slotOf(q: QuantileBound): SlotPosition | null {
+  if (q.upperBoundMs !== null) {
+    const bound = q.upperBoundMs;
+    const exact = BUCKET_BOUNDS_MS.indexOf(bound);
+    if (exact !== -1)
+      return { index: exact, state: "bucket" };
+    const nearest = BUCKET_BOUNDS_MS.findIndex(candidate => candidate >= bound);
+    return { index: nearest === -1 ? OVERFLOW_SLOT : nearest, state: "unknown" };
+  }
+  if (q.exceedsMs !== null)
+    return { index: OVERFLOW_SLOT, state: "overflow" };
+  return null;
+}
+
+function markerStyle(state: SlotPosition["state"], color: string): CSSProperties {
+  if (state === "overflow")
+    return { background: color, boxShadow: `0 0 0 2px color-mix(in oklab, ${color} 45%, transparent)` };
+  if (state === "unknown")
+    return { background: "transparent", boxShadow: `inset 0 0 0 1.5px ${color}` };
+  return { background: color };
+}
+
+/** 桶列参考线只画在刻度区，不延伸到行标签。 */
+const GUIDE_LINES = {
+  backgroundImage: `repeating-linear-gradient(to right, color-mix(in oklab, var(--border) 55%, transparent) 0 1px, transparent 1px calc(100% / ${SLOT_COUNT}))`,
+};
+
+/**
+ * 阶段耗时：p50/p95/p99 是固定桶分位，离散槽位与桶一一对应，三阶段共享同一刻度轴。
+ * recharts 散点不支持跨行分组标签与逐点状态样式，与 FunnelChart 一样自绘；
+ * 每阶段三条子行避免同桶分位重叠，溢出与未识别桶值有显式标记。
+ */
 export const DurationsChart = memo(({ entries }: { entries: DurationEntry[] }) => {
-  const rows = entries.flatMap(entry =>
-    (["p50", "p95", "p99"] as const).map(q => ({
-      name: `${timingLabels[entry.timing] ?? entry.timing} ${q}`,
-      ms: entry[q].upperBoundMs ?? undefined,
-      text: quantileLabel(entry[q]),
-      count: entry.count,
-      timing: entry.timing,
-    })),
-  );
-  if (rows.length === 0)
+  if (entries.length === 0)
     return <Empty>采集未启用或指标尚不可用。</Empty>;
   return (
     <>
-      <ChartContainer
-        config={durationConfig}
-        className="h-45 w-full"
-      >
-        <BarChart
-          data={rows}
-          layout="vertical"
-          accessibilityLayer
-          margin={{ left: 8, right: 16 }}
-        >
-          <XAxis type="number" hide />
-          <YAxis
-            type="category"
-            dataKey="name"
-            width={96}
-            tickLine={false}
-            axisLine={false}
-          />
-          <ChartTooltip
-            content={(
-              <ChartTooltipContent
-                formatter={(_value, _name, item) => {
-                  const row = item.payload as { text: string; count?: number };
-                  return (
-                    <span>
-                      {row.text}
+      <div data-slot="durations-chart" className="@container">
+        <div>
+          <div className="flex">
+            <span className="w-24 shrink-0" />
+            <span className="w-8 shrink-0" />
+            <div className="grid flex-1 grid-cols-14">
+              {BUCKET_TICKS.map((tick, index) => (
+                <span
+                  key={tick}
+                  className={`text-center text-[10px] leading-4 text-muted-foreground tabular-nums${index % 2 === 1 && index !== OVERFLOW_SLOT ? " @max-[430px]:hidden" : ""}`}
+                >
+                  {tick}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div>
+            {entries.map((entry) => {
+              const color = durationColors[entry.timing] ?? "var(--chart-4)";
+              const name = timingLabels[entry.timing] ?? entry.timing;
+              return (
+                <div key={entry.timing} className="mt-2 flex border-t border-border/50 pt-2 first:mt-0 first:border-t-0 first:pt-0">
+                  <div className="flex w-24 shrink-0 flex-col justify-center">
+                    <span className="text-xs font-medium">{name}</span>
+                    <span className="text-[10px] text-muted-foreground tabular-nums">
+                      样本
                       {" "}
-                      · 样本
-                      {" "}
-                      {count(row.count)}
+                      {count(entry.count)}
                     </span>
-                  );
-                }}
-              />
-            )}
-          />
-          <Bar dataKey="ms" radius={3} isAnimationActive={false}>
-            {rows.map(row => (
-              <Cell
-                key={row.name}
-                fill={durationColors[row.timing] ?? "var(--chart-4)"}
-              />
-            ))}
-          </Bar>
-        </BarChart>
-      </ChartContainer>
+                  </div>
+                  <div className="flex-1">
+                    {QUANTILES.map((q) => {
+                      const slot = slotOf(entry[q]);
+                      return (
+                        <div key={q} className="flex h-6 items-center hover:bg-muted/40">
+                          <span className="w-8 shrink-0 text-[10px] text-muted-foreground">{q}</span>
+                          <div className="relative h-full flex-1" style={GUIDE_LINES}>
+                            {slot !== null && (
+                              <span
+                                data-state={slot.state}
+                                title={`${name} ${q}：${quantileLabel(entry[q])}，样本 ${count(entry.count)}`}
+                                className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                                style={{ left: `${(((slot.index + 0.5) / SLOT_COUNT) * 100).toFixed(2)}%`, ...markerStyle(slot.state, color) }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
       <p className="text-xs text-muted-foreground">
-        柱形为固定桶上界（≤ 该值），非精确分位数；空样本不绘制。
+        圆点位于固定桶刻度（≤ 该值上界；500 及以下为毫秒，1s 起为秒），非精确分位数；带环为超过最大桶，空心为未识别桶值就近放置，空行为无样本；样本数含取消的计时。
       </p>
     </>
   );
