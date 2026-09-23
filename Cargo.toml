@@ -33,6 +33,9 @@ governor = { version = "0.10", default-features = false, features = ["std"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
+[lints]
+workspace = true
+
 [workspace.lints.rust]
 # unsafe fn 内的危险操作仍须显式包在 unsafe 块中
 unsafe_op_in_unsafe_fn = "deny"
