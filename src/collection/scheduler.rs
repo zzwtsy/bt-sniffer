@@ -121,7 +121,15 @@ impl Collector {
                 _ = tick.tick() => {
                     let paused=(self.backpressure.capacity,self.backpressure.backlog,self.storage_paused);
                     if observed_pause!=paused{self.store.observer.emit(crate::observation::Kind::Backpressure,"sampling_pause","changed",||serde_json::json!({"capacity":paused.0,"backlog":paused.1,"storage":paused.2}));observed_pause=paused;}
-                    self.store.observer.state("collector",||serde_json::json!({"running_workers":workers.len(),"capacity_paused":self.backpressure.capacity,"backlog_paused":self.backpressure.backlog,"storage_paused":self.storage_paused,"state_bytes":state_bytes,"tracked_tcp_ips":resources.tcp.tracked_tcp_ips(),"metrics":resources.metrics.snapshot()}));
+                    self.store.observer.state("collector", || serde_json::json!({
+                        "running_workers": workers.len(),
+                        "capacity_paused": self.backpressure.capacity,
+                        "backlog_paused": self.backpressure.backlog,
+                        "storage_paused": self.storage_paused,
+                        "state_bytes": state_bytes,
+                        "tracked_tcp_ips": resources.tcp.tracked_tcp_ips(),
+                        "metrics": resources.metrics.snapshot(),
+                    }));
                     // 先检查容量，再补建和领取，达到保护阈值后停止扩张。
                     if cycles.is_multiple_of(5) && !self.storage_paused {
                         self.check_storage_capacity(work_cancel, &mut state_bytes).await?;

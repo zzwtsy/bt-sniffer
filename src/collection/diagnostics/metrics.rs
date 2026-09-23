@@ -100,7 +100,22 @@ impl Metrics {
     /// 固定累计快照；不消费日志区间，分位保持桶边界语义。
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         let snapshot = self.snapshots.lock().expect("指标锁").0.clone();
-        serde_json::json!({"diagnostics":self.diagnostics.snapshot(),"counters":COUNTERS.iter().zip(snapshot.counts).map(|(counter,value)|serde_json::json!({"counter":counter,"value":value})).collect::<Vec<_>>(),"durations":TIMINGS.iter().zip(snapshot.timings).map(|(timing,h)|serde_json::json!({"timing":timing,"count":h.count(),"overflow":h.overflow(),"p50":h.quantile(50),"p95":h.quantile(95),"p99":h.quantile(99)})).collect::<Vec<_>>()})
+        serde_json::json!({
+            "diagnostics": self.diagnostics.snapshot(),
+            "counters": COUNTERS.iter().zip(snapshot.counts).map(|(counter, value)| {
+                serde_json::json!({"counter": counter, "value": value})
+            }).collect::<Vec<_>>(),
+            "durations": TIMINGS.iter().zip(snapshot.timings).map(|(timing, histogram)| {
+                serde_json::json!({
+                    "timing": timing,
+                    "count": histogram.count(),
+                    "overflow": histogram.overflow(),
+                    "p50": histogram.quantile(50),
+                    "p95": histogram.quantile(95),
+                    "p99": histogram.quantile(99),
+                })
+            }).collect::<Vec<_>>(),
+        })
     }
 
     #[cfg(test)]

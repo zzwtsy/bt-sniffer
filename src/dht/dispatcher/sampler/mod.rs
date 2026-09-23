@@ -748,6 +748,20 @@ mod tests;
 
 impl Sampler {
     pub(super) fn inspection(&self) -> serde_json::Value {
-        self.session.as_ref().map_or(serde_json::Value::Null,|s|serde_json::json!({"target":crate::observation::hex(&s.target.0),"queries":s.queries,"candidates":s.candidates.values().map(|c|serde_json::json!({"node_id":crate::observation::hex(&c.node.id.0),"address":c.node.address.to_string(),"visited":c.visited,"fallback":c.kind==RequestKind::FindNodeFallback,"cooldown_ms":self.ids.get(&c.node.id).map(|v|v.until.saturating_duration_since(std::time::Instant::now()).as_millis() as u64)})).collect::<Vec<_>>()}))
+        self.session.as_ref().map_or(serde_json::Value::Null, |session| {
+            serde_json::json!({
+                "target": crate::observation::hex(&session.target.0),
+                "queries": session.queries,
+                "candidates": session.candidates.values().map(|candidate| serde_json::json!({
+                    "node_id": crate::observation::hex(&candidate.node.id.0),
+                    "address": candidate.node.address.to_string(),
+                    "visited": candidate.visited,
+                    "fallback": candidate.kind == RequestKind::FindNodeFallback,
+                    "cooldown_ms": self.ids.get(&candidate.node.id).map(|value| {
+                        value.until.saturating_duration_since(std::time::Instant::now()).as_millis() as u64
+                    }),
+                })).collect::<Vec<_>>(),
+            })
+        })
     }
 }

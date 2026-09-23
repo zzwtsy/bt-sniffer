@@ -523,7 +523,19 @@ impl RoutingTable {
                 serde_json::json!({"id":id,"count":bucket.nodes.len(),"capacity":BUCKET_SIZE}),
             );
             for node in &bucket.nodes {
-                contacts.push(serde_json::json!({"bucket":id,"node_id":crate::observation::hex(&node.id.0),"address":node.address.to_string(),"status":match node.status(now){NodeStatus::Good=>"good",NodeStatus::Questionable=>"questionable",NodeStatus::Bad=>"bad"},"last_response_age_ms":now.saturating_duration_since(node.last_response).as_millis() as u64}));
+                contacts.push(serde_json::json!({
+                    "bucket": id,
+                    "node_id": crate::observation::hex(&node.id.0),
+                    "address": node.address.to_string(),
+                    "status": match node.status(now) {
+                        NodeStatus::Good => "good",
+                        NodeStatus::Questionable => "questionable",
+                        NodeStatus::Bad => "bad",
+                    },
+                    "last_response_age_ms": now
+                        .saturating_duration_since(node.last_response)
+                        .as_millis() as u64,
+                }));
             }
         }
         serde_json::json!({"observed_at_ms":crate::observation::wall_ms(),"buckets":buckets,"contacts":contacts})

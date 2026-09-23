@@ -91,7 +91,27 @@ async fn run_prepared(
     } else {
         Default::default()
     };
-    observer.state("config",||serde_json::json!({"sample":config.sample,"fetch":config.fetch,"fetch_concurrency":config.fetch_concurrency,"fetch_max_active_jobs":config.fetch_max_active_jobs,"dht_query_rate":config.dht_query_rate,"dht_inbound_rate":config.dht_inbound_rate,"dht_upload_bytes_per_sec":config.dht_upload_bytes_per_sec,"state_max_bytes":config.state_max_bytes,"request_window":settings.metadata.request_window,"max_metadata_bytes":settings.metadata.max_metadata_size,"task_timeout_ms":settings.metadata.task_timeout.as_millis() as u64,"peer_timeout_ms":settings.metadata.peer_timeout.as_millis() as u64,"connect_timeout_ms":settings.metadata.connect_timeout.as_millis() as u64,"handshake_timeout_ms":settings.metadata.handshake_timeout.as_millis() as u64,"piece_timeout_ms":settings.metadata.piece_timeout.as_millis() as u64,"read_only":true,"history_persistent":false}));
+    observer.state("config", || {
+        serde_json::json!({
+            "sample": config.sample,
+            "fetch": config.fetch,
+            "fetch_concurrency": config.fetch_concurrency,
+            "fetch_max_active_jobs": config.fetch_max_active_jobs,
+            "dht_query_rate": config.dht_query_rate,
+            "dht_inbound_rate": config.dht_inbound_rate,
+            "dht_upload_bytes_per_sec": config.dht_upload_bytes_per_sec,
+            "state_max_bytes": config.state_max_bytes,
+            "request_window": settings.metadata.request_window,
+            "max_metadata_bytes": settings.metadata.max_metadata_size,
+            "task_timeout_ms": settings.metadata.task_timeout.as_millis() as u64,
+            "peer_timeout_ms": settings.metadata.peer_timeout.as_millis() as u64,
+            "connect_timeout_ms": settings.metadata.connect_timeout.as_millis() as u64,
+            "handshake_timeout_ms": settings.metadata.handshake_timeout.as_millis() as u64,
+            "piece_timeout_ms": settings.metadata.piece_timeout.as_millis() as u64,
+            "read_only": true,
+            "history_persistent": false,
+        })
+    });
     let monitor_listener = match config.monitor_listen {
         Some(address) => Some(
             crate::monitor::bind(address)

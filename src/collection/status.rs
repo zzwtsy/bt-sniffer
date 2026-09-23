@@ -28,7 +28,22 @@ impl Collector {
             first_attempt_waiting,
             backlog,
         } = snapshot;
-        self.store.observer.state("database",||serde_json::json!({"jobs":{"pending":stats.pending,"running":stats.running,"retry_wait":stats.retry_wait,"dormant":stats.dormant,"succeeded":stats.succeeded},"metadata_count":stats.metadata_count,"metadata_bytes":stats.metadata_bytes,"due_count":due.count,"recent_active":recent_active,"first_attempt_waiting":first_attempt_waiting}));
+        self.store.observer.state("database", || {
+            serde_json::json!({
+                "jobs": {
+                    "pending": stats.pending,
+                    "running": stats.running,
+                    "retry_wait": stats.retry_wait,
+                    "dormant": stats.dormant,
+                    "succeeded": stats.succeeded,
+                },
+                "metadata_count": stats.metadata_count,
+                "metadata_bytes": stats.metadata_bytes,
+                "due_count": due.count,
+                "recent_active": recent_active,
+                "first_attempt_waiting": first_attempt_waiting,
+            })
+        });
         stats.log(false);
         let buffer_limit = self
             .config

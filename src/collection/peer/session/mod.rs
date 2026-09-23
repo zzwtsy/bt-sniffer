@@ -386,7 +386,26 @@ pub(super) async fn fetch_peer(
             } => {
                 let before = state.received;
                 let result = state.data(piece, total_size, data);
-                diagnostic.observer.emit(crate::observation::Kind::Piece,"receive",if result.is_err(){"invalid"}else if state.received==before{"duplicate"}else{"accepted"},||serde_json::json!({"piece":piece,"bytes":data.len(),"received_pieces":state.received,"total_pieces":state.complete.len(),"metadata_bytes":state.bytes.len()}));
+                diagnostic.observer.emit(
+                    crate::observation::Kind::Piece,
+                    "receive",
+                    if result.is_err() {
+                        "invalid"
+                    } else if state.received == before {
+                        "duplicate"
+                    } else {
+                        "accepted"
+                    },
+                    || {
+                        serde_json::json!({
+                            "piece": piece,
+                            "bytes": data.len(),
+                            "received_pieces": state.received,
+                            "total_pieces": state.complete.len(),
+                            "metadata_bytes": state.bytes.len(),
+                        })
+                    },
+                );
                 result?;
             }
         }

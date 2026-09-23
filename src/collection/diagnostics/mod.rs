@@ -118,7 +118,28 @@ impl Diagnostics {
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         let pair = self.snapshots.lock().expect("诊断聚合锁");
         let snapshot = &pair.0;
-        serde_json::json!({"peers":snapshot.peers.iter().map(|(key,d)|serde_json::json!({"stage":key.stage,"source":key.source,"ipv6":key.ipv6,"result":key.result,"deadline":key.deadline,"count":d.count,"sum_ms":d.sum_ms,"p95_upper_bound_ms":d.quantile(95),"p95_exceeds_ms":d.exceeds(95)})).collect::<Vec<_>>(),"failures":snapshot.failures.iter().map(|((stage,source,ipv6,reason),count)|serde_json::json!({"stage":stage,"source":source,"ipv6":ipv6,"reason":reason,"count":count})).collect::<Vec<_>>()})
+        serde_json::json!({
+            "peers": snapshot.peers.iter().map(|(key, distribution)| serde_json::json!({
+                "stage": key.stage,
+                "source": key.source,
+                "ipv6": key.ipv6,
+                "result": key.result,
+                "deadline": key.deadline,
+                "count": distribution.count,
+                "sum_ms": distribution.sum_ms,
+                "p95_upper_bound_ms": distribution.quantile(95),
+                "p95_exceeds_ms": distribution.exceeds(95),
+            })).collect::<Vec<_>>(),
+            "failures": snapshot.failures.iter().map(|((stage, source, ipv6, reason), count)| {
+                serde_json::json!({
+                    "stage": stage,
+                    "source": source,
+                    "ipv6": ipv6,
+                    "reason": reason,
+                    "count": count,
+                })
+            }).collect::<Vec<_>>(),
+        })
     }
 
     /// 基准报告只读取固定聚合，不重置日志区间。

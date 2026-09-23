@@ -95,7 +95,22 @@ async fn query(
             result => {
                 if let Ok(response) = &result {
                     for candidate in &response.nodes {
-                        progress.observer.emit(crate::observation::Kind::Lookup,"candidate","discovered",||serde_json::json!({"from":node.address.to_string(),"node_id":crate::observation::hex(&candidate.id.0),"address":candidate.address.to_string(),"xor_distance":crate::observation::hex(&xor_distance(&candidate.id.0,&hash.0))}));
+                        progress.observer.emit(
+                            crate::observation::Kind::Lookup,
+                            "candidate",
+                            "discovered",
+                            || {
+                                serde_json::json!({
+                                    "from": node.address.to_string(),
+                                    "node_id": crate::observation::hex(&candidate.id.0),
+                                    "address": candidate.address.to_string(),
+                                    "xor_distance": crate::observation::hex(&xor_distance(
+                                        &candidate.id.0,
+                                        &hash.0,
+                                    )),
+                                })
+                            },
+                        );
                     }
                     for peer in &response.peers {
                         progress.observer.emit(crate::observation::Kind::Lookup,"peer","discovered",||serde_json::json!({"from":node.address.to_string(),"peer":peer.to_string()}));

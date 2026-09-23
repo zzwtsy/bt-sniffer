@@ -101,8 +101,21 @@ impl CollectionStore {
             }
             // 领取失效时没有写入，但仍需显式 commit；提交报错时返回 Err，不返回 Stale。
             tx.commit()?;
-            observer.emit(crate::observation::Kind::Retry,"retry",if applied{"applied"}else{"stale"},||serde_json::json!({"reason":reason.category(),"remote_failure":reason.failure_category().is_some(),"state":scheduled.as_ref().map(|t|t.state),"remote_failures":scheduled.as_ref().map(|t|t.attempts),"due_at_ms":scheduled.as_ref().map(|t|t.due_at)}));
-            observation.finish(if applied{"applied"}else{"stale"});
+            observer.emit(
+                crate::observation::Kind::Retry,
+                "retry",
+                if applied { "applied" } else { "stale" },
+                || {
+                    serde_json::json!({
+                        "reason": reason.category(),
+                        "remote_failure": reason.failure_category().is_some(),
+                        "state": scheduled.as_ref().map(|transition| transition.state),
+                        "remote_failures": scheduled.as_ref().map(|transition| transition.attempts),
+                        "due_at_ms": scheduled.as_ref().map(|transition| transition.due_at),
+                    })
+                },
+            );
+            observation.finish(if applied { "applied" } else { "stale" });
             Ok(if applied {
                 UpdateResult::Applied
             } else {
