@@ -26,7 +26,7 @@ src/
 │   ├── transaction/        响应匹配、截止时间和取消
 │   ├── routing/            分地址族路由表
 │   ├── persistence/        身份、联系人、采样冷却的 SQL
-│   ├── traffic/            双栈共享的流量预算与统计
+│   ├── traffic/            双栈共享的配额 API、GCRA、状态与固定大小报告
 │   ├── peer_store/         有界 peer 缓存
 │   ├── token/              announce token
 │   └── shortlist.rs        有界查找候选

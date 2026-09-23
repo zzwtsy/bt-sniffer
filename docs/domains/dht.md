@@ -22,6 +22,8 @@ UDP 字典乱序兼容位于 `udp/ordering.rs`，仅处理协议允许兼容的�
 
 所有节点共用会话 `Budget`。主动查询额度分为 collector、control、sampling、verification：collector 获得总额的整数一半，sampling 与 verification 各为整数十分之一，余量给 control。允许一秒额度突发，不应把短窗口瞬时速率直接当违规。
 
+`traffic` 内部由 `api` 固定类别与统计结构，`limiter` 适配 Tokio 时钟和 GCRA，`state` 独占组合配额与 IP 状态，`report` 在锁外格式化固定大小快照。`Budget` 始终用同一个同步锁覆盖组合探测与统一扣减，不跨 `await` 持锁。
+
 UDP upload 计算 payload 字节，1/8 给主动查询、其余给回复；普通入站与响应预留分别控制。组合配额在短同步锁中先探测再提交，避免目标 IP 受限时无谓消耗其他额度；锁不能跨 await。待发、在途 transaction、IP 跟踪表都有容量与时间限制。修改容量时连同取消、超时和占用统计一起测试，不改成无限队列。
 
 可配置默认值只在[参数表](../operations/running.md#参数)维护。排队、实际发送、响应验证是不同事件，统计口径见[事件参考](log-events.md)。共享预算使双栈不会各自突破配置总量，代价是地址族和请求类别相互竞争；调整分配应以类别等待和实际成功率为证据，而非单看包数。
