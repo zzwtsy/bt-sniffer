@@ -11,7 +11,7 @@ src/
 │   ├── config.rs           CLI 定义、默认值和冲突校验
 │   ├── collection_config.rs  CLI 到采集与采样策略的转换
 │   ├── bootstrap/          DNS 引导与启动查询
-│   ├── session/            任务监督、故障分类和有序关闭
+│   ├── session/            会话状态、资源启动、任务监督、故障分类和有序关闭
 │   ├── logging/            过滤、格式、writer 和队列诊断
 │   └── sockets.rs          地址族与 socket 绑定策略
 ├── dht/                    DHT 协议与节点状态
