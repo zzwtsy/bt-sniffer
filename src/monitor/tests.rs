@@ -1,12 +1,16 @@
 //! HTTP/SSE 资源边界和真实 socket 收尾，不启动公网。
 #![cfg(test)]
 use super::*;
-use crate::storage::{Storage, StorageConfig};
+use crate::{
+    collection::catalog::ensure_catalog,
+    storage::{Storage, StorageConfig},
+};
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use futures_util::StreamExt;
+use sha1::{Digest, Sha1};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceExt;
 
@@ -35,6 +39,37 @@ async fn get(s: &Arc<State>, uri: &str) -> axum::response::Response {
         .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap()
+}
+
+async fn body_json(response: axum::response::Response) -> Value {
+    serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+}
+
+async fn insert_torrent(state: &Arc<State>) -> String {
+    let info =
+        b"d6:lengthi42e4:name12:example-file12:piece lengthi16e6:pieces20:aaaaaaaaaaaaaaaaaaaae"
+            .to_vec();
+    let hash: [u8; 20] = Sha1::digest(&info).into();
+    let hash_for_db = hash;
+    state
+        .store
+        .call(move |connection| {
+            let tx = connection.transaction()?;
+            tx.execute(
+                "INSERT INTO infohashes(hash,first_seen,last_seen) VALUES(?1,1,1)",
+                [hash_for_db.as_slice()],
+            )?;
+            tx.execute(
+                "INSERT INTO metadata(hash,info,fetched_at) VALUES(?1,?2,3)",
+                rusqlite::params![hash_for_db.as_slice(), info.as_slice()],
+            )?;
+            ensure_catalog(&tx, &hash_for_db, &info)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    crate::observation::hex(&hash)
 }
 #[tokio::test]
 async fn snapshot_keeps_stable_outer_contract() {
@@ -113,6 +148,46 @@ async fn minimal_read_only_api_and_removed_routes() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
     }
+    storage.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn torrent_catalog_api_lists_searches_and_reads_files() {
+    let (_dir, storage, state) = fixture().await;
+    let hash = insert_torrent(&state).await;
+
+    let list = get(&state, "/api/v1/torrents?limit=1").await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let list = body_json(list).await;
+    assert_eq!(list["items"][0]["hash"], hash);
+    assert_eq!(list["index"]["complete"], true);
+
+    let search = body_json(get(&state, "/api/v1/torrents?q=AMPLE").await).await;
+    assert_eq!(search["items"][0]["name"], "example-file");
+    assert!(search["items"][0]["match_excerpt"].is_string());
+
+    let detail = body_json(get(&state, &format!("/api/v1/torrents/{hash}")).await).await;
+    assert_eq!(detail["total_length"], "42");
+    assert_eq!(detail["file_count"], 1);
+
+    let files =
+        body_json(get(&state, &format!("/api/v1/torrents/{hash}/files?limit=100")).await).await;
+    assert_eq!(files["items"][0]["path"], "example-file");
+    assert_eq!(files["items"][0]["length"], "42");
+
+    assert_eq!(
+        get(&state, "/api/v1/torrents?q=ab").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        get(
+            &state,
+            "/api/v1/torrents/0000000000000000000000000000000000000000"
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
     storage.shutdown().await.unwrap();
 }
 #[tokio::test(start_paused = true)]

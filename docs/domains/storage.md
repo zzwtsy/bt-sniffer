@@ -12,7 +12,7 @@ Storage 打开状态目录并独占 `instance.lock`，连接 `state.sqlite3`，�
 
 ## schema 与业务事务
 
-当前 user_version 为 2：新库在同一迁移事务中执行 v1、v2；v1 可迁移到 v2；高于 2 的版本拒绝打开。版本 2 会补建领取索引。补索引在迁移事务提交后执行，索引失败不撤销已提交的版本迁移。
+当前 user_version 为 3：新库在同一迁移事务中执行 v1、v2、v3，旧库逐级迁移；高于 3 的版本拒绝打开。版本 2 的领取索引仍在迁移事务提交后补建，失败不撤销已提交的版本迁移。版本 3 新增可重建目录、FTS5 trigram 外部内容索引和索引计数状态；升级前 metadata 由 Monitor 后台逐条回填。
 
 | 表 | 核心事实与约束 |
 | --- | --- |
@@ -23,8 +23,11 @@ Storage 打开状态目录并独占 `instance.lock`，连接 `state.sqlite3`，�
 | sampling_cooldowns | 身份、节点/IP kind、key、16 字节 lease、pending、期限与失败次数 |
 | fetch_jobs | 状态、attempts、due_at、generation、updated_at 与 error |
 | peer_hints | hash 对应地址与 observed_at |
+| torrent_catalog | v1 info 的有界展示摘要、解析状态和搜索派生文本 |
+| torrent_catalog_fts | 名称及完整文件路径的 trigram 字面子串索引 |
+| torrent_catalog_state | metadata 总数与已建立目录的数量 |
 
-完整 SQL 和索引定义以 schema 为准；状态含义只在[采集专题](collection.md)维护。完成事务把 metadata、任务状态、提示清理作为一个原子操作。存储校验和事务不能被仅对内存对象的检查替代。
+完整 SQL 和索引定义以 schema 为准；状态含义只在[采集专题](collection.md)维护。完成事务把 metadata、目录/FTS、任务状态、提示清理作为一个原子操作；语义解析失败写入 `unavailable` 目录行，不改变原始 metadata 的接纳规则。存储校验和事务不能被仅对内存对象的检查替代。
 
 诊断组合查询使用一次只读事务，避免跨命令读取到不同提交状态；完整读取口径由[采集诊断](collection.md#诊断读取)维护。它仍占用专用线程，不能视为无成本读取，也不改变命令或载荷预算。
 

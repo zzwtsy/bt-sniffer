@@ -1,6 +1,6 @@
 # 系统架构
 
-bt-sniffer 是单 binary crate 的 BitTorrent DHT 发现与原始 metadata 采集程序。它保存 v1 info hash 和校验后的原始 info 字节，不下载文件内容，也不提供 torrent 导出、搜索目录或完整 v2 采集能力。
+bt-sniffer 是单 binary crate 的 BitTorrent DHT 发现与原始 metadata 采集程序。它保存 v1 info hash 和校验后的原始 info 字节，并为本地保存结果建立可重建的只读搜索目录；不下载文件内容，也不提供 torrent 导出或完整 v2 采集能力。
 
 源码入口：[main](../../src/main.rs)、[应用组装](../../src/app/mod.rs)、[采集](../../src/collection/mod.rs)。验证入口：`app::tests` 与 `collection::tests`；执行方式见[验证指南](../development/validation.md)。
 

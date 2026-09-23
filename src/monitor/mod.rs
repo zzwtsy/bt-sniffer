@@ -80,6 +80,7 @@ impl Monitor {
         let connections = Arc::new(Mutex::new(JoinSet::new()));
         tasks.spawn(serve(listener, state.clone(), connections.clone()));
         tasks.spawn(refresh(state.clone()));
+        tasks.spawn(backfill_catalog(state.clone()));
         Self {
             connections,
             tasks,
@@ -153,12 +154,15 @@ impl Drop for Monitor {
     }
 }
 impl State {
-    async fn stats(&self) -> Result<CollectionInspection, ReadError> {
-        let permit = self
-            .database
+    fn database_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit, ReadError> {
+        self.database
             .clone()
             .try_acquire_owned()
-            .map_err(|_| ReadError::Busy)?;
+            .map_err(|_| ReadError::Busy)
+    }
+
+    async fn stats(&self) -> Result<CollectionInspection, ReadError> {
+        let permit = self.database_permit()?;
         let cancel = self.stop.child_token();
         let _guard = cancel.clone().drop_guard();
         tokio::time::timeout(Duration::from_secs(2), self.store.inspect(permit, cancel))
@@ -188,6 +192,43 @@ impl State {
             cached: self.cached_summary(),
         })
         .expect("监控 snapshot 只包含可序列化状态")
+    }
+}
+
+/// 旧 metadata 每轮只补一条；HTTP 查询占用数据库许可时直接让出本轮。
+async fn backfill_catalog(state: Arc<State>) {
+    let mut cursor = None;
+    loop {
+        if state.stop.is_cancelled() {
+            break;
+        }
+        let Ok(permit) = state.database_permit() else {
+            tokio::select! {
+                _ = state.stop.cancelled() => break,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
+            }
+        };
+        let cancel = state.stop.child_token();
+        let _guard = cancel.clone().drop_guard();
+        match state
+            .store
+            .backfill_catalog_one(cursor, permit, cancel)
+            .await
+        {
+            Ok(step) => {
+                cursor = step.cursor;
+                if step.complete {
+                    state.stop.cancelled().await;
+                    break;
+                }
+            }
+            Err(ReadError::Cancelled) if state.stop.is_cancelled() => break,
+            Err(_) => {}
+        }
+        tokio::select! {
+            _ = state.stop.cancelled() => break,
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
     }
 }
 

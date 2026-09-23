@@ -1,10 +1,11 @@
 //! 最小监控 HTTP/SSE 接口；错误响应不解析底层错误文字。
 use super::*;
+use crate::info_hash::InfoHashV1;
 use crate::observation::Filter;
 use axum::{
     Router,
     extract::Request,
-    extract::{Query as Params, State as Extract},
+    extract::{Path, Query as Params, State as Extract},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
@@ -21,6 +22,9 @@ pub(super) fn router(state: Arc<State>) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/stream", get(stream))
+        .route("/api/v1/torrents", get(torrents))
+        .route("/api/v1/torrents/{hash}", get(torrent))
+        .route("/api/v1/torrents/{hash}/files", get(torrent_files))
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found") })
         .layer(middleware::from_fn_with_state(state.clone(), limit))
         .with_state(state)
@@ -53,6 +57,124 @@ fn response(value: Value) -> Response {
         body,
     )
         .into_response()
+}
+
+fn read_error(error_value: ReadError) -> Response {
+    match error_value {
+        ReadError::Invalid => error(StatusCode::BAD_REQUEST, "invalid_query"),
+        ReadError::Missing => error(StatusCode::NOT_FOUND, "not_found"),
+        ReadError::Busy => error(StatusCode::TOO_MANY_REQUESTS, "database_capacity"),
+        ReadError::Cancelled => error(StatusCode::GATEWAY_TIMEOUT, "query_timeout"),
+        ReadError::Unavailable => error(StatusCode::SERVICE_UNAVAILABLE, "data_unavailable"),
+    }
+}
+
+fn json_response(value: impl Serialize) -> Response {
+    match serde_json::to_value(value) {
+        Ok(value) => response(value),
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "data_unavailable"),
+    }
+}
+
+fn parse_hash(value: &str) -> Result<InfoHashV1, ReadError> {
+    if value.len() != 40 {
+        return Err(ReadError::Invalid);
+    }
+    let mut hash = [0; 20];
+    for (index, byte) in hash.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+            .map_err(|_| ReadError::Invalid)?;
+    }
+    Ok(InfoHashV1(hash))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TorrentsQuery {
+    q: Option<String>,
+    after: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn torrents(
+    Extract(state): Extract<Arc<State>>,
+    Params(query): Params<TorrentsQuery>,
+) -> Response {
+    let permit = match state.database_permit() {
+        Ok(permit) => permit,
+        Err(error_value) => return read_error(error_value),
+    };
+    let cancel = state.stop.child_token();
+    let _guard = cancel.clone().drop_guard();
+    match state
+        .store
+        .catalog_page(
+            query.q,
+            query.after,
+            query.limit.unwrap_or(50),
+            permit,
+            cancel,
+        )
+        .await
+    {
+        Ok(page) => json_response(page),
+        Err(error_value) => read_error(error_value),
+    }
+}
+
+async fn torrent(Extract(state): Extract<Arc<State>>, Path(hash): Path<String>) -> Response {
+    let hash = match parse_hash(&hash) {
+        Ok(hash) => hash,
+        Err(error_value) => return read_error(error_value),
+    };
+    let permit = match state.database_permit() {
+        Ok(permit) => permit,
+        Err(error_value) => return read_error(error_value),
+    };
+    let cancel = state.stop.child_token();
+    let _guard = cancel.clone().drop_guard();
+    match state.store.torrent_detail(hash, permit, cancel).await {
+        Ok(detail) => json_response(detail),
+        Err(error_value) => read_error(error_value),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesQuery {
+    after: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn torrent_files(
+    Extract(state): Extract<Arc<State>>,
+    Path(hash): Path<String>,
+    Params(query): Params<FilesQuery>,
+) -> Response {
+    let hash = match parse_hash(&hash) {
+        Ok(hash) => hash,
+        Err(error_value) => return read_error(error_value),
+    };
+    let permit = match state.database_permit() {
+        Ok(permit) => permit,
+        Err(error_value) => return read_error(error_value),
+    };
+    let cancel = state.stop.child_token();
+    let _guard = cancel.clone().drop_guard();
+    match state
+        .store
+        .torrent_files(
+            hash,
+            query.after,
+            query.limit.unwrap_or(100),
+            permit,
+            cancel,
+        )
+        .await
+    {
+        Ok(page) => json_response(page),
+        Err(error_value) => read_error(error_value),
+    }
 }
 async fn limit(Extract(state): Extract<Arc<State>>, request: Request, next: Next) -> Response {
     if state.stop.is_cancelled() {

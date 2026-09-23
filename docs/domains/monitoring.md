@@ -4,21 +4,24 @@
 
 ## 启用与事实边界
 
-通过 [monitor-listen 参数](../operations/running.md#参数)显式启用，只监听 loopback。浏览器使用同源代理访问，无 CORS。所有接口只支持 GET；不提供任务操作或 metadata 正文。省略参数时不创建观测缓存、刷新任务或 HTTP 服务，事件变长数据通过惰性闭包构造。
+通过 [monitor-listen 参数](../operations/running.md#参数)显式启用，只监听 loopback。浏览器使用同源代理访问，无 CORS。所有接口只支持 GET；不提供任务操作、原始 metadata、piece hash 或 torrent 导出。省略参数时不创建观测缓存、刷新任务、目录回填或 HTTP 服务，事件变长数据通过惰性闭包构造。
 
-SQLite schema 仍为 v2，是任务和 metadata 的持久事实。过程事件仅属于当前 `run_id`，复用日志运行标识；重启丢失过程历史。监控数据不参与领取、peer 选择和重试。来源缺失返回 `null` 或不提供关联字段，不能通过当前提示推断最初发现来源。
+SQLite schema v3 是任务、metadata 和可重建查询目录的持久事实。过程事件仅属于当前 `run_id`，复用日志运行标识；重启丢失过程历史。监控数据不参与领取、peer 选择和重试。来源缺失返回 `null` 或不提供关联字段，不能通过当前提示推断最初发现来源。
 
 内存状态独立维护，不依赖重放历史。节点、collector 和数据库分别携带观察时间，快照不承诺跨节点或 SQLite 原子一致。指标读取不清空日志统计区间；固定桶分位值表示桶上界，不能跨区间相除构造成功率。
 
 ## GET 接口
 
-统一前缀 `/api/v1`。JSON 接口不提供列表分页；SSE 的 `after` 是 `run_id:sequence` 游标。
+统一前缀 `/api/v1`。目录 JSON 使用不透明 keyset 游标；SSE 的 `after` 是 `run_id:sequence` 游标。
 
 | 路径 | 参数与内容 |
 | --- | --- |
 | `/health` | 运行阶段和缓存数据源状态；collector 返回独立暂停状态，完整指标见 snapshot 的 runtime |
 | `/snapshot` | `schema_version`、`window`、`runtime` 当前状态及 `cached` 节点、共享流量和数据库统计 |
 | `/stream` | SSE，after 格式为 run_id:sequence |
+| `/torrents?q=&after=&limit=` | 空 q 返回最近目录；非空 q 为 3–200 字符名称/完整文件路径字面子串；默认 50、最大 100 条，并返回索引进度 |
+| `/torrents/{hash}` | 40 位 v1 hash 的摘要；读取原始 info 前重新核对 SHA1 和完整字典 |
+| `/torrents/{hash}/files?after=&limit=` | 原始顺序文件清单；默认及最大 100 条，单文件也返回一条 |
 
 除此之外的 `/api/v1` 路径不匹配监控路由，GET 返回 404；不提供旧接口重定向。非 GET 请求仍由只读中间件返回 405。
 
@@ -77,6 +80,6 @@ kind 为 lifecycle、bootstrap、routing、rpc、sampling、discovery、admissio
 
 HTTP 请求头读取由 Hyper 的 Tokio 计时器限制为 30 秒，超时连接退出后释放连接额度；这是协议层行为，不承诺 API JSON 错误响应。该期限不代表通用连接空闲超时，也不限制 SSE 响应持续时间。完整请求进入 API 后另受 2 秒请求等待预算约束。
 
-监控 SQL 经过原 Store 和唯一数据库线程。进度回调每 1000 个 SQLite VM 指令检查取消及执行预算，作用域结束移除；不能硬中断阻塞磁盘 I/O。查询许可由数据库闭包持有，HTTP 超时不提前释放，不形成无界补发。监控读取中断不会触发采集写入暂停。
+监控 SQL 经过原 Store 和唯一数据库线程。进度回调每 1000 个 SQLite VM 指令检查取消及执行预算，作用域结束移除；不能硬中断阻塞磁盘 I/O。查询许可由数据库闭包持有，HTTP 超时不提前释放，不形成无界补发。目录回填每次处理一条、批次间至少等待 100 ms，HTTP 已占数据库许可时跳过本轮；提交目录行和计数后才推进，重启从缺失行恢复。监控读取中断不会触发采集写入暂停。
 
 绑定失败是启动失败；运行期监控故障只停止监控。Session 开始关闭后停止接受请求和刷新、取消监控查询，已有 SSE 仍可读业务收尾事件。业务及数据库收尾后结束 SSE，最终推送最多占共同剩余期限中的 1 秒。HTTP 任务及连接由 Session 的 Monitor 持有并回收，不另追加 30 秒预算；整体关闭规则见[生命周期](../architecture/lifecycle.md)。
