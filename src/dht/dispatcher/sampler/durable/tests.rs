@@ -1,9 +1,16 @@
 //! 使用真实临时 SQLite 验证预约、确认与结算；线程完成靠消息确认，不靠推进虚拟时间。
-use super::*;
+use super::super::{
+    api::{SampleBatch, SamplerConfig, SamplerError},
+    protocol::SampleResponse,
+};
+use super::{PauseReason, Sampler};
+use crate::dht::krpc::NodeId;
 use crate::dht::persistence::identity::load_or_create;
 use crate::dht::persistence::test_storage::TestStorage as Storage;
-use crate::dht::routing::AddressFamily;
+use crate::dht::routing::{AddressFamily, RoutingTable};
 use crate::storage::StorageConfig;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 /// 保留目录、数据库和会话的独立所有权，测试按原顺序显式关闭数据库。
 struct Fixture {

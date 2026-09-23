@@ -18,7 +18,7 @@ src/
 │   ├── dispatcher/         单节点状态与事件循环
 │   │   ├── runtime/        接收、命令、计时器和任务推进
 │   │   ├── peer_queries/   get_peers 与 announce 请求处理
-│   │   ├── sampler/        采样接口及 durable 冷却预约
+│   │   ├── sampler/        主动采样协议、调度、结果、dispatcher 接线及 durable 冷却预约
 │   │   └── sampling/       采样查询与结果处理
 │   ├── krpc/               消息编码、解码和 compact 地址
 │   ├── udp/                UDP 边界与字典顺序兼容

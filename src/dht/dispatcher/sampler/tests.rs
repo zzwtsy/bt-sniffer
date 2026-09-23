@@ -1,9 +1,21 @@
 //! 状态机测试不访问公网；用固定的路由节点、显式时间验证预算与冷却。
-use super::*;
-use crate::dht::krpc::CompactNodesV4;
-use crate::dht::krpc::InfoHashSamples;
-use crate::dht::peer_store::PeerAddressPolicy;
-use crate::dht::routing::AddressFamily;
+use super::super::api::{DiscoveredNode, QueryError};
+use super::{
+    PauseReason, RequestKind, SampleBatch, SampleResponse, Sampler, SamplerConfig, SamplerError,
+    decode_sample,
+    state::{OutputWatch, UNSUPPORTED_FOR},
+    watch_output,
+};
+use crate::{
+    dht::{
+        krpc::{CompactNodesV4, InfoHashSamples, NodeId},
+        peer_store::PeerAddressPolicy,
+        routing::{AddressFamily, RoutingTable},
+    },
+    info_hash::InfoHashV1,
+};
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 fn config() -> SamplerConfig {
     SamplerConfig {

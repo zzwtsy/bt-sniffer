@@ -1,7 +1,7 @@
 //! 数据库确认由 select 驱动，绝不在 UDP 收发分支中等待磁盘。
 //!
 //! Sampler 长期持有预约和结算 future；事件循环取消一次等待不会撤销已接纳的数据库命令。
-use super::*;
+use super::state::{Cooldown, PauseReason, Request, RequestKind, Sampler, UNSUPPORTED_FOR};
 use crate::clock::Clock;
 use crate::dht::persistence::CooldownLease;
 use crate::dht::persistence::DhtStore;
@@ -9,6 +9,10 @@ use crate::dht::persistence::RestoredCooldown;
 use crate::dht::persistence::identity::LocalIdentity;
 use crate::storage::StorageError;
 use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
+use std::{
+    future::pending,
+    time::{Duration, Instant},
+};
 #[cfg(test)]
 mod tests;
 
