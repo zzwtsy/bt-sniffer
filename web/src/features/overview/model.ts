@@ -1,22 +1,32 @@
-import type { ObservationEvent, Snapshot } from "@/lib/observation/contracts";
-import { number, record, rows, source } from "@/lib/observation/contracts";
+import type { KnownKind, ObservationEvent, Snapshot } from "@/lib/observation/contracts";
+import {
+  ATTEMPT_KIND,
+  databaseCacheSchema,
+  EVENT_RESULT,
+  EVENT_STEP,
+  KIND,
+  number,
+  record,
+  rows,
+  source,
+} from "@/lib/observation/contracts";
 import { duration } from "@/lib/observation/format";
 
 /** 七泳道定义；颜色只引用 CSS token 名，由画布经 getComputedStyle 解析。 */
 export interface Stage {
   id: string;
   title: string;
-  kinds: readonly string[];
+  kinds: readonly KnownKind[];
   color: string;
 }
 export const STAGES: readonly Stage[] = [
-  { id: "discovery", title: "发现", kinds: ["sampling", "discovery"], color: "--chart-1" },
-  { id: "admission", title: "接纳", kinds: ["admission"], color: "--chart-2" },
-  { id: "claim", title: "领取", kinds: ["job"], color: "--chart-3" },
-  { id: "lookup", title: "查找", kinds: ["lookup", "rpc"], color: "--chart-4" },
-  { id: "transfer", title: "下载", kinds: ["peer", "piece"], color: "--chart-5" },
-  { id: "validation", title: "校验", kinds: ["validation"], color: "--status-warning" },
-  { id: "commit", title: "提交", kinds: ["commit"], color: "--status-success" },
+  { id: "discovery", title: "发现", kinds: [KIND.sampling, KIND.discovery], color: "--chart-1" },
+  { id: "admission", title: "接纳", kinds: [KIND.admission], color: "--chart-2" },
+  { id: "claim", title: "领取", kinds: [KIND.job], color: "--chart-3" },
+  { id: "lookup", title: "查找", kinds: [KIND.lookup, KIND.rpc], color: "--chart-4" },
+  { id: "transfer", title: "下载", kinds: [KIND.peer, KIND.piece], color: "--chart-5" },
+  { id: "validation", title: "校验", kinds: [KIND.validation], color: "--status-warning" },
+  { id: "commit", title: "提交", kinds: [KIND.commit], color: "--status-success" },
 ];
 /** runtime.active 的 step 只覆盖以下阶段；其余泳道没有在途概念。 */
 export const LOOKUP_ACTIVE_STEPS: readonly string[] = ["lookup"];
@@ -36,10 +46,12 @@ export const JOB_STATES = [
 
 /** metadata 事务终态是提交统计的唯一口径；metadata 事件只是同次提交的附加证据。 */
 export function isCommitFinished(event: ObservationEvent): boolean {
-  return event.kind === "commit" && event.step === "complete_transaction" && event.result !== "started";
+  return event.kind === KIND.commit
+    && event.step === EVENT_STEP.completeTransaction
+    && event.result !== EVENT_RESULT.started;
 }
 export function isCommitApplied(event: ObservationEvent): boolean {
-  return isCommitFinished(event) && event.result === "applied";
+  return isCommitFinished(event) && event.result === EVENT_RESULT.applied;
 }
 
 /** 生命周期时钟；暂停后保留最后时间，恢复不计入冻结时长。 */
@@ -71,16 +83,16 @@ const FAILURE = /failed|error|invalid|mismatch|timeout/;
 export type Source = "sample" | "announce" | "backfill" | "neutral";
 /** 来源着色只依据明确字段；无法判断时保持中性，不猜测。 */
 export function sourceOf(event: ObservationEvent): Source {
-  if (event.kind === "discovery" && event.step === "announce")
+  if (event.kind === KIND.discovery && event.step === EVENT_STEP.announce)
     return "announce";
-  if (event.kind === "discovery" && event.step === "hash_saved")
+  if (event.kind === KIND.discovery && event.step === EVENT_STEP.hashSaved)
     return "sample";
-  if (event.kind === "admission" && event.step === "backfill")
+  if (event.kind === KIND.admission && event.step === EVENT_STEP.backfill)
     return "backfill";
   if (
-    event.kind === "job"
-    && event.step === "claim"
-    && record(event.data).attempt_kind === "repeat"
+    event.kind === KIND.job
+    && event.step === EVENT_STEP.claim
+    && record(event.data).attempt_kind === ATTEMPT_KIND.repeat
   ) {
     return "backfill";
   }
@@ -149,7 +161,7 @@ export class ParticlePool {
   }
 
   private apply(event: ObservationEvent) {
-    if (event.kind === "commit" && event.step !== "complete_transaction")
+    if (event.kind === KIND.commit && event.step !== EVENT_STEP.completeTransaction)
       return;
     const now = this.clock();
     if (isCommitApplied(event))
@@ -157,15 +169,15 @@ export class ParticlePool {
     const hash = event.context.hash;
     if (hash === undefined || hash === "")
       return;
-    const stage = STAGES.findIndex(s => s.kinds.includes(event.kind));
-    const isRetry = event.kind === "retry";
+    const stage = STAGES.findIndex(s => s.kinds.includes(event.kind as KnownKind));
+    const isRetry = event.kind === KIND.retry;
     if (stage === -1 && !isRetry)
       return;
     const failed
       = FAILURE.test(event.result)
-        || (event.kind === "commit"
-          && event.result !== "applied"
-          && event.result !== "started");
+        || (event.kind === KIND.commit
+          && event.result !== EVENT_RESULT.applied
+          && event.result !== EVENT_RESULT.started);
     let particle = this.particles.get(hash);
     if (particle?.leaving) {
       this.particles.delete(hash);
@@ -195,9 +207,11 @@ export class ParticlePool {
       particle.source = origin;
     // 重新发现、重试与再次领取都使粒子重新流动
     const revive
-      = event.kind === "discovery"
-        || event.kind === "retry"
-        || (event.kind === "job" && event.step === "claim" && event.result === "applied");
+      = event.kind === KIND.discovery
+        || event.kind === KIND.retry
+        || (event.kind === KIND.job
+          && event.step === EVENT_STEP.claim
+          && event.result === EVENT_RESULT.applied);
     if (particle.falling && !revive) {
       particle.sequence = event.sequence;
       return;
@@ -260,16 +274,19 @@ export function summarizeOverview(events: ObservationEvent[], now: number) {
   let commitApplied = 0;
   let commitFinished = 0;
   for (const event of events) {
-    if (event.kind === "discovery") {
+    if (event.kind === KIND.discovery) {
       discoveries++;
       if (event.at_ms >= now - 60_000)
         recent++;
     }
-    if (event.kind === "admission" && event.result === "applied")
+    if (event.kind === KIND.admission && event.result === EVENT_RESULT.applied)
       admissions++;
-    if (event.kind === "job" && event.step === "claim" && event.result === "applied")
+    if (event.kind === KIND.job
+      && event.step === EVENT_STEP.claim
+      && event.result === EVENT_RESULT.applied) {
       claims++;
-    if (event.kind === "validation")
+    }
+    if (event.kind === KIND.validation)
       validation++;
     if (isCommitFinished(event)) {
       commitFinished++;
@@ -365,21 +382,19 @@ export interface JobStates {
 }
 /** 数据库 30 秒刷新的任务状态统计；数据库缺失时返回 undefined。 */
 export function jobStates(snapshot: Snapshot | undefined): JobStates | undefined {
-  const database = record(snapshot?.cached.database);
-  if (database.available !== true)
+  const parsed = databaseCacheSchema.safeParse(snapshot?.cached.database);
+  if (!parsed.success || !parsed.data.available)
     return undefined;
-  const jobs = record(record(database.value).jobs);
+  const database = parsed.data;
+  const jobs = database.value.jobs;
   const states: JobStates["states"] = [];
   for (const state of JOB_STATES) {
-    const count = number(jobs[state]);
-    if (count === undefined || !Number.isInteger(count) || count < 0)
-      return undefined;
-    states.push({ state, count });
+    states.push({ state, count: jobs[state] });
   }
   return {
     states,
-    observedAt: number(database.observed_at_ms),
-    stale: database.stale === true,
+    observedAt: database.observed_at_ms,
+    stale: database.stale,
   };
 }
 
@@ -427,7 +442,7 @@ export function discoveryPerMinute(
 ): number {
   let count = 0;
   for (const event of events) {
-    if (event.kind === "discovery" && event.at_ms >= now - 60_000)
+    if (event.kind === KIND.discovery && event.at_ms >= now - 60_000)
       count++;
   }
   return count;

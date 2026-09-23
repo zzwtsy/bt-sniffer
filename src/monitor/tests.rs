@@ -37,6 +37,39 @@ async fn get(s: &Arc<State>, uri: &str) -> axum::response::Response {
         .unwrap()
 }
 #[tokio::test]
+async fn snapshot_keeps_stable_outer_contract() {
+    let (_dir, storage, state) = fixture().await;
+    let snapshot = state.snapshot();
+    assert_eq!(snapshot["schema_version"], 1);
+    assert_eq!(snapshot["window"]["run_id"], "test-run");
+    assert!(snapshot["runtime"]["sources"].is_object());
+    assert_eq!(snapshot["cached"]["nodes"], json!([]));
+    assert_eq!(snapshot["cached"]["database"]["available"], false);
+    storage.shutdown().await.unwrap();
+}
+
+#[test]
+fn database_cache_preserves_value_across_failure_and_recovers() {
+    let mut cache = json!({"nodes":[],"database":{"available":false}});
+    mark_database_stale(&mut cache);
+    assert_eq!(cache["database"], json!({"available":false,"stale":true}));
+
+    cache_database(&mut cache, 100, json!({"jobs":{"pending":1}}));
+    assert_eq!(cache["database"]["available"], true);
+    assert_eq!(cache["database"]["stale"], false);
+    assert_eq!(cache["database"]["observed_at_ms"], 100);
+    assert_eq!(cache["database"]["value"]["jobs"]["pending"], 1);
+
+    mark_database_stale(&mut cache);
+    assert_eq!(cache["database"]["stale"], true);
+    assert_eq!(cache["database"]["value"]["jobs"]["pending"], 1);
+
+    cache_database(&mut cache, 200, json!({"jobs":{"pending":2}}));
+    assert_eq!(cache["database"]["stale"], false);
+    assert_eq!(cache["database"]["observed_at_ms"], 200);
+    assert_eq!(cache["database"]["value"]["jobs"]["pending"], 2);
+}
+#[tokio::test]
 async fn minimal_read_only_api_and_removed_routes() {
     let (_dir, storage, state) = fixture().await;
     assert_eq!(get(&state, "/api/v1/health").await.status(), StatusCode::OK);

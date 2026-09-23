@@ -400,10 +400,24 @@ test("任务环图区分数据库不可用、完整零值和陈旧统计", async
   await page.goto("/");
   await expect(page.getByText("数据库统计尚不可用。", { exact: true })).toBeVisible();
   const jobs = { pending: 0, running: 0, retry_wait: 0, dormant: 0, succeeded: 0 };
-  database = { available: true, value: { jobs } };
+  database = {
+    available: true,
+    stale: false,
+    observed_at_ms: Date.now(),
+    value: { jobs, metadata_count: 0, metadata_bytes: 0 },
+  };
   await page.reload();
   await expect(page.getByText("数据库中尚无采集任务。", { exact: true })).toBeVisible();
-  database = { available: true, stale: true, observed_at_ms: Date.now() - 60_000, value: { jobs: { ...jobs, pending: 3 } } };
+  database = {
+    available: true,
+    stale: true,
+    observed_at_ms: Date.now() - 60_000,
+    value: {
+      jobs: { ...jobs, pending: 3 },
+      metadata_count: 0,
+      metadata_bytes: 0,
+    },
+  };
   await page.reload();
   const chart = page.locator("[data-slot='card']").filter({ has: page.getByText("任务状态", { exact: true }) });
   await expect(chart).toContainText("3");

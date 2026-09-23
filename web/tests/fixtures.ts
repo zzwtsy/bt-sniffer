@@ -39,6 +39,6 @@ export function snapshot(at = 1000, count = 1, run = "run") {
       },
       active: [],
     },
-    cached: { nodes: [] },
+    cached: { nodes: [], database: { available: false } },
   });
 }

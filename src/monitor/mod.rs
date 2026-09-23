@@ -2,10 +2,14 @@
 mod api;
 mod tests;
 use crate::{
-    collection::{inspection::ReadError, store::CollectionStore},
+    collection::{
+        inspection::{CollectionInspection, ReadError},
+        store::CollectionStore,
+    },
     dht::dispatcher::DhtHandle,
     observation::{Kind, Observer, wall_ms},
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
     net::SocketAddr,
@@ -36,6 +40,15 @@ struct State {
     rate: Mutex<(Instant, f64)>,
     stop: CancellationToken,
     finish: CancellationToken,
+}
+
+/// 对外 snapshot 的稳定外层；内部来源仍由各状态所有者提供有界 JSON。
+#[derive(Serialize)]
+struct Snapshot {
+    schema_version: u8,
+    window: crate::observation::Window,
+    runtime: Value,
+    cached: Value,
 }
 impl Monitor {
     /// listener 在启动时已绑定；本对象拥有 HTTP 与刷新任务，Drop 仅是异常取消兜底。
@@ -140,7 +153,7 @@ impl Drop for Monitor {
     }
 }
 impl State {
-    async fn stats(&self) -> Result<Value, ReadError> {
+    async fn stats(&self) -> Result<CollectionInspection, ReadError> {
         let permit = self
             .database
             .clone()
@@ -168,15 +181,39 @@ impl State {
         cache
     }
     fn snapshot(&self) -> Value {
-        json!({"schema_version":1,"window":self.observer.window(),"runtime":self.observer.states(),"cached":self.cached_summary()})
+        serde_json::to_value(Snapshot {
+            schema_version: 1,
+            window: self.observer.window(),
+            runtime: self.observer.states(),
+            cached: self.cached_summary(),
+        })
+        .expect("监控 snapshot 只包含可序列化状态")
     }
 }
+
+fn cache_database(cache: &mut Value, observed_at_ms: u64, value: impl Serialize) {
+    cache["database"] = json!({
+        "available": true,
+        "stale": false,
+        "observed_at_ms": observed_at_ms,
+        "value": value,
+    });
+}
+
+fn mark_database_stale(cache: &mut Value) {
+    cache["database"]["stale"] = json!(true);
+}
+
 async fn refresh(state: Arc<State>) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut cycle = 0u64;
     loop {
-        tokio::select! {biased;_=state.stop.cancelled()=>break,_=interval.tick()=>{}}
+        tokio::select! {
+            biased;
+            _ = state.stop.cancelled() => break,
+            _ = interval.tick() => {}
+        }
         let update = async {
             let mut nodes = Vec::new();
             for (id, node) in state.nodes.iter().enumerate() {
@@ -221,22 +258,26 @@ async fn refresh(state: Arc<State>) {
                         .as_u64()
                         .is_some_and(|at| wall_ms().saturating_sub(at) < 30_000)
                 }) {
-                    state.cache.lock().expect("监控缓存锁")["database"] = json!({"available":true,"stale":false,"observed_at_ms":database["observed_at_ms"],"value":database["value"]});
+                    cache_database(
+                        &mut state.cache.lock().expect("监控缓存锁"),
+                        database["observed_at_ms"].as_u64().expect("自产观察时间"),
+                        &database["value"],
+                    );
                     return;
                 }
                 let result = state.stats().await;
                 let mut cache = state.cache.lock().expect("监控缓存锁");
                 match result {
-                    Ok(value) => {
-                        cache["database"] = json!({"available":true,"stale":false,"observed_at_ms":wall_ms(),"value":value})
-                    }
-                    Err(_) => {
-                        cache["database"]["stale"] = json!(true);
-                    }
+                    Ok(value) => cache_database(&mut cache, wall_ms(), value),
+                    Err(_) => mark_database_stale(&mut cache),
                 }
             }
         };
-        tokio::select! {biased;_=state.stop.cancelled()=>break,_=update=>{}}
+        tokio::select! {
+            biased;
+            _ = state.stop.cancelled() => break,
+            _ = update => {}
+        }
         cycle = cycle.wrapping_add(1);
     }
 }

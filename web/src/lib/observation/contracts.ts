@@ -2,6 +2,37 @@ import { z } from "zod";
 
 export type Fields = Record<string, unknown>;
 export const fieldsSchema = z.record(z.string(), z.unknown());
+export const KIND = {
+  lifecycle: "lifecycle",
+  bootstrap: "bootstrap",
+  routing: "routing",
+  rpc: "rpc",
+  sampling: "sampling",
+  discovery: "discovery",
+  admission: "admission",
+  job: "job",
+  lookup: "lookup",
+  peer: "peer",
+  piece: "piece",
+  validation: "validation",
+  commit: "commit",
+  retry: "retry",
+  backpressure: "backpressure",
+} as const;
+export const KNOWN_KINDS = Object.values(KIND);
+export type KnownKind = (typeof KNOWN_KINDS)[number];
+export const EVENT_STEP = {
+  announce: "announce",
+  hashSaved: "hash_saved",
+  backfill: "backfill",
+  claim: "claim",
+  completeTransaction: "complete_transaction",
+} as const;
+export const EVENT_RESULT = {
+  started: "started",
+  applied: "applied",
+} as const;
+export const ATTEMPT_KIND = { repeat: "repeat" } as const;
 const sequence = z
   .string()
   .regex(/^\d+$/)
@@ -45,6 +76,41 @@ export const eventSchema = z
     truncated: z.boolean(),
   })
   .passthrough();
+const count = z.number().int().nonnegative().safe();
+export const jobCountsSchema = z
+  .object({
+    pending: count,
+    running: count,
+    retry_wait: count,
+    dormant: count,
+    succeeded: count,
+  })
+  .passthrough();
+export const collectionInspectionSchema = z
+  .object({
+    jobs: jobCountsSchema,
+    metadata_count: count,
+    metadata_bytes: count,
+  })
+  .passthrough();
+const unavailableDatabaseSchema = z
+  .object({
+    available: z.literal(false),
+    stale: z.boolean().optional(),
+  })
+  .passthrough();
+const availableDatabaseSchema = z
+  .object({
+    available: z.literal(true),
+    stale: z.boolean(),
+    observed_at_ms: millis,
+    value: collectionInspectionSchema,
+  })
+  .passthrough();
+export const databaseCacheSchema = z.discriminatedUnion("available", [
+  unavailableDatabaseSchema,
+  availableDatabaseSchema,
+]);
 export const snapshotSchema = z.object({
   schema_version: z.literal(1),
   window: windowSchema,
@@ -55,8 +121,14 @@ export const snapshotSchema = z.object({
     ),
     active: z.array(fieldsSchema),
   }),
-  cached: fieldsSchema,
-});
+  cached: z
+    .object({
+      nodes: z.array(fieldsSchema),
+      database: databaseCacheSchema,
+      traffic: fieldsSchema.optional(),
+    })
+    .passthrough(),
+}).passthrough();
 export const eventPageSchema = z.object({
   events: z.array(eventSchema).max(100),
   next: sequence,
@@ -65,6 +137,7 @@ export const eventPageSchema = z.object({
 });
 export type ObservationEvent = z.infer<typeof eventSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
+export type DatabaseCache = z.infer<typeof databaseCacheSchema>;
 export type ObservationWindow = z.infer<typeof windowSchema>;
 export type EventPage = z.infer<typeof eventPageSchema>;
 export function record(value: unknown): Fields {

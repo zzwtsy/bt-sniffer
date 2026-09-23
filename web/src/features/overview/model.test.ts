@@ -1,5 +1,10 @@
+import type { Snapshot } from "@/lib/observation/contracts";
 import { expect, it } from "vitest";
-import { eventSchema, snapshotSchema } from "@/lib/observation/contracts";
+import {
+  databaseCacheSchema,
+  eventSchema,
+  snapshotSchema,
+} from "@/lib/observation/contracts";
 import {
   AnimationClock,
   discoveryPerMinute,
@@ -56,8 +61,15 @@ function snapshot(database: unknown, durationsValue?: unknown) {
       },
       active: [],
     },
-    cached: database === undefined ? {} : { database },
+    cached: {
+      nodes: [],
+      database: database ?? { available: false },
+    },
   });
+}
+function uncheckedSnapshot(database: unknown): Snapshot {
+  const value = snapshot(undefined);
+  return { ...value, cached: { ...value.cached, database } } as Snapshot;
 }
 const other = "b".repeat(40);
 
@@ -253,7 +265,11 @@ it("任务状态透传数据库统计，数据库缺失返回 undefined", () => 
       available: true,
       stale: true,
       observed_at_ms: 1234,
-      value: { jobs: { pending: 2, running: 1, retry_wait: 3, dormant: 0, succeeded: 4 } },
+      value: {
+        jobs: { pending: 2, running: 1, retry_wait: 3, dormant: 0, succeeded: 4 },
+        metadata_count: 4,
+        metadata_bytes: 1024,
+      },
     }),
   )!;
   expect(result.stale).toBe(true);
@@ -392,12 +408,55 @@ it("提交只计事务终态，不重复计算 metadata 证据或 hashes 保存"
 it("数据库只有完整有效统计才可绘图，未知值不补零", () => {
   const jobs = { pending: 0, running: 0, retry_wait: 0, dormant: 0, succeeded: 0 };
   expect(jobStates(snapshot({ available: false }))).toBeUndefined();
-  expect(jobStates(snapshot({ available: true }))).toBeUndefined();
-  expect(jobStates(snapshot({ available: true, value: { jobs: { pending: 0 } } }))).toBeUndefined();
-  expect(jobStates(snapshot({ available: true, value: { jobs } }))!.states.map(s => s.count)).toEqual([0, 0, 0, 0, 0]);
+  expect(jobStates(uncheckedSnapshot({ available: true }))).toBeUndefined();
+  expect(jobStates(uncheckedSnapshot({ available: true, value: { jobs: { pending: 0 } } }))).toBeUndefined();
+  const valid = {
+    available: true,
+    stale: false,
+    observed_at_ms: 1000,
+    value: { jobs, metadata_count: 0, metadata_bytes: 0 },
+  };
+  expect(jobStates(snapshot(valid))!.states.map(s => s.count)).toEqual([0, 0, 0, 0, 0]);
   for (const invalid of [-1, 0.5, Number.NaN, Infinity, "0", null]) {
-    expect(jobStates(snapshot({ available: true, value: { jobs: { ...jobs, pending: invalid } } }))).toBeUndefined();
+    expect(jobStates(uncheckedSnapshot({
+      ...valid,
+      value: { ...valid.value, jobs: { ...jobs, pending: invalid } },
+    }))).toBeUndefined();
   }
+});
+
+it("观测契约保留未知事件与扩展字段，但拒绝不完整数据库统计", () => {
+  expect(event(1, "future_kind", "future_step", "future_result").kind).toBe("future_kind");
+  const parsed = databaseCacheSchema.parse({
+    available: true,
+    stale: false,
+    observed_at_ms: 1000,
+    value: {
+      jobs: {
+        pending: 0,
+        running: 0,
+        retry_wait: 0,
+        dormant: 0,
+        succeeded: 0,
+        future_state: 3,
+      },
+      metadata_count: 0,
+      metadata_bytes: 0,
+      future_metric: 1,
+    },
+    future_cache_field: true,
+  });
+  if (!parsed.available)
+    throw new Error("测试夹具应为可用数据库快照");
+  expect(parsed.value.jobs.future_state).toBe(3);
+  expect(parsed.value.future_metric).toBe(1);
+  expect(parsed.future_cache_field).toBe(true);
+  expect(databaseCacheSchema.safeParse({
+    available: true,
+    stale: false,
+    observed_at_ms: 1000,
+    value: { jobs: { pending: 0 }, metadata_count: 0, metadata_bytes: 0 },
+  }).success).toBe(false);
 });
 
 it("冻结时动画时间与粒子寿命停止，恢复后延续而非补跑冻结时长", () => {
