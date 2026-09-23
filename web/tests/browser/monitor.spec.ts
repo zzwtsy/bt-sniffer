@@ -153,6 +153,10 @@ test("种子目录无效查询终态、SPA 翻页与详情上下文往返", asyn
   await expect(invalid).toContainText("请输入至少 3 个字符");
   await expect(page.locator("[data-slot='skeleton']")).toHaveCount(0);
 
+  await page.goto("/torrents?q=missing");
+  await expect(page.getByText("按路径搜索结果可能不完整。", { exact: false })).toBeVisible();
+  await expect(page.getByText("此空结果可能不完整。", { exact: false })).toBeVisible();
+
   await page.goto("/torrents");
   await expect(page.getByRole("link", { name: "Fixture Torrent" })).toBeVisible();
   await page.evaluate(() => {

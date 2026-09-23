@@ -256,6 +256,27 @@ def observe(run):
     return supervise(command, run, record)
 
 
+def check_fts_integrity(connection):
+    """在临时备份上执行外部内容 FTS5 校验，绝不向源数据库发送写命令。"""
+    try:
+        with tempfile.TemporaryDirectory(prefix="bt-sniffer-fts-check-") as directory:
+            copy = sqlite3.connect(Path(directory) / "state.sqlite3")
+            try:
+                connection.backup(copy)
+                copy.execute("INSERT INTO torrent_catalog_fts(torrent_catalog_fts, rank) VALUES('integrity-check', 1)")
+                copy.commit()
+                return {"passed": True, "method": "fts5_external_content_integrity_check"}
+            except (OSError, sqlite3.Error) as error:
+                copy.rollback()
+                return {"passed": False, "method": "fts5_external_content_integrity_check",
+                        "error": str(error)}
+            finally:
+                copy.close()
+    except (OSError, sqlite3.Error) as error:
+        return {"passed": False, "method": "fts5_external_content_integrity_check",
+                "error": str(error)}
+
+
 def verify(run):
     observation = json.loads((run / "observation.json").read_text())
     if "still_running_pid" in observation or observation.get("exit_code") is None:
@@ -266,6 +287,7 @@ def verify(run):
         connection.execute("PRAGMA query_only=ON")
         integrity = [row[0] for row in connection.execute("PRAGMA integrity_check")]
         foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+        fts_integrity = check_fts_integrity(connection)
         schema = connection.execute("PRAGMA user_version").fetchone()[0]
         states = dict(connection.execute("SELECT state, count(*) FROM fetch_jobs GROUP BY state"))
         backlog = connection.execute('''
@@ -282,28 +304,40 @@ def verify(run):
             count += 1
             failures += hashlib.sha1(info).digest() != expected
         catalog_count = connection.execute("SELECT count(*) FROM torrent_catalog").fetchone()[0]
-        fts_count = connection.execute("SELECT count(*) FROM torrent_catalog_fts").fetchone()[0]
-        indexed, catalog_total = connection.execute(
-            "SELECT indexed,total FROM torrent_catalog_state WHERE singleton=1").fetchone()
+        indexed, catalog_total, search_incomplete = connection.execute(
+            "SELECT indexed,total,search_incomplete FROM torrent_catalog_state WHERE singleton=1").fetchone()
+        stored_search_incomplete = connection.execute('''
+            SELECT count(*) FROM torrent_catalog
+            WHERE search_incomplete IS NULL OR search_incomplete=1
+        ''').fetchone()[0]
+        known_catalog_count = connection.execute(
+            "SELECT count(*) FROM torrent_catalog WHERE search_incomplete IS NOT NULL").fetchone()[0]
+        search_unknown = connection.execute(
+            "SELECT count(*) FROM torrent_catalog WHERE search_incomplete IS NULL").fetchone()[0]
         missing_catalog = connection.execute('''
             SELECT count(*) FROM metadata m
             WHERE NOT EXISTS(SELECT 1 FROM torrent_catalog c WHERE c.hash=m.hash)
         ''').fetchone()[0]
     finally:
         connection.close()
-    catalog_consistent = (catalog_total == count and indexed == catalog_count == fts_count
+    catalog_consistent = (catalog_total == count and indexed == known_catalog_count
+                          and search_incomplete == stored_search_incomplete
                           and missing_catalog == count - catalog_count)
+    search_complete = search_incomplete == 0 and indexed == catalog_total
     passed = (observation.get("status") == "observed" and integrity == ["ok"]
               and not foreign_keys and not failures and states.get("running", 0) == 0
-              and schema == 3 and catalog_consistent and indexed == catalog_total)
+              and schema == 4 and catalog_consistent and indexed == catalog_total
+              and search_unknown == 0 and fts_integrity["passed"])
     result = {"report_version": 2, "status": "passed" if passed else "failed",
               "scope": "automated_shutdown_and_database_checks", "manual_review_required": True,
               "checked_at": utc(), "snapshot_time_ms": now_ms, "integrity_check": integrity,
+              "fts5_integrity_check": fts_integrity,
               "schema_version": schema, "foreign_key_violation_count": len(foreign_keys),
               "states": states, "metadata_count": count, "sha1_failure_count": failures,
-              "catalog": {"count": catalog_count, "fts_count": fts_count,
-                          "indexed": indexed, "total": catalog_total,
-                          "missing": missing_catalog, "consistent": catalog_consistent},
+              "catalog": {"count": catalog_count, "indexed": indexed, "total": catalog_total,
+                          "missing": missing_catalog, "search_incomplete": search_incomplete,
+                          "search_unknown": search_unknown, "search_complete": search_complete,
+                          "consistent": catalog_consistent},
               "first_attempt_backlog": dict(zip(["waiting", "older_than_30m", "oldest_discovery_age_ms", "oldest_due_wait_ms", "not_due"], backlog))}
     write_json(run / "database-verification.json", result)
     return result

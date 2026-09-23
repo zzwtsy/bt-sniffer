@@ -13,11 +13,28 @@ use std::time::{Duration, Instant};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio_util::sync::CancellationToken;
 
+const RECENT_FIRST_PAGE_SQL: &str =
+    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
+    c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,m.fetched_at,NULL
+    FROM metadata AS m INDEXED BY metadata_fetched_at_hash
+    JOIN torrent_catalog c ON c.hash=m.hash
+    ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?1";
+const RECENT_AFTER_PAGE_SQL: &str =
+    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
+    c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,m.fetched_at,NULL
+    FROM metadata AS m INDEXED BY metadata_fetched_at_hash
+    JOIN torrent_catalog c ON c.hash=m.hash
+    WHERE (m.fetched_at,m.hash)<(?1,?2)
+    ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?3";
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct IndexState {
     indexed: i64,
     total: i64,
+    /// 每条 metadata 都有已确认搜索覆盖状态的目录行。
     complete: bool,
+    /// 名称及完整文件路径都可检索；不可解析或触及搜索上限时为 false。
+    search_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +95,7 @@ pub(crate) struct FilePage {
 #[derive(Debug, Clone)]
 pub(crate) struct BackfillStep {
     pub(crate) cursor: Option<[u8; 20]>,
+    /// 没有剩余缺失目录或旧版未知路径状态；已知搜索截断不要求重复回填。
     pub(crate) complete: bool,
 }
 
@@ -196,55 +214,68 @@ fn read_catalog_page(
     let tx = connection.unchecked_transaction().map_err(sql_error)?;
     let items = if let Some(query) = query {
         let literal = format!("\"{}\"", query.replace('"', "\"\""));
-        let mut statement = tx
-            .prepare(
-                "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
-                        c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
-                        m.fetched_at,snippet(torrent_catalog_fts,0,'','', ' … ',24)
-                 FROM torrent_catalog_fts
-                 JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
-                 JOIN metadata m ON m.hash=c.hash
-                 WHERE torrent_catalog_fts MATCH ?1
-                   AND (?2 IS NULL OR m.fetched_at<?2 OR (m.fetched_at=?2 AND c.hash<?3))
-                 ORDER BY m.fetched_at DESC,c.hash DESC LIMIT ?4",
-            )
-            .map_err(sql_error)?;
-        statement
-            .query_map(
-                params![
-                    literal,
-                    cursor.as_ref().map(|c| c.0),
-                    cursor.as_ref().map(|c| c.1.as_slice()),
-                    (limit + 1) as i64,
-                ],
-                |row| catalog_item(row, true),
-            )
-            .map_err(sql_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(sql_error)?
+        if let Some((fetched_at, hash)) = cursor.as_ref() {
+            let mut statement = tx
+                .prepare(
+                    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
+                            c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
+                            m.fetched_at,snippet(torrent_catalog_fts,0,'','', ' … ',24)
+                     FROM torrent_catalog_fts
+                     JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
+                     JOIN metadata m ON m.hash=c.hash
+                     WHERE torrent_catalog_fts MATCH ?1
+                       AND (m.fetched_at,m.hash)<(?2,?3)
+                     ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?4",
+                )
+                .map_err(sql_error)?;
+            statement
+                .query_map(
+                    params![literal, fetched_at, hash.as_slice(), (limit + 1) as i64],
+                    |row| catalog_item(row, true),
+                )
+                .map_err(sql_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_error)?
+        } else {
+            let mut statement = tx
+                .prepare(
+                    "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
+                            c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
+                            m.fetched_at,snippet(torrent_catalog_fts,0,'','', ' … ',24)
+                     FROM torrent_catalog_fts
+                     JOIN torrent_catalog c ON c.id=torrent_catalog_fts.rowid
+                     JOIN metadata m ON m.hash=c.hash
+                     WHERE torrent_catalog_fts MATCH ?1
+                     ORDER BY m.fetched_at DESC,m.hash DESC LIMIT ?2",
+                )
+                .map_err(sql_error)?;
+            statement
+                .query_map(params![literal, (limit + 1) as i64], |row| {
+                    catalog_item(row, true)
+                })
+                .map_err(sql_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_error)?
+        }
     } else {
-        let mut statement = tx
-            .prepare(
-                "SELECT c.hash,c.parse_status,c.name,c.name_truncated,c.encoding_lossy,
-                        c.total_length,c.file_count,c.piece_length,c.piece_count,c.private,
-                        m.fetched_at,NULL
-                 FROM torrent_catalog c JOIN metadata m ON m.hash=c.hash
-                 WHERE (?1 IS NULL OR m.fetched_at<?1 OR (m.fetched_at=?1 AND c.hash<?2))
-                 ORDER BY m.fetched_at DESC,c.hash DESC LIMIT ?3",
-            )
-            .map_err(sql_error)?;
-        statement
-            .query_map(
-                params![
-                    cursor.as_ref().map(|c| c.0),
-                    cursor.as_ref().map(|c| c.1.as_slice()),
-                    (limit + 1) as i64,
-                ],
-                |row| catalog_item(row, false),
-            )
-            .map_err(sql_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(sql_error)?
+        if let Some((fetched_at, hash)) = cursor.as_ref() {
+            let mut statement = tx.prepare(RECENT_AFTER_PAGE_SQL).map_err(sql_error)?;
+            statement
+                .query_map(
+                    params![fetched_at, hash.as_slice(), (limit + 1) as i64],
+                    |row| catalog_item(row, false),
+                )
+                .map_err(sql_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_error)?
+        } else {
+            let mut statement = tx.prepare(RECENT_FIRST_PAGE_SQL).map_err(sql_error)?;
+            statement
+                .query_map(params![(limit + 1) as i64], |row| catalog_item(row, false))
+                .map_err(sql_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_error)?
+        }
     };
     let mut items = items;
     let more = items.len() > limit;
@@ -399,9 +430,8 @@ fn backfill_one(
     let row = tx
         .query_row(
             "SELECT m.hash,m.info FROM metadata m
-             WHERE m.hash>?1 AND NOT EXISTS(
-                 SELECT 1 FROM torrent_catalog c WHERE c.hash=m.hash
-             )
+             LEFT JOIN torrent_catalog c ON c.hash=m.hash
+             WHERE m.hash>?1 AND (c.hash IS NULL OR c.search_incomplete IS NULL)
              ORDER BY m.hash LIMIT 1",
             [after],
             |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
@@ -418,26 +448,33 @@ fn backfill_one(
     };
     let hash_array: [u8; 20] = hash.try_into().map_err(|_| ReadError::Unavailable)?;
     ensure_catalog(&tx, &hash_array, &info).map_err(sql_error)?;
-    let state = index_state(&tx)?;
     tx.commit().map_err(sql_error)?;
     Ok(BackfillStep {
         cursor: Some(hash_array),
-        complete: state.complete,
+        // 至少存在一条尚未检查的记录；下一轮才能确认扫描完成。
+        complete: false,
     })
 }
 
 fn index_state(transaction: &Transaction<'_>) -> Result<IndexState, ReadError> {
-    let (indexed, total) = transaction
+    let (indexed, total, search_incomplete) = transaction
         .query_row(
-            "SELECT indexed,total FROM torrent_catalog_state WHERE singleton=1",
+            "SELECT indexed,total,search_incomplete FROM torrent_catalog_state WHERE singleton=1",
             [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
         )
         .map_err(sql_error)?;
     Ok(IndexState {
         indexed,
         total,
         complete: indexed == total,
+        search_complete: search_incomplete == 0 && indexed == total,
     })
 }
 
@@ -554,6 +591,7 @@ mod tests {
 
         let first = read_catalog_page(&connection, None, None, 1).unwrap();
         assert_eq!(first.items[0].hash, hex(&newer.0));
+        assert_eq!(first.items[0].file_count, Some(2));
         assert_eq!(first.index.indexed, 2);
         assert!(first.index.complete);
         let second = read_catalog_page(&connection, None, first.next, 1).unwrap();
@@ -609,7 +647,12 @@ mod tests {
         assert!(!first.complete);
         // 模拟进程重启：游标不持久化，从头扫描仍只处理缺失行。
         let second = backfill_one(&mut connection, None).unwrap();
-        assert!(second.complete);
+        assert!(!second.complete);
+        assert!(
+            backfill_one(&mut connection, second.cursor)
+                .unwrap()
+                .complete
+        );
         let state = connection
             .query_row(
                 "SELECT indexed,total FROM torrent_catalog_state WHERE singleton=1",
@@ -619,5 +662,125 @@ mod tests {
             .unwrap();
         assert_eq!(state, (2, 2));
         assert!(backfill_one(&mut connection, None).unwrap().complete);
+    }
+
+    #[test]
+    fn backfill_rebuilds_legacy_rows_with_unknown_search_coverage_once() {
+        let mut connection = connection();
+        let info = b"d6:lengthi1e4:name3:one12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae";
+        let hash = insert(&mut connection, info, 1);
+        connection
+            .execute(
+                "UPDATE torrent_catalog SET search_incomplete=NULL WHERE hash=?1",
+                [hash.0.as_slice()],
+            )
+            .unwrap();
+
+        let state = read_catalog_page(&connection, None, None, 1).unwrap().index;
+        assert!(!state.complete);
+        assert!(!state.search_complete);
+
+        let rebuilt = backfill_one(&mut connection, None).unwrap();
+        assert!(!rebuilt.complete);
+        let finished = backfill_one(&mut connection, rebuilt.cursor).unwrap();
+        assert!(finished.complete);
+        assert!(backfill_one(&mut connection, None).unwrap().complete);
+
+        let state = read_catalog_page(&connection, None, None, 1).unwrap().index;
+        assert!(state.complete);
+        assert!(state.search_complete);
+        let counts: (i64, i64) = connection
+            .query_row(
+                "SELECT indexed,search_incomplete FROM torrent_catalog_state WHERE singleton=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 0));
+    }
+
+    #[test]
+    fn recent_catalog_pages_use_ordered_metadata_index() {
+        let connection = connection();
+        let explain = |sql: &str, after: bool| {
+            let mut statement = connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .unwrap();
+            if after {
+                statement
+                    .query_map(params![10_i64, [7_u8; 20].as_slice(), 51_i64], |row| {
+                        row.get::<_, String>(3)
+                    })
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            } else {
+                statement
+                    .query_map(params![51_i64], |row| row.get::<_, String>(3))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            }
+        };
+
+        for details in [
+            explain(RECENT_FIRST_PAGE_SQL, false),
+            explain(RECENT_AFTER_PAGE_SQL, true),
+        ] {
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.contains("metadata_fetched_at_hash")),
+                "{details:?}"
+            );
+            assert!(
+                details
+                    .iter()
+                    .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+                "{details:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn equal_timestamps_page_stably_by_hash_without_duplicates() {
+        let mut connection = connection();
+        let mut hashes = Vec::new();
+        for name in ["one", "two", "six"] {
+            let info = format!(
+                "d6:lengthi1e4:name3:{name}12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae"
+            );
+            hashes.push(insert(&mut connection, info.as_bytes(), 7));
+        }
+        hashes.sort_by_key(|hash| std::cmp::Reverse(hash.0));
+
+        let first = read_catalog_page(&connection, None, None, 1).unwrap();
+        let second = read_catalog_page(&connection, None, first.next, 1).unwrap();
+        let third = read_catalog_page(&connection, None, second.next, 1).unwrap();
+        assert_eq!(first.items[0].hash, hex(&hashes[0].0));
+        assert_eq!(second.items[0].hash, hex(&hashes[1].0));
+        assert_eq!(third.items[0].hash, hex(&hashes[2].0));
+        assert!(third.next.is_none());
+    }
+
+    #[test]
+    fn search_pages_apply_the_cursor_only_after_the_first_page() {
+        let mut connection = connection();
+        let newer = insert(
+            &mut connection,
+            b"d5:filesld6:lengthi1e4:pathl14:search-hit.txteee4:name3:one12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae",
+            9,
+        );
+        let older = insert(
+            &mut connection,
+            b"d5:filesld6:lengthi1e4:pathl14:search-hit.txteee4:name3:two12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae",
+            8,
+        );
+
+        let first = read_catalog_page(&connection, Some("hit".into()), None, 1).unwrap();
+        let second = read_catalog_page(&connection, Some("hit".into()), first.next, 1).unwrap();
+        assert_eq!(first.items[0].hash, hex(&newer.0));
+        assert_eq!(second.items[0].hash, hex(&older.0));
+        assert!(second.next.is_none());
     }
 }

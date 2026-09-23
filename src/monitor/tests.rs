@@ -161,6 +161,7 @@ async fn torrent_catalog_api_lists_searches_and_reads_files() {
     let list = body_json(list).await;
     assert_eq!(list["items"][0]["hash"], hash);
     assert_eq!(list["index"]["complete"], true);
+    assert_eq!(list["index"]["search_complete"], true);
 
     let search = body_json(get(&state, "/api/v1/torrents?q=AMPLE").await).await;
     assert_eq!(search["items"][0]["name"], "example-file");

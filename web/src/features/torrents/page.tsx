@@ -23,6 +23,7 @@ export function TorrentsPage({ search }: { search: SearchState }) {
     enabled: valid,
     refetchInterval: current => current.state.data?.index.complete === false ? 5000 : false,
   });
+  const index = query.data?.index;
 
   return (
     <>
@@ -37,10 +38,12 @@ export function TorrentsPage({ search }: { search: SearchState }) {
         description="结果按采集时间倒序排列。"
         contentClassName="px-0"
       >
-        {query.data != null && !query.data.index.complete && (
+        {index != null && (!index.complete || !index.search_complete) && (
           <p className="mx-4 mb-3 flex items-center gap-1.5 rounded-lg bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
             <TriangleAlert size={14} aria-hidden="true" className="shrink-0" />
-            {`已索引 ${query.data.index.indexed}/${query.data.index.total} · 结果暂不完整`}
+            {!index.complete
+              ? `已索引 ${index.indexed}/${index.total} · 结果暂不完整`
+              : "部分目录的文件路径未完整纳入子串索引，按路径搜索结果可能不完整。"}
           </p>
         )}
         {!valid && (
@@ -79,7 +82,9 @@ export function TorrentsPage({ search }: { search: SearchState }) {
               <EmptyDescription>
                 {normalized === ""
                   ? "采集到新的 metadata 后会自动出现在这里。"
-                  : "换个关键词试试；匹配按名称与完整文件路径的字面子串进行，ASCII 不区分大小写。"}
+                  : index?.search_complete === false
+                    ? "部分目录的路径索引不完整，此空结果可能不完整。"
+                    : "换个关键词试试；匹配按名称与完整文件路径的字面子串进行，ASCII 不区分大小写。"}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

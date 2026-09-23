@@ -25,7 +25,7 @@ export function FileTree({ hash }: { hash: string }) {
 
   // 顺序拉取后续页；受请求调度限速，5000 条约需十几秒。
   useEffect(() => {
-    if (files.hasNextPage && !files.isFetchingNextPage && pages.length < MAX_PAGES)
+    if (files.hasNextPage && !files.isFetchingNextPage && !files.isFetchNextPageError && pages.length < MAX_PAGES)
       void files.fetchNextPage();
   });
 
@@ -51,7 +51,13 @@ export function FileTree({ hash }: { hash: string }) {
           <AlertTitle>文件清单无法读取</AlertTitle>
           <AlertDescription>{files.error.message}</AlertDescription>
           <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void files.refetch()}>重试</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void (files.isFetchNextPageError ? files.fetchNextPage() : files.refetch())}
+            >
+              重试
+            </Button>
           </AlertAction>
         </Alert>
       )}

@@ -34,7 +34,7 @@ python3 scripts/diagnostics.py verify RUN
 
 observe 校验产物并独占一次运行目录，启用双栈随机监听端口、sample、fetch 与并发 4，固定日志过滤；首次有效采样后观察 35 分钟。它写 state、logs、command.json、stdout.log、observation.json 并产生公网 UDP/TCP 流量。Ctrl-C 或 SIGTERM 请求收尾；若 40 秒后仍未确认退出，记录 still_running_pid 留待人工处理，不宣称正常结束，不强杀产品后继续复核。
 
-verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema v3、running 为 0、metadata 的 SHA1、metadata/catalog/FTS/索引状态计数一致且回填完成，以及任务积压，输出 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
+verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema v4、running 为 0、metadata 的 SHA1、目录及路径覆盖计数一致、目录回填完成和任务积压。FTS5 外部内容索引通过 SQLite backup API 复制到临时数据库，再在副本上执行带外部内容比较的 `integrity-check`；源库保持只读。FTS5 检查失败（包括倒排项缺失或与内容表不一致）会使结果失败，并写入 `fts5_integrity_check`。输出为 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
 
 ## Rust 验收报告
 

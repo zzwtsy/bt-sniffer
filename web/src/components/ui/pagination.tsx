@@ -44,17 +44,22 @@ function PaginationLink({
   isActive,
   size = "icon",
   render,
+  children,
   ...props
 }: PaginationLinkProps) {
   // 自定义 render（如 TanStack Link）直接渲染为带按钮样式的链接；
   // 经由 ButtonPrimitive 会被 useButton 覆盖成 role="button"，丢失链接语义。
   if (render != null) {
     return React.cloneElement(render, {
+      ...props,
       "aria-current": isActive ? "page" : undefined,
+      "aria-label": render.props["aria-label"] ?? props["aria-label"],
       className: cn(
         buttonVariants({ variant: isActive ? "outline" : "ghost", size }),
         className,
+        render.props.className,
       ),
+      children,
     })
   }
   return (
@@ -71,7 +76,9 @@ function PaginationLink({
           {...props}
         />
       )}
-    />
+    >
+      {children}
+    </Button>
   )
 }
 

@@ -38,7 +38,7 @@ async fn schema_version_and_failed_migration_are_safe() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("state.sqlite3");
     let c = Connection::open(&db).unwrap();
-    c.execute_batch("PRAGMA user_version=4;").unwrap();
+    c.execute_batch("PRAGMA user_version=5;").unwrap();
     drop(c);
     assert!(matches!(
         Storage::open(StorageConfig::new(dir.path())).await,
@@ -72,7 +72,7 @@ async fn schema_version_and_failed_migration_are_safe() {
 }
 
 #[test]
-fn schema_v2_upgrades_without_losing_metadata_and_starts_incomplete_catalog() {
+fn schema_v2_upgrades_without_losing_metadata_and_marks_paths_unknown() {
     let mut connection = Connection::open_in_memory().unwrap();
     schema::migrate(&mut connection).unwrap();
     connection
@@ -94,7 +94,7 @@ fn schema_v2_upgrades_without_losing_metadata_and_starts_incomplete_catalog() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
     assert_eq!(
         connection
@@ -106,13 +106,63 @@ fn schema_v2_upgrades_without_losing_metadata_and_starts_incomplete_catalog() {
     assert_eq!(
         connection
             .query_row(
-                "SELECT indexed,total FROM torrent_catalog_state WHERE singleton=1",
+                "SELECT indexed,total,search_incomplete FROM torrent_catalog_state WHERE singleton=1",
                 [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
             )
             .unwrap(),
-        (0, 1)
+        (0, 1, 0)
     );
+}
+
+#[test]
+fn schema_v3_upgrade_marks_existing_catalog_paths_for_rebuild() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    schema::migrate(&mut connection).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO infohashes VALUES(zeroblob(20),1,1);
+             INSERT INTO metadata VALUES(zeroblob(20),X'6465',2);
+             INSERT INTO torrent_catalog(
+                 hash,parse_status,name,name_truncated,encoding_lossy,total_length,
+                 file_count,piece_length,piece_count,private,search_text,search_incomplete
+             ) VALUES(zeroblob(20),'unavailable',NULL,0,0,NULL,NULL,NULL,NULL,NULL,'',0);
+             DROP TRIGGER torrent_catalog_search_ai;
+             DROP TRIGGER torrent_catalog_search_ad;
+             DROP TRIGGER torrent_catalog_search_au;
+             DROP TRIGGER torrent_catalog_indexed_ai;
+             DROP TRIGGER torrent_catalog_indexed_ad;
+             DROP TRIGGER torrent_catalog_indexed_au;
+             CREATE TRIGGER torrent_catalog_indexed_ai AFTER INSERT ON torrent_catalog BEGIN
+                 UPDATE torrent_catalog_state SET indexed=indexed+1 WHERE singleton=1;
+             END;
+             CREATE TRIGGER torrent_catalog_indexed_ad AFTER DELETE ON torrent_catalog BEGIN
+                 UPDATE torrent_catalog_state SET indexed=indexed-1 WHERE singleton=1;
+             END;
+             ALTER TABLE torrent_catalog DROP COLUMN search_incomplete;
+             ALTER TABLE torrent_catalog_state DROP COLUMN search_incomplete;
+             PRAGMA user_version=3;",
+        )
+        .unwrap();
+
+    schema::migrate(&mut connection).unwrap();
+
+    let unknown = connection
+        .query_row(
+            "SELECT search_incomplete IS NULL FROM torrent_catalog WHERE hash=zeroblob(20)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap();
+    let progress: (i64, i64, i64) = connection
+        .query_row(
+            "SELECT indexed,total,search_incomplete FROM torrent_catalog_state WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert!(unknown);
+    assert_eq!(progress, (0, 1, 1));
 }
 
 // 子进程直接退出，不执行析构，用于验证 WAL 真正的崩溃恢复而不是正常 close。

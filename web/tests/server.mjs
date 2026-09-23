@@ -374,7 +374,9 @@ const server = createServer(async (req, res) => {
     return json({
       items: after === "page2" ? page.slice(1) : page.slice(0, 1),
       next: after == null && page.length > 1 ? "page2" : null,
-      index: { indexed: 1, total: 2, complete: false },
+      index: query === "missing"
+        ? { indexed: 2, total: 2, complete: true, search_complete: false }
+        : { indexed: 1, total: 2, complete: false, search_complete: false },
     });
   }
   const detailMatch = /^\/api\/v1\/torrents\/([0-9a-f]{40})$/.exec(url.pathname);

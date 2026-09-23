@@ -61,6 +61,8 @@ pub(crate) struct ParsedInfo {
     pub(crate) files: Vec<TorrentFile>,
     pub(crate) encoding_lossy: bool,
     pub(crate) search_text: String,
+    /// 派生子串索引触及字节上限，后续完整路径没有加入索引。
+    pub(crate) search_truncated: bool,
 }
 
 pub(crate) fn parse(bytes: &[u8]) -> Option<ParsedInfo> {
@@ -116,13 +118,22 @@ pub(crate) fn parse(bytes: &[u8]) -> Option<ParsedInfo> {
         .try_fold(0u64, |total, file| total.checked_add(file.length))?;
     let encoding_lossy = name_lossy || files.iter().any(|file| file.encoding_lossy);
     let mut search_text = String::new();
-    push_bounded(&mut search_text, &name, SEARCH_TEXT_BYTES);
+    let mut search_truncated = !push_bounded(&mut search_text, &name, SEARCH_TEXT_BYTES);
     for file in &files {
-        if search_text.len() >= SEARCH_TEXT_BYTES {
+        if search_truncated {
+            break;
+        }
+        if search_text
+            .len()
+            .saturating_add(1)
+            .saturating_add(file.path.len())
+            > SEARCH_TEXT_BYTES
+        {
+            search_truncated = true;
             break;
         }
         search_text.push('\n');
-        push_bounded(&mut search_text, &file.path, SEARCH_TEXT_BYTES);
+        search_text.push_str(&file.path);
     }
     Some(ParsedInfo {
         name,
@@ -133,6 +144,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Option<ParsedInfo> {
         files,
         encoding_lossy,
         search_text,
+        search_truncated,
     })
 }
 
@@ -185,15 +197,12 @@ pub(super) fn truncate_display(value: &str) -> (String, bool) {
     (output, true)
 }
 
-fn push_bounded(output: &mut String, value: &str, limit: usize) {
-    if output.len() >= limit {
-        return;
+fn push_bounded(output: &mut String, value: &str, limit: usize) -> bool {
+    if output.len().saturating_add(value.len()) > limit {
+        return false;
     }
-    let mut remaining = (limit - output.len()).min(value.len());
-    while !value.is_char_boundary(remaining) {
-        remaining -= 1;
-    }
-    output.push_str(&value[..remaining]);
+    output.push_str(value);
+    true
 }
 
 #[cfg(test)]
@@ -248,5 +257,32 @@ mod tests {
         assert!(truncated);
         assert!(display.len() <= DISPLAY_TEXT_BYTES);
         assert!(display.ends_with('…'));
+    }
+
+    #[test]
+    fn large_file_list_reports_path_search_truncation_without_partial_paths() {
+        const FILES: usize = 50_000;
+        let root = "r".repeat(255);
+        let expected_path = format!("{root}/x");
+        let mut info = b"d5:filesl".to_vec();
+        for _ in 0..FILES {
+            info.extend_from_slice(b"d6:lengthi0e4:pathl1:xee");
+        }
+        info.extend_from_slice(b"e4:name255:");
+        info.extend_from_slice(root.as_bytes());
+        info.extend_from_slice(b"12:piece lengthi1e6:pieces0:e");
+        assert!(info.len() < 4 * 1024 * 1024);
+
+        let parsed = parse(&info).unwrap();
+        assert_eq!(parsed.files.len(), FILES);
+        assert!(parsed.search_truncated);
+        assert!(parsed.search_text.len() <= SEARCH_TEXT_BYTES);
+        assert!(
+            parsed
+                .search_text
+                .lines()
+                .all(|path| path == root.as_str() || path == expected_path.as_str())
+        );
+        assert!(parsed.search_text.lines().count() < FILES + 1);
     }
 }

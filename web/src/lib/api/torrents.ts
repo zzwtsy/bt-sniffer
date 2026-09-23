@@ -6,6 +6,7 @@ const indexState = z.object({
   indexed: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
   complete: z.boolean(),
+  search_complete: z.boolean(),
 });
 
 const catalogItem = z.object({

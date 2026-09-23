@@ -13,18 +13,18 @@ pub(crate) fn ensure_catalog(
     hash: &[u8],
     info: &[u8],
 ) -> rusqlite::Result<bool> {
-    if transaction
+    let existing = transaction
         .query_row(
-            "SELECT 1 FROM torrent_catalog WHERE hash=?1",
+            "SELECT search_incomplete FROM torrent_catalog WHERE hash=?1",
             [hash],
-            |_| Ok(()),
+            |row| row.get::<_, Option<i64>>(0),
         )
-        .optional()?
-        .is_some()
-    {
+        .optional()?;
+    if matches!(existing, Some(Some(_))) {
         return Ok(false);
     }
     let parsed = parser::parse(info);
+    let search_incomplete = parsed.as_ref().is_none_or(|parsed| parsed.search_truncated);
     let (
         status,
         name,
@@ -64,24 +64,49 @@ pub(crate) fn ensure_catalog(
             String::new(),
         )
     };
-    transaction.execute(
-        "INSERT INTO torrent_catalog(
-            hash,parse_status,name,name_truncated,encoding_lossy,total_length,
-            file_count,piece_length,piece_count,private,search_text
-         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-        params![
-            hash,
-            status,
-            name,
-            name_truncated,
-            encoding_lossy,
-            total,
-            files,
-            piece_length,
-            pieces,
-            private,
-            search_text,
-        ],
-    )?;
+    if existing.is_some() {
+        transaction.execute(
+            "UPDATE torrent_catalog SET
+                parse_status=?2,name=?3,name_truncated=?4,encoding_lossy=?5,total_length=?6,
+                file_count=?7,piece_length=?8,piece_count=?9,private=?10,search_text=?11,
+                search_incomplete=?12
+             WHERE hash=?1",
+            params![
+                hash,
+                status,
+                name,
+                name_truncated,
+                encoding_lossy,
+                total,
+                files,
+                piece_length,
+                pieces,
+                private,
+                search_text,
+                search_incomplete,
+            ],
+        )?;
+    } else {
+        transaction.execute(
+            "INSERT INTO torrent_catalog(
+                hash,parse_status,name,name_truncated,encoding_lossy,total_length,
+                file_count,piece_length,piece_count,private,search_text,search_incomplete
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![
+                hash,
+                status,
+                name,
+                name_truncated,
+                encoding_lossy,
+                total,
+                files,
+                piece_length,
+                pieces,
+                private,
+                search_text,
+                search_incomplete,
+            ],
+        )?;
+    }
     Ok(true)
 }

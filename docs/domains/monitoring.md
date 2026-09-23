@@ -6,7 +6,7 @@
 
 通过 [monitor-listen 参数](../operations/running.md#参数)显式启用，只监听 loopback。浏览器使用同源代理访问，无 CORS。所有接口只支持 GET；不提供任务操作、原始 metadata、piece hash 或 torrent 导出。省略参数时不创建观测缓存、刷新任务、目录回填或 HTTP 服务，事件变长数据通过惰性闭包构造。
 
-SQLite schema v3 是任务、metadata 和可重建查询目录的持久事实。过程事件仅属于当前 `run_id`，复用日志运行标识；重启丢失过程历史。监控数据不参与领取、peer 选择和重试。来源缺失返回 `null` 或不提供关联字段，不能通过当前提示推断最初发现来源。
+SQLite schema v4 是任务、metadata 和可重建查询目录的持久事实。过程事件仅属于当前 `run_id`，复用日志运行标识；重启丢失过程历史。监控数据不参与领取、peer 选择和重试。来源缺失返回 `null` 或不提供关联字段，不能通过当前提示推断最初发现来源。
 
 内存状态独立维护，不依赖重放历史。节点、collector 和数据库分别携带观察时间，快照不承诺跨节点或 SQLite 原子一致。指标读取不清空日志统计区间；固定桶分位值表示桶上界，不能跨区间相除构造成功率。
 
@@ -19,7 +19,7 @@ SQLite schema v3 是任务、metadata 和可重建查询目录的持久事实。
 | `/health` | 运行阶段和缓存数据源状态；collector 返回独立暂停状态，完整指标见 snapshot 的 runtime |
 | `/snapshot` | `schema_version`、`window`、`runtime` 当前状态及 `cached` 节点、共享流量和数据库统计 |
 | `/stream` | SSE，after 格式为 run_id:sequence |
-| `/torrents?q=&after=&limit=` | 空 q 返回最近目录；非空 q 为 3–200 字符名称/完整文件路径字面子串；默认 50、最大 100 条，并返回索引进度 |
+| `/torrents?q=&after=&limit=` | 空 q 返回最近目录；非空 q 为 3–200 字符名称/已纳入索引的完整文件路径字面子串；默认 50、最大 100 条，并返回 `index` 进度 |
 | `/torrents/{hash}` | 40 位 v1 hash 的摘要；读取原始 info 前重新核对 SHA1 和完整字典 |
 | `/torrents/{hash}/files?after=&limit=` | 原始顺序文件清单；默认及最大 100 条，单文件也返回一条 |
 
@@ -34,6 +34,8 @@ SQLite schema v3 是任务、metadata 和可重建查询目录的持久事实。
 缓存数据源的 `available=false` 表示无可用结果；数据库刷新失败保留上一结果并设 `stale=true`。未知值不能替换为零。数据库统计首次失败时不生成假的空库统计。
 
 错误结构为 `{"error":{"code":"invalid_query","message":"参数或游标格式无效"}}`。错误码是稳定机器标识，message 提供对应说明。
+
+目录 `index` 含 `indexed`、`total`、`complete` 和 `search_complete`。`complete` 表示每条 metadata 的目录行都具有已确认的搜索覆盖状态；`search_complete` 表示所有文件路径都已纳入搜索文本。若后者为 false，可能仍在逐条回填、存在不可解析的目录行，或派生文本达到 12 MiB 上限；达到上限时名称仍会索引，只加入上限内的完整路径。按路径搜索及空结果可能不完整，该状态不会通过增大 metadata 接纳上限或写入半截路径来掩盖。
 
 | HTTP 状态 | 常见 code | 含义 |
 | --- | --- | --- |

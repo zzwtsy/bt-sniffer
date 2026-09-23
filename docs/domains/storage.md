@@ -12,7 +12,7 @@ Storage 打开状态目录并独占 `instance.lock`，连接 `state.sqlite3`，�
 
 ## schema 与业务事务
 
-当前 user_version 为 3：新库在同一迁移事务中执行 v1、v2、v3，旧库逐级迁移；高于 3 的版本拒绝打开。版本 2 的领取索引仍在迁移事务提交后补建，失败不撤销已提交的版本迁移。版本 3 新增可重建目录、FTS5 trigram 外部内容索引和索引计数状态；升级前 metadata 由 Monitor 后台逐条回填。
+当前 user_version 为 4：新库在同一迁移事务中执行 v1 至 v4，旧库逐级迁移；高于 4 的版本拒绝打开。领取及最近目录查询索引在版本迁移提交后幂等补建，补建失败不撤销已提交的版本迁移。版本 3 新增可重建目录和 FTS5 trigram 外部内容索引；版本 4 增加路径搜索覆盖计数，并让 `indexed` 只计已确认覆盖状态的目录行。升级前的目录行以未知状态逐条重解析，Monitor 每轮至多处理一条。
 
 | 表 | 核心事实与约束 |
 | --- | --- |
@@ -23,11 +23,11 @@ Storage 打开状态目录并独占 `instance.lock`，连接 `state.sqlite3`，�
 | sampling_cooldowns | 身份、节点/IP kind、key、16 字节 lease、pending、期限与失败次数 |
 | fetch_jobs | 状态、attempts、due_at、generation、updated_at 与 error |
 | peer_hints | hash 对应地址与 observed_at |
-| torrent_catalog | v1 info 的有界展示摘要、解析状态和搜索派生文本 |
-| torrent_catalog_fts | 名称及完整文件路径的 trigram 字面子串索引 |
-| torrent_catalog_state | metadata 总数与已建立目录的数量 |
+| torrent_catalog | v1 info 的有界展示摘要、解析状态、搜索派生文本及路径覆盖状态 |
+| torrent_catalog_fts | 名称及已纳入搜索文本的文件完整路径的 trigram 字面子串索引 |
+| torrent_catalog_state | metadata 总数、已确认覆盖状态的目录数及路径搜索不完整数 |
 
-完整 SQL 和索引定义以 schema 为准；状态含义只在[采集专题](collection.md)维护。完成事务把 metadata、目录/FTS、任务状态、提示清理作为一个原子操作；语义解析失败写入 `unavailable` 目录行，不改变原始 metadata 的接纳规则。存储校验和事务不能被仅对内存对象的检查替代。
+完整 SQL 和索引定义以 schema 为准。`metadata_fetched_at_hash(fetched_at DESC, hash DESC)` 支持最近目录首屏和 keyset 游标倒序读取；`search_incomplete` 记录派生子串索引未覆盖全部文件路径的目录行，12 MiB 搜索文本上限不会写入半截路径。监控 API 将目录回填完成与路径搜索完整性分开报告。完成事务把 metadata、目录/FTS、任务状态、提示清理作为一个原子操作；语义解析失败写入 `unavailable` 目录行并标记搜索覆盖不完整，不改变原始 metadata 的接纳规则。存储校验和事务不能被仅对内存对象的检查替代。
 
 诊断组合查询使用一次只读事务，避免跨命令读取到不同提交状态；完整读取口径由[采集诊断](collection.md#诊断读取)维护。它仍占用专用线程，不能视为无成本读取，也不改变命令或载荷预算。
 

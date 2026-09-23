@@ -1,17 +1,23 @@
 //! Storage 打开连接时执行版本检查、版本迁移，再补充领取索引。
-//! v1/v2/v3 的表、对应索引和版本号在同一迁移事务中提交；补充领取索引单独执行。
+//! v1-v4 的表、对应索引和版本号在同一迁移事务中提交；补充查询索引单独执行。
 //! 拒绝较新版本；迁移事务失败会回滚，但补充索引失败不撤销已提交的版本迁移。
 use super::StorageError;
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 
-/// 新库顺序执行全部版本，旧库只执行缺少的版本；迁移提交后再补领取索引。
-/// 已是 v3 的数据库也会补索引；该步失败会返回错误，已有数据和版本迁移仍保留。
+/// 新库顺序执行全部版本，旧库只执行缺少的版本；迁移提交后再补查询索引。
+/// 已是 v4 的数据库也会补索引；该步失败会返回错误，已有数据和版本迁移仍保留。
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 3 {
+    if version > 4 {
         return Err(StorageError::Invalid("数据库由更新版本程序创建"));
     }
+    if version == 4 {
+        return claim_index(connection);
+    }
     if version == 3 {
+        let tx = connection.transaction()?;
+        upgrade_v4(&tx)?;
+        tx.commit()?;
         return claim_index(connection);
     }
     let tx = connection.transaction()?;
@@ -147,14 +153,79 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         PRAGMA user_version=3;
     "#,
     )?;
+    upgrade_v4(&tx)?;
     tx.commit()?;
     claim_index(connection)
+}
+
+/// v4 记录路径搜索覆盖状态；旧目录行置为未知，等待 Monitor 从原始 metadata 重算。
+fn upgrade_v4(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        r#"
+        ALTER TABLE torrent_catalog
+            ADD COLUMN search_incomplete INTEGER CHECK(search_incomplete IN (0,1));
+        ALTER TABLE torrent_catalog_state
+            ADD COLUMN search_incomplete INTEGER NOT NULL DEFAULT 0 CHECK(search_incomplete>=0);
+        UPDATE torrent_catalog_state
+        SET indexed=(
+                SELECT count(*) FROM torrent_catalog WHERE search_incomplete IS NOT NULL
+            ),
+            search_incomplete=(
+                SELECT count(*) FROM torrent_catalog
+                WHERE search_incomplete IS NULL OR search_incomplete=1
+            )
+        WHERE singleton=1;
+        DROP TRIGGER torrent_catalog_indexed_ai;
+        DROP TRIGGER torrent_catalog_indexed_ad;
+        CREATE TRIGGER torrent_catalog_indexed_ai AFTER INSERT ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state
+            SET indexed=indexed+CASE WHEN new.search_incomplete IS NULL THEN 0 ELSE 1 END
+            WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_indexed_ad AFTER DELETE ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state
+            SET indexed=indexed-CASE WHEN old.search_incomplete IS NULL THEN 0 ELSE 1 END
+            WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_indexed_au AFTER UPDATE OF search_incomplete ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state
+            SET indexed=indexed
+                + CASE WHEN new.search_incomplete IS NULL THEN 0 ELSE 1 END
+                - CASE WHEN old.search_incomplete IS NULL THEN 0 ELSE 1 END
+            WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_search_ai AFTER INSERT ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state
+            SET search_incomplete=search_incomplete+
+                CASE WHEN new.search_incomplete IS NULL OR new.search_incomplete=1 THEN 1 ELSE 0 END
+            WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_search_ad AFTER DELETE ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state
+            SET search_incomplete=search_incomplete-
+                CASE WHEN old.search_incomplete IS NULL OR old.search_incomplete=1 THEN 1 ELSE 0 END
+            WHERE singleton=1;
+        END;
+        CREATE TRIGGER torrent_catalog_search_au AFTER UPDATE OF search_incomplete ON torrent_catalog BEGIN
+            UPDATE torrent_catalog_state
+            SET search_incomplete=search_incomplete
+                + CASE WHEN new.search_incomplete IS NULL OR new.search_incomplete=1 THEN 1 ELSE 0 END
+                - CASE WHEN old.search_incomplete IS NULL OR old.search_incomplete=1 THEN 1 ELSE 0 END
+            WHERE singleton=1;
+        END;
+        PRAGMA user_version=4;
+    "#,
+    )?;
+    Ok(())
 }
 
 /// 仅补充索引，不改变 schema 版本、记录或已有 metadata。
 fn claim_index(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "CREATE INDEX IF NOT EXISTS infohash_first_seen ON infohashes(first_seen,hash);",
+    )?;
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS metadata_fetched_at_hash ON metadata(fetched_at DESC,hash DESC);",
     )?;
     connection.execute_batch("CREATE INDEX IF NOT EXISTS fetch_claim_due ON fetch_jobs(due_at,hash) WHERE state IN ('pending','retry_wait');")?;
     connection.execute_batch(

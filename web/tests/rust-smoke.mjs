@@ -134,7 +134,7 @@ async function main() {
     assert.equal(catalogResponse.status, 200);
     const catalog = await catalogResponse.json();
     assert.deepEqual(catalog.items, []);
-    assert.deepEqual(catalog.index, { indexed: 0, total: 0, complete: true });
+    assert.deepEqual(catalog.index, { indexed: 0, total: 0, complete: true, search_complete: true });
     assert.equal((await fetch(`${url}/api/v1/metadata`)).status, 404);
     const abort = new AbortController();
     const stream = await fetch(`${url}/api/v1/stream`, {
