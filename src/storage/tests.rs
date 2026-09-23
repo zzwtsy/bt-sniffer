@@ -1,6 +1,31 @@
 //! 临时目录隔离事务、预算、恢复和目录锁测试；进程崩溃场景使用专门子进程。
 use super::*;
 
+#[test]
+fn ip_address_decode_accepts_ipv4_and_ipv6_lengths_only() {
+    assert_eq!(
+        address::decode_ip(&[127, 0, 0, 1]).unwrap(),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+    );
+    assert_eq!(
+        address::decode_ip(&[0; 16]).unwrap(),
+        std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+    );
+
+    for bytes in [
+        &[][..],
+        &[0; 3][..],
+        &[0; 5][..],
+        &[0; 15][..],
+        &[0; 17][..],
+    ] {
+        assert!(matches!(
+            address::decode_ip(bytes),
+            Err(StorageError::Invalid("IP 长度无效"))
+        ));
+    }
+}
+
 #[tokio::test]
 async fn directory_lock_is_exclusive_and_released_before_shutdown_returns() {
     let directory = tempfile::tempdir().unwrap();

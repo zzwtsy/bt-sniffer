@@ -363,7 +363,11 @@ pub(super) async fn fetch_peer(
                 // 未完成整体 SHA-1 校验时不能上传任何分片，即使本地已有部分数据。
                 send(
                     &mut stream,
-                    peer_wire::metadata_control(remote_id.unwrap(), 2, piece),
+                    peer_wire::metadata_control(
+                        remote_id.expect("metadata 状态只在扩展 ID 协商后创建"),
+                        2,
+                        piece,
+                    ),
                     deadline,
                 )
                 .await?;

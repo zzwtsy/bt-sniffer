@@ -29,23 +29,25 @@ fn local_command(directory: &Path) -> Command {
 
 fn log_text(directory: &Path) -> String {
     let files: Vec<_> = std::fs::read_dir(directory.join("logs"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
+        .expect("日志目录应存在")
+        .map(|entry| entry.expect("日志目录项应可读取").path())
         .collect();
     assert_eq!(files.len(), 1);
-    std::fs::read_to_string(&files[0]).unwrap()
+    std::fs::read_to_string(&files[0]).expect("日志文件应可读取")
 }
 
 fn stderr(output: &Output) -> &str {
-    std::str::from_utf8(&output.stderr).unwrap()
+    std::str::from_utf8(&output.stderr).expect("标准错误输出应为 UTF-8")
 }
 
 /// 两端、后台线程和退出阶段必须使用同一个非空运行标识。
 fn assert_run_id(file: &str, stderr: &str) {
     let mut ids = std::collections::HashSet::new();
     for line in file.lines() {
-        let event: serde_json::Value = serde_json::from_str(line).unwrap();
-        let id = event["run_id"].as_str().unwrap();
+        let event: serde_json::Value = serde_json::from_str(line).expect("每行日志应为 JSON");
+        let id = event["run_id"]
+            .as_str()
+            .expect("日志事件应包含字符串 run_id");
         assert_eq!(id.len(), 32);
         assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
         ids.insert(id.to_owned());
@@ -328,7 +330,7 @@ fn sigterm_keeps_final_snapshot_and_shutdown_logs() {
 fn json_events(directory: &Path) -> Vec<serde_json::Value> {
     log_text(directory)
         .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
+        .map(|line| serde_json::from_str(line).expect("每行日志应为 JSON"))
         .collect()
 }
 

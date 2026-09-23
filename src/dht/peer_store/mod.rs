@@ -168,12 +168,15 @@ impl PeerStore {
             let oldest = *group
                 .iter()
                 .min_by_key(|(addr, time)| (**time, **addr))
-                .unwrap()
+                .expect("组容量为正且该 peer 组已满")
                 .0;
             self.remove(hash, oldest);
         }
         if self.expiry.len() >= self.config.max_peers {
-            let (_, oldest_hash, oldest_address) = *self.expiry.first().unwrap();
+            let (_, oldest_hash, oldest_address) = *self
+                .expiry
+                .first()
+                .expect("全局 peer 容量为正且过期索引非空");
             self.remove(InfoHashV1(oldest_hash), oldest_address);
         }
         let group = self.peers.entry(hash).or_default();
@@ -181,7 +184,10 @@ impl PeerStore {
             self.hashes.remove(&(*latest, hash.0));
         }
         group.insert(address, deadline);
-        self.hashes.insert((*group.values().max().unwrap(), hash.0));
+        self.hashes.insert((
+            *group.values().max().expect("刚插入的 peer 组至少包含一项"),
+            hash.0,
+        ));
         self.expiry.insert((deadline, hash.0, address));
         Ok(())
     }

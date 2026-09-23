@@ -80,7 +80,11 @@ impl Histogram {
             if seen >= rank {
                 return Quantile {
                     upper_bound_ms: bounds.get(index).copied(),
-                    exceeds_ms: (index >= bounds.len()).then(|| *bounds.last().unwrap()),
+                    exceeds_ms: if index >= bounds.len() {
+                        bounds.last().copied()
+                    } else {
+                        None
+                    },
                 };
             }
         }

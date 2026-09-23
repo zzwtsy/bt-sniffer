@@ -136,10 +136,10 @@ fn parse_extension_strict(
     let mut decoder = Decoder::new(raw).with_max_depth(depth);
     let mut dict = decoder
         .next_object()
-        .unwrap()
-        .unwrap()
+        .map_err(|error| WireError::bendy(WireErrorKind::ExtensionMalformed, &error))?
+        .ok_or(WireErrorKind::MissingDictionary)?
         .try_into_dictionary()
-        .unwrap();
+        .map_err(|error| WireError::bendy(WireErrorKind::DictionaryRoot, &error))?;
     let mut update = ExtensionUpdate::default();
     while let Some((key, value)) = dict
         .next_pair()
@@ -202,10 +202,10 @@ pub(crate) fn parse_metadata(
     let mut decoder = Decoder::new(raw).with_max_depth(depth);
     let mut dict = decoder
         .next_object()
-        .unwrap()
-        .unwrap()
+        .map_err(|error| WireError::bendy(WireErrorKind::MetadataHeaderMalformed, &error))?
+        .ok_or(WireErrorKind::MissingDictionary)?
         .try_into_dictionary()
-        .unwrap();
+        .map_err(|error| WireError::bendy(WireErrorKind::MetadataHeaderMalformed, &error))?;
     let (mut kind, mut piece, mut size) = (None, None, None);
     while let Some((key, value)) = dict
         .next_pair()

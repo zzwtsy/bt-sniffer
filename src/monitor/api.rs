@@ -239,7 +239,13 @@ async fn stream(
             },
             _ => return error(StatusCode::BAD_REQUEST, "invalid_cursor"),
         },
-        None => (window.run_id.clone(), window.latest.parse().unwrap()),
+        None => (
+            window.run_id.clone(),
+            window
+                .latest
+                .parse()
+                .expect("Observer 序号由 u64 编码为十进制字符串"),
+        ),
     };
     let changed = s.observer.subscribe();
     let output = futures_util::stream::unfold(
@@ -258,9 +264,10 @@ async fn stream(
                 return None;
             }
             if hello {
-                let event = Event::default()
-                    .event("hello")
-                    .data(serde_json::to_string(&s.observer.window()).unwrap());
+                let event = Event::default().event("hello").data(
+                    serde_json::to_string(&s.observer.window())
+                        .expect("监控窗口字段均可序列化为 JSON"),
+                );
                 return Some((
                     Ok::<_, Infallible>(event),
                     (s, permit, changed, run, after, false, false, next_snapshot),
@@ -268,12 +275,18 @@ async fn stream(
             }
             loop {
                 let w = s.observer.window();
-                let oldest = w.oldest.parse::<u64>().unwrap();
-                let latest = w.latest.parse::<u64>().unwrap();
+                let oldest = w
+                    .oldest
+                    .parse::<u64>()
+                    .expect("Observer 最早序号由 u64 编码为十进制字符串");
+                let latest = w
+                    .latest
+                    .parse::<u64>()
+                    .expect("Observer 最新序号由 u64 编码为十进制字符串");
                 if run != w.run_id || after.saturating_add(1) < oldest || after > latest {
                     let event = Event::default()
                         .event("reset")
-                        .data(serde_json::to_string(&w).unwrap());
+                        .data(serde_json::to_string(&w).expect("监控窗口字段均可序列化为 JSON"));
                     return Some((
                         Ok(event),
                         (s, permit, changed, run, after, false, true, next_snapshot),
@@ -300,20 +313,32 @@ async fn stream(
                 if after < latest {
                     let page = s.observer.page(after, 100, &Filter::default());
                     // 数据库线程可在 window 与 page 之间生产事件并触发淘汰。
-                    if after.saturating_add(1) < page.window.oldest.parse::<u64>().unwrap() {
-                        let event = Event::default()
-                            .event("reset")
-                            .data(serde_json::to_string(&page.window).unwrap());
+                    if after.saturating_add(1)
+                        < page
+                            .window
+                            .oldest
+                            .parse::<u64>()
+                            .expect("Observer 最早序号由 u64 编码为十进制字符串")
+                    {
+                        let event = Event::default().event("reset").data(
+                            serde_json::to_string(&page.window)
+                                .expect("监控窗口字段均可序列化为 JSON"),
+                        );
                         return Some((
                             Ok(event),
                             (s, permit, changed, run, after, false, true, next_snapshot),
                         ));
                     }
-                    after = page.next.parse().unwrap();
+                    after = page
+                        .next
+                        .parse()
+                        .expect("Observer 分页游标由 u64 编码为十进制字符串");
                     let event = Event::default()
                         .event("events")
                         .id(format!("{run}:{after}"))
-                        .data(serde_json::to_string(&page).unwrap());
+                        .data(
+                            serde_json::to_string(&page).expect("监控事件页字段均可序列化为 JSON"),
+                        );
                     return Some((
                         Ok(event),
                         (s, permit, changed, run, after, false, false, next_snapshot),

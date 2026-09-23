@@ -62,8 +62,8 @@ impl Limiter {
         // 向上取整每单位间隔，避免非整除速率因纳秒舍入超过约定上界。
         let quota =
             Quota::with_period(Duration::from_nanos(1_000_000_000u64.div_ceil(rate as u64)))
-                .unwrap()
-                .allow_burst(NonZeroU32::new(rate).unwrap());
+                .expect("正速率生成非零限流周期")
+                .allow_burst(NonZeroU32::new(rate).expect("限流速率必须为正"));
         Self {
             limiter: RateLimiter::new(
                 quota,
@@ -78,7 +78,10 @@ impl Limiter {
     /// 单次请求超过突发容量时返回 5 秒等待提示，不表示等待后该请求必定可发送。
     pub(super) fn check(&self, count: u32, commit: bool) -> Duration {
         self.state.0.lock().expect("配额状态锁").1 = commit;
-        match self.limiter.check_n(NonZeroU32::new(count.max(1)).unwrap()) {
+        match self
+            .limiter
+            .check_n(NonZeroU32::new(count.max(1)).expect("count.max(1) 必须为正"))
+        {
             Ok(Ok(())) => Duration::ZERO,
             Ok(Err(until)) => until.wait_time_from(self.limiter.clock().now()),
             Err(_) => Duration::from_secs(5),

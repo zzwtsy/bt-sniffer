@@ -23,7 +23,13 @@ impl Session {
             }
             tokio::select! {
                 _ = async { match &mut self.monitor { Some(monitor) => monitor.changed().await, None => std::future::pending::<()>().await } } => {},
-                _ = self.storage.as_ref().unwrap().handle.closed() => { self.report.publish(SessionFault::DatabaseExited); }
+                _ = async {
+                    if let Some(storage) = &self.storage {
+                        storage.handle.closed().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => { self.report.publish(SessionFault::DatabaseExited); }
                 result = self.tasks.join_next_with_id(), if !self.tasks.is_empty() => {
                     self.accept_task(result.expect("仍有受监督任务"), TaskPhase::Running);
                 }

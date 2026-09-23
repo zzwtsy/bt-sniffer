@@ -11,8 +11,12 @@ pub(crate) fn ip_bytes(ip: IpAddr) -> Vec<u8> {
 /// 只检查地址编码长度；地址族、端口和使用策略由调用层继续校验。
 pub(crate) fn decode_ip(bytes: &[u8]) -> Result<IpAddr, StorageError> {
     match bytes.len() {
-        4 => Ok(IpAddr::from(<[u8; 4]>::try_from(bytes).unwrap())),
-        16 => Ok(IpAddr::from(<[u8; 16]>::try_from(bytes).unwrap())),
+        4 => Ok(IpAddr::from(
+            <[u8; 4]>::try_from(bytes).map_err(|_| StorageError::Invalid("IP 长度无效"))?,
+        )),
+        16 => Ok(IpAddr::from(
+            <[u8; 16]>::try_from(bytes).map_err(|_| StorageError::Invalid("IP 长度无效"))?,
+        )),
         _ => Err(StorageError::Invalid("IP 长度无效")),
     }
 }

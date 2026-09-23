@@ -197,13 +197,14 @@ async fn round(handle: &DhtHandle, addresses: Vec<SocketAddr>) -> Result<Round, 
                 }
             }
             _ = sleep_until(next_send), if !connected && next_address.is_some() && pending.len() < 2 => {
-                let address = next_address.take().unwrap();
-                pending.push(handle.bootstrap_ping(RemoteNode {
-                    address,
-                    expected_id: None,
-                }));
-                next_address = addresses.next();
-                next_send = Instant::now() + Duration::from_secs(1);
+                if let Some(address) = next_address.take() {
+                    pending.push(handle.bootstrap_ping(RemoteNode {
+                        address,
+                        expected_id: None,
+                    }));
+                    next_address = addresses.next();
+                    next_send = Instant::now() + Duration::from_secs(1);
+                }
             }
         }
     }

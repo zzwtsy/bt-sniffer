@@ -5,7 +5,10 @@ use crate::app::config::Cli;
 use crate::dht::udp::UdpTransport;
 use crate::dht::udp::UdpTransportConfig;
 use socket2::{Domain, Protocol, Socket, Type};
-use std::{io, net::SocketAddr};
+use std::{
+    io,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+};
 
 /// 返回的 socket 随后移入各自 dispatcher；中途失败会释放此前绑定的 socket。
 /// 只有默认双栈监听且环境明确不支持 IPv6 时才允许回退，显式配置错误必须上报。
@@ -16,7 +19,7 @@ pub(super) fn bind(config: &Cli) -> Result<Vec<UdpTransport>, String> {
             bind_one(
                 config
                     .listen_v4
-                    .unwrap_or_else(|| "0.0.0.0:6881".parse().unwrap()),
+                    .unwrap_or_else(|| SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 6881)),
             )
             .map_err(|e| format!("IPv4 监听失败：{e}"))?,
         );
@@ -24,7 +27,7 @@ pub(super) fn bind(config: &Cli) -> Result<Vec<UdpTransport>, String> {
     if !config.ipv4_only {
         let address = config
             .listen_v6
-            .unwrap_or_else(|| "[::]:6881".parse().unwrap());
+            .unwrap_or_else(|| SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 6881));
         match bind_one(address) {
             Ok(socket) => sockets.push(socket),
             Err(error)

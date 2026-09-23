@@ -221,7 +221,7 @@ impl DhtDispatcher {
                 self.maintenance
                     .lookup
                     .as_mut()
-                    .unwrap()
+                    .expect("维护查询在候选处理期间保持活动")
                     .complete_failure(node.id);
                 continue;
             }

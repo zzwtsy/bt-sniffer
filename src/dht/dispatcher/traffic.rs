@@ -138,7 +138,10 @@ impl DhtDispatcher {
                 continue;
             }
             if now >= queued.deadline {
-                let mut queued = self.queued.remove(index).unwrap();
+                let mut queued = self
+                    .queued
+                    .remove(index)
+                    .expect("while 条件保证待发队列索引有效");
                 queued.record.finish(2);
                 queued.observation.finish("queue_timeout");
                 self.finish_start_error(queued.purpose, QueryError::LocalWait, now);
@@ -152,7 +155,10 @@ impl DhtDispatcher {
             let bytes = match encoded {
                 Ok(bytes) => bytes.len(),
                 Err(error) => {
-                    let mut queued = self.queued.remove(index).unwrap();
+                    let mut queued = self
+                        .queued
+                        .remove(index)
+                        .expect("while 条件保证待发队列索引有效");
                     queued.record.finish(3);
                     queued.observation.finish("encode_failed");
                     self.finish_start_error(
@@ -176,7 +182,10 @@ impl DhtDispatcher {
             }
             let queued = &self.queued[index];
             if wait.is_zero() {
-                let mut queued = self.queued.remove(index).unwrap();
+                let mut queued = self
+                    .queued
+                    .remove(index)
+                    .expect("while 条件保证待发队列索引有效");
                 queued.record.finish(0);
                 if let PendingPurpose::Verification { permit, .. } = &mut queued.purpose {
                     drop(permit.take());
@@ -207,8 +216,11 @@ impl DhtDispatcher {
         let mut index = 0;
         while index < self.queued.len() {
             if matches!(self.queued[index].purpose, PendingPurpose::Sampling(_)) {
-                if let PendingPurpose::Sampling(request) =
-                    self.queued.remove(index).unwrap().purpose
+                if let PendingPurpose::Sampling(request) = self
+                    .queued
+                    .remove(index)
+                    .expect("while 条件保证待发队列索引有效")
+                    .purpose
                 {
                     self.sampler.abandon_unsent(request, now);
                 }

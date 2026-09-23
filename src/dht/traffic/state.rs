@@ -140,7 +140,10 @@ impl Budget {
             (&state.query_bytes, bytes as u32),
         ];
         let waits = limits.map(|(limiter, count)| limiter.check(count, false));
-        let wait = *waits.iter().max().unwrap();
+        let wait = waits
+            .iter()
+            .copied()
+            .fold(Duration::ZERO, |longest, wait| longest.max(wait));
         let reasons = waits.iter().enumerate().fold(0, |mask, (index, wait)| {
             if wait.is_zero() {
                 mask
@@ -190,7 +193,11 @@ impl Budget {
             state.update(|stats| stats.verification.capacity += 1);
             return None;
         }
-        state.ips.get_mut(&ip).unwrap().verification_until = Some(now + Duration::from_secs(60));
+        state
+            .ips
+            .get_mut(&ip)
+            .expect("track 成功后 IP 项仍受 state 锁保护")
+            .verification_until = Some(now + Duration::from_secs(60));
         state.verification_queued += 1;
         state.update(|stats| stats.verification.admitted += 1);
         Some(VerificationPermit(self.clone()))
