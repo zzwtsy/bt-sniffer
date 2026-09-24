@@ -87,7 +87,7 @@ export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string;
         <Panel
           title="文件清单"
           description="路径仅作为安全文本展示，不解释为本地文件系统路径。"
-          className="mb-0 flex min-h-[240px] flex-1 flex-col"
+          className="mb-0 flex min-h-60 flex-1 flex-col"
           contentClassName="flex min-h-0 flex-1 flex-col"
         >
           <FileTree hash={hash} />
