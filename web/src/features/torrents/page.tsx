@@ -99,7 +99,7 @@ export function TorrentsPage({ search }: { search: SearchState }) {
               </Alert>
             )}
             {valid && query.data?.items.length === 0 && (
-              <Empty className="m-4 border">
+              <Empty className="m-4 w-auto border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
                     {normalized === "" ? <Database /> : <Search />}
