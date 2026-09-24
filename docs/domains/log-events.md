@@ -87,7 +87,7 @@ First/Repeat 是领取历史，failed_attempts_before 是此前远端失败轮�
 
 ## 采集运行快照与调试事件
 
-以下事件版本均为 1。当前占用、累计计数和区间结果混合在不同字段中，不能仅按事件名统一求和。
+除 metadata_committed 为 2 外，以下事件版本均为 1。当前占用、累计计数和区间结果混合在不同字段中，不能仅按事件名统一求和。
 
 | 事件 | 字段与含义 |
 | --- | --- |
@@ -98,7 +98,7 @@ First/Repeat 是领取历史，failed_attempts_before 是此前远端失败轮�
 | sampling_backpressure | mode 字符串；capacity、backlog、storage 布尔；paused_ms 是累计暂停毫秒，resumes 是总体恢复次数 |
 | storage_capacity_paused | phase、action 字符串，state_bytes、limit_bytes 为字节；暂停并保留数据，重开后重新检查 |
 | sample_batch_save_started | debug；phase、responder、target、received_at 为说明/身份字符串；observed_at_ms 为 UTC 毫秒，interval_secs 为秒；num、count、confirmed_offset 为数量，开始保存不等于完整提交 |
-| metadata_committed | debug；phase、hash、source、peer_id 为字符串，bytes 为原始 info 长度；在事务提交后发出，过滤可使其不可见 |
+| metadata_committed / 2 | debug；phase、swarm_key、source、peer_id 为字符串，bytes 为原始 info 长度；在事务提交后发出，过滤可使其不可见 |
 | peer_fetch_failed | debug；peer、error、category 为字符串，stage 为可选阶段；错误文本只供诊断 |
 
 引导事件位于 [bootstrap](../../src/app/bootstrap/mod.rs)：bootstrap_connected、bootstrap_retry_scheduled、bootstrap_dns_failed、bootstrap_dns_timeout、bootstrap_query_failed，版本均为 1。phase 区分 dns、query 等阶段，seed/error 为字符串，timeout_ms、retry_after_ms 为整数毫秒；DNS 成功和邻居响应不保证公网入站可达。

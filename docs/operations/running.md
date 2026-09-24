@@ -31,6 +31,7 @@ cd "$BT_SNIFFER_RUN"
 | --instance | main | 1 至 128 UTF-8 字节；只参与身份键 |
 | --listen-v4 | 0.0.0.0:6881 | IPv4 SocketAddr，端口 0 可由系统分配；与 ipv6-only 冲突 |
 | --listen-v6 | [::]:6881 | IPv6 SocketAddr，端口 0 可用；与 ipv4-only 冲突 |
+| --external-ip-v4 / --external-ip-v6 | 自动发现 | 显式公网单播 IP，优先于观察；地址族须与选项及启用族一致 |
 | --ipv4-only / --ipv6-only | 均关闭 | 互斥，只启用一种地址族 |
 | --bootstrap | 内置三项 | 可重复 HOST:非零端口，替换默认列表；IPv6 用方括号，与 no-bootstrap 冲突 |
 | --no-bootstrap | 关闭 | 禁止引导列表，仍恢复并验证磁盘联系人 |
@@ -77,4 +78,4 @@ ssh -N -L 3001:127.0.0.1:3001 user@host
 
 ## 观测网页
 
-后端启用监控后，可使用独立[前端](../../web/README.md)查看当前状态、有限事件窗口，并在 `/torrents` 查询本地已保存的 v1 metadata 目录。开发服务器和静态反向代理仅监听 loopback，浏览器始终请求同源 `/api`。生产构建使用[代理示例](../../web/nginx.conf)，远端查看通过 SSH 转发前端端口。冻结显示仅属于流程总览且不影响采集；网页不提供任务控制、按需联网下载或 metadata/torrent 导出。
+后端启用监控后，可使用独立[前端](../../web/README.md)查看当前状态、有限事件窗口，并在 `/torrents` 查询本地已保存的 v1／v2／hybrid metadata 目录。开发服务器和静态反向代理仅监听 loopback，浏览器始终请求同源 `/api`。生产构建使用[代理示例](../../web/nginx.conf)，远端查看通过 SSH 转发前端端口。冻结显示仅属于流程总览且不影响采集；网页不提供任务控制、按需联网下载或 metadata/torrent 导出。

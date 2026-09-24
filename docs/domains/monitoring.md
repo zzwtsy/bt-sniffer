@@ -4,9 +4,9 @@
 
 ## 启用与事实边界
 
-通过 [monitor-listen 参数](../operations/running.md#参数)显式启用，只监听 loopback。浏览器使用同源代理访问，无 CORS。所有接口只支持 GET；不提供任务操作、原始 metadata、piece hash 或 torrent 导出。省略参数时不创建观测缓存、刷新任务、目录回填或 HTTP 服务，事件变长数据通过惰性闭包构造。
+通过 [monitor-listen 参数](../operations/running.md#参数)显式启用，只监听 loopback。浏览器使用同源代理访问，无 CORS。所有接口只支持 GET；不提供任务操作、原始 metadata、piece hash 或 torrent 导出。省略参数时不创建观测缓存、刷新任务或 HTTP 服务；目录回填也可由 fetch 启用，事件变长数据通过惰性闭包构造。
 
-SQLite schema v4 是任务、metadata 和可重建查询目录的持久事实。过程事件仅属于当前 `run_id`，复用日志运行标识；重启丢失过程历史。监控数据不参与领取、peer 选择和重试。来源缺失返回 `null` 或不提供关联字段，不能通过当前提示推断最初发现来源。
+SQLite schema v5 是任务、metadata 和可重建查询目录的持久事实。过程事件仅属于当前 `run_id`，复用日志运行标识；重启丢失过程历史。监控数据不参与领取、peer 选择和重试。来源缺失返回 `null` 或不提供关联字段，不能通过当前提示推断最初发现来源。
 
 内存状态独立维护，不依赖重放历史。节点、collector 和数据库分别携带观察时间，快照不承诺跨节点或 SQLite 原子一致。指标读取不清空日志统计区间；固定桶分位值表示桶上界，不能跨区间相除构造成功率。
 
@@ -20,7 +20,7 @@ SQLite schema v4 是任务、metadata 和可重建查询目录的持久事实。
 | `/snapshot` | `schema_version`、`window`、`runtime` 当前状态及 `cached` 节点、共享流量和数据库统计 |
 | `/stream` | SSE，after 格式为 run_id:sequence |
 | `/torrents?q=&page=&limit=` | 空 q 返回最近目录；非空 q 为 3–200 字符名称/已纳入索引的完整文件路径字面子串；page 从 1 开始，默认 50、最大 100 条；响应含结果总数 `total`、回显页码 `page` 与 `index` 进度，越界页返回空 items |
-| `/torrents/{hash}` | 40 位 v1 hash 的摘要；读取原始 info 前重新核对 SHA1 和完整字典 |
+| `/torrents/{hash}` | 40 位完整 v1 或 64 位完整 v2 hash 的摘要；重新核对对应完整摘要和字典 |
 | `/torrents/{hash}/files?after=&limit=` | 原始顺序文件清单；默认及最大 100 条，单文件也返回一条 |
 
 除此之外的 `/api/v1` 路径不匹配监控路由，GET 返回 404；不提供旧接口重定向。非 GET 请求仍由只读中间件返回 405。
@@ -48,7 +48,7 @@ SQLite schema v4 是任务、metadata 和可重建查询目录的持久事实。
 
 ## 事件与关联
 
-公共字段为 `schema_version`、`run_id`、字符串 `sequence`、`at_ms`、`kind`、`step`、`context`、`result`、`data` 和 `truncated`。关联标识均为稳定字符串；generation 为整数。context 可包含 node_id、hash、generation、observation_id、batch_id、peer_attempt_id、rpc_id、span_id、parent_span_id。RPC ID 只属于应用上下文，不修改 KRPC transaction 或匹配规则。
+公共字段为 `schema_version`、`run_id`、字符串 `sequence`、`at_ms`、`kind`、`step`、`context`、`result`、`data` 和 `truncated`。关联标识均为稳定字符串；generation 为整数。事件 schema_version=2，snapshot 仍为 1。context 可包含 node_id、swarm_key、generation、observation_id、batch_id、peer_attempt_id、rpc_id、span_id、parent_span_id。RPC ID 只属于应用上下文，不修改 KRPC transaction 或匹配规则。
 
 kind 为 lifecycle、bootstrap、routing、rpc、sampling、discovery、admission、job、lookup、peer、piece、validation、commit、retry、backpressure。事件分别表达负责模块已知的事实；started、waiting、sent、cancelled 与 applied 不能互换。事务内失败不能报告 applied；即使调用者取消等待，已接纳数据库闭包仍会报告实际提交结果。Stale 不表示提交成功。
 
@@ -85,3 +85,13 @@ HTTP 请求头读取由 Hyper 的 Tokio 计时器限制为 30 秒，超时连接
 监控 SQL 经过原 Store 和唯一数据库线程。进度回调每 1000 个 SQLite VM 指令检查取消及执行预算，作用域结束移除；不能硬中断阻塞磁盘 I/O。查询许可由数据库闭包持有，HTTP 超时不提前释放，不形成无界补发。目录回填每次处理一条、批次间至少等待 100 ms，HTTP 已占数据库许可时跳过本轮；提交目录行和计数后才推进，重启从缺失行恢复。监控读取中断不会触发采集写入暂停。
 
 绑定失败是启动失败；运行期监控故障只停止监控。Session 开始关闭后停止接受请求和刷新、取消监控查询，已有 SSE 仍可读业务收尾事件。业务及数据库收尾后结束 SSE，最终推送最多占共同剩余期限中的 1 秒。HTTP 任务及连接由 Session 的 Monitor 持有并回收，不另追加 30 秒预算；整体关闭规则见[生命周期](../architecture/lifecycle.md)。
+
+## 目录协议字段
+
+列表按 metadata 去重，有效 hybrid 返回 v1、v2 两个完整身份，两个详情地址定位同一记录。40 位值只作为完整 v1 身份解释，不能当作完整 v2 摘要。`format`、`identities`、`semantic_status`、`semantic_reason`、`verification`、`validation_scope=info_only`、`piece_layers=not_fetched` 明确标示解析和验证范围；未知统计为 null。
+
+文件项含 kind、hidden、executable、symlink_path 和 sha1 提示。前端只对可用 v1 身份启用第三方截图请求；纯 v2 不拼接 btih 请求。过程事件中的 swarm_key 是 20 字节查找键，提交事件 data.identities 才是完整身份列表。
+
+回填由 Session 持有，在 fetch 或 monitor 启用时启动，不依赖浏览器访问；与 HTTP 共享单个数据库读取许可，关闭时由 Session 取消并确认结束。
+
+详情在验证原始摘要及完整字典后，以一次即时解析生成语义状态、原因与统计，不依赖目录是否已经回填。身份与匹配依据仍来自持久关联，GET 不写目录或补别名；列表在后台回填后更新，因此回填期间可与详情的语义状态不同。页面即使无法展示文件清单也保留语义失败原因，不重复显示通用不可解析提示。

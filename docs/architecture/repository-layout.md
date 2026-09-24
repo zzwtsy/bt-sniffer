@@ -56,7 +56,7 @@ src/
 ├── address.rs              网络地址策略
 ├── clock.rs                时间与可控测试时钟
 ├── histogram.rs            无业务依赖的固定桶算法
-├── info_hash.rs            v1 hash 类型
+├── info_hash.rs            查找键与 v1／v2 完整身份类型
 └── acceptance/             仅 cfg(test) 的验收身份与证据辅助
 ```
 

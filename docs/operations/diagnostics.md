@@ -34,7 +34,7 @@ python3 scripts/diagnostics.py verify RUN
 
 observe 校验产物并独占一次运行目录，启用双栈随机监听端口、sample、fetch 与并发 4，固定日志过滤；首次有效采样后观察 35 分钟。它写 state、logs、command.json、stdout.log、observation.json 并产生公网 UDP/TCP 流量。Ctrl-C 或 SIGTERM 请求收尾；若 40 秒后仍未确认退出，记录 still_running_pid 留待人工处理，不宣称正常结束，不强杀产品后继续复核。
 
-verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema v4、running 为 0、metadata 的 SHA1、目录及路径覆盖计数一致、目录回填完成和任务积压。FTS5 外部内容索引通过 SQLite backup API 复制到临时数据库，再在副本上执行带外部内容比较的 `integrity-check`；源库保持只读。FTS5 检查失败（包括倒排项缺失或与内容表不一致）会使结果失败，并写入 `fts5_integrity_check`。输出为 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
+verify 要求已确认进程退出，没有 still_running_pid，再以只读和 query_only 打开数据库。它检查 integrity_check、foreign_key_check、schema v5、running 为 0、metadata 的完整 SHA-1／SHA-256、目录及路径覆盖计数一致、目录回填完成和任务积压。FTS5 外部内容索引通过 SQLite backup API 复制到临时数据库，再在副本上执行带外部内容比较的 `integrity-check`；源库保持只读。FTS5 检查失败（包括倒排项缺失或与内容表不一致）会使结果失败，并写入 `fts5_integrity_check`。输出为 database-verification.json。成功判据还要求观察状态满足工具约束；保留 manual_review_required=true，不能把写出 JSON 当成验收通过。复核可 Ctrl-C 停止，未完成报告不算通过。
 
 ## Rust 验收报告
 
@@ -49,3 +49,5 @@ verify 要求已确认进程退出，没有 still_running_pid，再以只读和 
 Python verify 校验原始 info 的 SHA1，但不做完整 Bencode 字典验证；Rust 的 metadata 和验收测试负责该边界。结构完整、哈希一致、本次公网观察成功分别证明不同事实，不能互相代替。短窗口和特定服务器的结果不能外推总体性能。
 
 不要删除 WAL、SHM、锁文件或运行目录来“恢复正常”；先保留证据，确认进程状态，再处理实际故障。运行身份包含源码与产物摘要，Git HEAD 单独不足以表示未提交工作区。产品报告使用自己的版本，与 development-check 的 result.json 分开解释。
+
+数据库验证支持 schema v5，按完整身份长度选择 SHA-1 或 SHA-256，数据库验证报告 report_version=3，结果字段为 `identity_failure_count`。这证明已保存 info 与记录身份一致，不证明 piece layers 或文件内容有效；离线双栈链路通过也不代表公网采集收益。

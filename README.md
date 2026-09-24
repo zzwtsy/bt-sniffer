@@ -2,7 +2,7 @@
 
 Rust 编写的 BitTorrent DHT 服务、hash 发现与原始 metadata 采集程序。支持 IPv4/IPv6，使用 Tokio current_thread 和 SQLite 专用线程保存身份、联系人、采集任务及结果。
 
-默认提供 DHT 服务；主动采样和 metadata 获取分别启用。metadata 以原始 info 字节进行 v1 SHA1 与完整字典校验，并可通过本机只读前端搜索已保存的名称与文件路径；不下载文件内容，不提供 torrent 导出或完整 v2 采集。
+默认提供 DHT 服务；主动采样和 metadata 获取分别启用。metadata 以原始 info 字节进行 v1 SHA-1 或 v2 SHA-256 前缀匹配及完整字典校验，并可通过本机只读前端搜索已保存的名称与文件路径；支持 v1、v2／hybrid 目录与 BEP 47 文件属性；不下载文件内容或 piece layers，不提供 torrent 导出或完整 BEP 52 内容验证。
 
 ## 开发入口
 

@@ -48,8 +48,20 @@ freshness 观察近期未首试集合 Q：不含 running、有效提示和 gener
 
 worker 保留逐次地址策略、地址族和去重检查，以及串行 peer 执行、lookup 与下载交叠、取消和期限管理。去重键是完整 SocketAddr，同 IP 不同端口分别计数。已选数在等待 TCP 许可前增加，不代表已建连、下载成功或数据库失败 attempts；非法和重复地址不占名额。worker 每轮最多选择 8 个不同合法地址，整轮 180 秒。metadata 获取配置的任务期限为 120 秒、peer 30 秒，连接与握手各 5 秒、分片 10 秒；较早到达的外层期限仍能终止内层操作。同 IP TCP 并发限制为 1；get_peers 的采集限制为全局 10/s、每 IP 1/s，还受 DHT 共享预算约束。
 
-BEP 9 分片组装后，对原始 info 字节计算 SHA1，并检查一个完整 Bencode 字典和无尾随字节；大小上限 4 MiB。不能重新编码后计算 hash，也不能用扩展握手兼容解析放宽 info 校验。扩展握手只在严格解析遇到 InvalidDictionary 时尝试乱序兼容，边界为 4096 字节、64 层，并拒绝重复键。
+BEP 9 分片组装后，对原始 info 字节匹配 SHA-1，或在 meta version=2 时匹配 SHA-256 前 20 字节，并检查一个完整 Bencode 字典和无尾随字节；大小上限 4 MiB。不能重新编码后计算 hash，也不能用扩展握手兼容解析放宽 info 校验。扩展握手只在严格解析遇到 InvalidDictionary 时尝试乱序兼容，边界为 4096 字节、64 层，并拒绝重复键。
 
 下载与入库分开计数。取消后必须回收 worker 的结果并处理领取，不能丢弃 JoinHandle 后声称任务可恢复，顺序见[生命周期](../architecture/lifecycle.md)。
 
 SQLite 保存任务事实使重启可恢复，代价是调度需要事务和索引，吞吐受数据库服务能力约束。内存队列可以减少查询但会增加双份状态与恢复复杂度；只有明确测得数据库瓶颈时才重访，且保留 generation 与原子完成边界。
+
+## 元数据语义与文件目录
+
+[共享解析器](../../src/collection/metainfo.rs)区分身份匹配与语义判断。20 字节 `SwarmKey` 用于 DHT 和握手，`InfoHashV1`、`InfoHashV2` 是完整身份，Node ID 独立。v2 前缀发现记为 `v2_prefix`，完整 SHA-256 从原始字节计算，不能声称与外部预知完整摘要比对。有效 hybrid 才拓展双身份；布局不一致只保存匹配来源身份。
+
+语义状态为 pending、valid、invalid、unsupported，并附稳定原因码。身份与完整字典通过的语义无效结果仍可保存，任务成功后不反复下载；未知 meta version 单独报告 unsupported。v1 校验必需字段、长度、路径和 pieces 数量；BEP 47 支持 padding、符号链接、隐藏、可执行及可选 SHA-1 提示，忽略未知属性字符。
+
+`total_length` 和 `file_count` 排除 padding；`piece_space_length` 表示包含填充与文件对齐的协议字节空间。文件列表保留顺序和索引，padding 缺路径时为 null；符号链接可省略零长度。所有路径只展示，不创建文件或链接。协议比较使用原始字节，显示编码兼容和截断不影响身份或布局比较。
+
+v2 文件树忽略空目录，不产生文件项或字节统计；整棵树没有文件时仍报告 empty_file_tree。v2 文件树不机械拼接 name，非空文件检查 32 字节 pieces root，piece length 至少 16 KiB 且为二次幂。仅校验 info 的身份与结构，不获取 piece layers、不验证文件内容、不导出 torrent。原始大小 4 MiB、深度 64；语义结构与派生路径另有 64 MiB 解析预算，超限停止目录展开。
+
+验证入口：`collection::metainfo::tests`、`collection::metadata_store::tests`、`collection::tests::discovery::v2_and_hybrid_dual_stack_collection`；独立夹具及预期摘要见 [fixtures](../../src/collection/fixtures/README.md)。
