@@ -6,7 +6,7 @@
 //! 紧凑格式只是地址或 hash 的字节表示；解码成功不代表联系人可信或允许联网。
 
 use super::message::NodeId;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_bytes::ByteBuf;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
@@ -60,10 +60,10 @@ pub(crate) enum CompactPeerAddress {
 
 /// BEP 51 返回的一组 info-hash 样本。
 ///
-/// Rust 中将每个样本表示为独立的 [`InfoHashV1`]；在线上则把所有 20 字节样本
+/// Rust 中将每个样本表示为独立的 [`SwarmKey`]；在线上则把所有 20 字节样本
 /// 连续拼接，编码成一个 Bencode 字节串。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InfoHashSamples(pub(crate) Vec<InfoHashV1>);
+pub(crate) struct InfoHashSamples(pub(crate) Vec<SwarmKey>);
 
 impl Serialize for CompactNodesV4 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -271,7 +271,7 @@ impl<'de> Deserialize<'de> for InfoHashSamples {
             )));
         }
 
-        // 长度合法后，每 20 字节恢复成一个具有明确语义的 InfoHashV1。
+        // 长度合法后，每 20 字节恢复成一个具有明确语义的 SwarmKey。
         let (records, remainder) = bytes.as_chunks::<INFO_HASH_SIZE>();
         debug_assert!(remainder.is_empty(), "长度已在上方检查");
         let samples = records
@@ -279,7 +279,7 @@ impl<'de> Deserialize<'de> for InfoHashSamples {
             .map(|sample| {
                 let mut info_hash = [0_u8; INFO_HASH_SIZE];
                 info_hash.copy_from_slice(sample);
-                InfoHashV1(info_hash)
+                SwarmKey(info_hash)
             })
             .collect();
 
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn info_hash_samples_round_trip_as_one_byte_string() {
         // 两个样本各占 20 字节，因此线上字节串的总长度应为 40。
-        let samples = InfoHashSamples(vec![InfoHashV1([1; 20]), InfoHashV1([2; 20])]);
+        let samples = InfoHashSamples(vec![SwarmKey([1; 20]), SwarmKey([2; 20])]);
 
         let encoded = to_bytes(&samples).expect("info-hash 样本应该能够编码");
         // `40:` 表示这是一个包含 40 字节内容的 Bencode 字节串。

@@ -1,7 +1,8 @@
+import type { TorrentDetail } from "@/lib/api/torrents";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowLeft, FileQuestion } from "lucide-react";
-import { Metric, PageTitle, Panel } from "@/components/observation/common";
+import { PageTitle, Panel } from "@/components/observation/common";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,16 +11,20 @@ import { detailOptions } from "@/lib/api/torrents";
 import { CopyMagnet } from "./copy-magnet";
 import { FileTree } from "./file-tree";
 import { bytes, fetchedAt } from "./format";
+import { formatLabel, semanticDescription, semanticLabel } from "./labels";
 import { PreviewImages } from "./preview-images";
 
 export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string; from?: number }) {
   const detail = useQuery(detailOptions(hash));
+  const data = detail.data;
+  const v1 = data?.identities.find(identity => identity.kind === "v1");
+  const magnetName = data?.parse_status === "parsed" ? data.name : null;
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageTitle
         eyebrow="TORRENT DETAIL"
-        title={detail.data?.name ?? "种子详情"}
-        description="摘要和文件路径来自本地保存的原始 v1 info 字典。"
+        title={data?.name ?? "种子详情"}
+        description={data == null ? "摘要和文件路径来自本地保存的原始 info 字典。" : <SummaryMeta detail={data} />}
       >
         <Button variant="outline" nativeButton={false} render={<Link to="/torrents" search={{ q, page: from }} />}>
           <ArrowLeft data-icon="inline-start" />
@@ -37,46 +42,83 @@ export function TorrentDetailPage({ hash, q, from }: { hash: string; q?: string;
           </AlertAction>
         </Alert>
       )}
-      {detail.data != null && (
-        <>
-          <Panel title="种子摘要" description={`采集于 ${fetchedAt(detail.data.fetched_at_ms)}`} className="shrink-0">
-            <div className="mb-4 flex items-center gap-1">
-              <p className="break-all font-mono text-xs">{detail.data.hash}</p>
-              <CopyMagnet hash={detail.data.hash} name={detail.data.parse_status === "parsed" ? detail.data.name : null} />
-            </div>
-            {detail.data.parse_status === "unavailable"
-              ? (
-                  <Alert>
-                    <FileQuestion />
-                    <AlertTitle>数据源不可用</AlertTitle>
-                    <AlertDescription>原始 metadata 无法安全解析，未展示不可信的语义字段。</AlertDescription>
-                  </Alert>
-                )
-              : (
-                  <div className="grid grid-cols-4 gap-3 max-[1000px]:grid-cols-2 max-[560px]:grid-cols-1">
-                    <Metric title="总大小" value={bytes(detail.data.total_length)} detail="十进制原始大小" icon={<span>Σ</span>} />
-                    <Metric title="文件数" value={String(detail.data.file_count ?? "—")} detail="按原始顺序" icon={<span>#</span>} />
-                    <Metric title="Piece 长度" value={bytes(detail.data.piece_length)} detail={`${detail.data.piece_count ?? "—"} pieces`} icon={<span>◫</span>} />
-                    <Metric title="Private" value={detail.data.private == null ? "未声明" : detail.data.private ? "是" : "否"} detail="info 字典标记" icon={<span>◉</span>} />
-                  </div>
-                )}
-            {(detail.data.encoding_lossy || detail.data.name_truncated) && <Badge variant="outline" className="mt-4">{detail.data.encoding_lossy ? "文本含有损显示" : "名称已截断"}</Badge>}
-          </Panel>
-          <Panel title="预览图" description="截图来自 whatslink.info 第三方公开索引，点击加载后才发起查询。" className="shrink-0">
-            <PreviewImages hash={hash} />
-          </Panel>
-          {detail.data.parse_status === "parsed" && (
-            <Panel
-              title="文件清单"
-              description="路径仅作为安全文本展示，不解释为本地文件系统路径。"
-              className="mb-0 flex min-h-[240px] flex-1 flex-col"
-              contentClassName="flex min-h-0 flex-1 flex-col"
-            >
-              <FileTree hash={hash} />
-            </Panel>
-          )}
-        </>
+      {data != null && (
+        <div className="mb-5 flex flex-col gap-1.5">
+          {data.identities.length > 0
+            ? data.identities.map(identity => (
+                <div key={identity.kind} className="flex items-center gap-1.5">
+                  <Badge variant="outline" className="shrink-0">{identity.kind}</Badge>
+                  <p className="break-all font-mono text-xs">{identity.hash}</p>
+                  <CopyMagnet hash={identity.hash} name={magnetName} />
+                </div>
+              ))
+            : (
+                <div className="flex items-center gap-1.5">
+                  <p className="break-all font-mono text-xs">{data.hash}</p>
+                  <CopyMagnet hash={data.hash} name={magnetName} />
+                </div>
+              )}
+        </div>
+      )}
+      {data != null && data.semantic_status !== "valid" && (
+        <Alert variant={data.semantic_status === "invalid" ? "destructive" : "default"} className="mb-5">
+          <AlertCircle />
+          <AlertTitle>{semanticLabel(data.semantic_status)}</AlertTitle>
+          <AlertDescription>{data.semantic_reason ?? semanticDescription(data.semantic_status)}</AlertDescription>
+        </Alert>
+      )}
+      {data != null && data.parse_status === "unavailable" && data.semantic_status === "valid" && (
+        <Alert className="mb-5">
+          <FileQuestion />
+          <AlertTitle>数据源不可用</AlertTitle>
+          <AlertDescription>原始 metadata 无法安全解析，未展示不可信的语义字段。</AlertDescription>
+        </Alert>
+      )}
+      {data != null && v1 != null && (
+        <Panel
+          title="预览图"
+          description="截图来自 whatslink.info 第三方公开索引，点击加载后才发起查询。"
+          className="shrink-0"
+        >
+          <PreviewImages hash={v1.hash} />
+        </Panel>
+      )}
+      {data != null && data.parse_status === "parsed" && (
+        <Panel
+          title="文件清单"
+          description="路径仅作为安全文本展示，不解释为本地文件系统路径。"
+          className="mb-0 flex min-h-[240px] flex-1 flex-col"
+          contentClassName="flex min-h-0 flex-1 flex-col"
+        >
+          <FileTree hash={hash} />
+        </Panel>
       )}
     </div>
+  );
+}
+
+/** 页头 meta 行：格式、采集时间与规模统计一眼扫过，未知项省略。 */
+function SummaryMeta({ detail }: { detail: TorrentDetail }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      {detail.identities.length === 0 && <Badge variant="outline">{formatLabel(detail.format)}</Badge>}
+      <span>
+        采集于
+        {" "}
+        {fetchedAt(detail.fetched_at_ms)}
+      </span>
+      {detail.total_length != null && <span>{bytes(detail.total_length)}</span>}
+      {detail.file_count != null && (
+        <span>
+          {detail.file_count}
+          {" "}
+          个文件
+        </span>
+      )}
+      {detail.private === true && <Badge variant="outline">私有</Badge>}
+      {(detail.encoding_lossy || detail.name_truncated) && (
+        <Badge variant="outline">{detail.encoding_lossy ? "文本含有损显示" : "名称已截断"}</Badge>
+      )}
+    </span>
   );
 }

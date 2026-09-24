@@ -3,7 +3,7 @@
 //! dispatcher 写入合法宣布并按期清理；get_peers 读取这些地址，metadata 下载不会反向写入。
 
 use super::routing::AddressFamily;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use rand::{Rng, seq::IteratorRandom};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -46,7 +46,7 @@ impl Default for PeerStoreConfig {
 pub(super) struct PeerStore {
     config: PeerStoreConfig,
     family: AddressFamily,
-    peers: HashMap<InfoHashV1, HashMap<SocketAddr, Instant>>,
+    peers: HashMap<SwarmKey, HashMap<SocketAddr, Instant>>,
     /// 每个 peer 恰有一个索引项，续期会删除旧项。
     expiry: BTreeSet<(Instant, [u8; 20], SocketAddr)>,
     /// 每个 hash 恰有一个索引项，以组内最新宣布的过期时刻排序。
@@ -55,11 +55,11 @@ pub(super) struct PeerStore {
 
 impl PeerStore {
     /// 每个 hash 只出现一次；最新的 peer 也已到期时，整个 hash 就不再有效。
-    fn active_infohashes(&self, now: Instant) -> impl Iterator<Item = InfoHashV1> + '_ {
+    fn active_infohashes(&self, now: Instant) -> impl Iterator<Item = SwarmKey> + '_ {
         self.hashes
             .iter()
             .filter(move |(deadline, _)| *deadline > now)
-            .map(|(_, hash)| InfoHashV1(*hash))
+            .map(|(_, hash)| SwarmKey(*hash))
     }
 
     pub(super) fn active_infohash_count(&self, now: Instant) -> usize {
@@ -67,7 +67,7 @@ impl PeerStore {
     }
 
     /// 不依赖后台清理是否及时执行，也不因读取而延长 peer 的寿命。
-    pub(super) fn contains_active_infohash(&self, hash: InfoHashV1, now: Instant) -> bool {
+    pub(super) fn contains_active_infohash(&self, hash: SwarmKey, now: Instant) -> bool {
         self.peers
             .get(&hash)
             .is_some_and(|group| group.values().any(|deadline| *deadline > now))
@@ -79,7 +79,7 @@ impl PeerStore {
         limit: usize,
         now: Instant,
         rng: &mut impl Rng,
-    ) -> Vec<InfoHashV1> {
+    ) -> Vec<SwarmKey> {
         self.active_infohashes(now)
             .sample(rng, limit.min(self.config.max_hashes))
     }
@@ -118,7 +118,7 @@ impl PeerStore {
         self.family.accepts(address) && self.config.address_policy.accepts(address)
     }
 
-    fn remove(&mut self, hash: InfoHashV1, address: SocketAddr) {
+    fn remove(&mut self, hash: SwarmKey, address: SocketAddr) {
         let Some(group) = self.peers.get_mut(&hash) else {
             return;
         };
@@ -137,7 +137,7 @@ impl PeerStore {
     /// 保存的是“收到合法宣布”，并不保证这个 peer 的下载端口真的可达。
     pub(super) fn announce(
         &mut self,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         address: SocketAddr,
         now: Instant,
     ) -> Result<(), &'static str> {
@@ -156,7 +156,7 @@ impl PeerStore {
         }
         if !self.peers.contains_key(&hash) && self.peers.len() >= self.config.max_hashes {
             let (_, oldest) = *self.hashes.first().expect("hash 索引非空");
-            let old_hash = InfoHashV1(oldest);
+            let old_hash = SwarmKey(oldest);
             let addresses: Vec<_> = self.peers[&old_hash].keys().copied().collect();
             for address in addresses {
                 self.remove(old_hash, address);
@@ -177,7 +177,7 @@ impl PeerStore {
                 .expiry
                 .first()
                 .expect("全局 peer 容量为正且过期索引非空");
-            self.remove(InfoHashV1(oldest_hash), oldest_address);
+            self.remove(SwarmKey(oldest_hash), oldest_address);
         }
         let group = self.peers.entry(hash).or_default();
         if let Some(latest) = group.values().max() {
@@ -195,7 +195,7 @@ impl PeerStore {
     /// 查询只读有效记录；后台还没来得及删除的到期项也不会泄漏到响应里。
     pub(super) fn sample(
         &self,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         limit: usize,
         now: Instant,
         rng: &mut impl Rng,
@@ -223,7 +223,7 @@ impl PeerStore {
             if deadline > now {
                 break;
             }
-            self.remove(InfoHashV1(hash), address);
+            self.remove(SwarmKey(hash), address);
         }
     }
 }

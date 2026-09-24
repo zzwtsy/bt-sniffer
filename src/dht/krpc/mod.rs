@@ -20,4 +20,4 @@ pub(crate) use message::{
 mod tests;
 
 #[cfg(test)]
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;

@@ -224,7 +224,14 @@ async fn start_nodes(
     handles: &mut Vec<DhtHandle>,
 ) -> Result<(), String> {
     for socket in sockets {
-        let mut dispatcher = DhtDispatcherConfig::default();
+        let mut dispatcher = DhtDispatcherConfig {
+            external_ip: if socket.local_addr().map_err(|e| e.to_string())?.is_ipv4() {
+                config.external_ip_v4
+            } else {
+                config.external_ip_v6
+            },
+            ..Default::default()
+        };
         dispatcher.peer_store.address_policy = config.policy();
         let handle = session
             .add_node(

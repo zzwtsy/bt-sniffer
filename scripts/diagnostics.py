@@ -302,7 +302,14 @@ def verify(run):
         count = failures = 0
         for expected, info in connection.execute("SELECT hash, info FROM metadata"):
             count += 1
-            failures += hashlib.sha1(info).digest() != expected
+            digests = {"v1": hashlib.sha1(info).digest(), "v2": hashlib.sha256(info).digest()}
+            aliases = connection.execute("""
+                SELECT i.kind,i.hash FROM torrent_identities i
+                JOIN metadata m ON m.id=i.metadata_id WHERE m.hash=?
+            """, (expected,)).fetchall()
+            canonical = digests["v1"] if len(expected) == 20 else digests["v2"]
+            failures += (canonical != expected or not aliases
+                         or any(digests.get(kind) != value for kind, value in aliases))
         catalog_count = connection.execute("SELECT count(*) FROM torrent_catalog").fetchone()[0]
         indexed, catalog_total, search_incomplete = connection.execute(
             "SELECT indexed,total,search_incomplete FROM torrent_catalog_state WHERE singleton=1").fetchone()
@@ -326,14 +333,14 @@ def verify(run):
     search_complete = search_incomplete == 0 and indexed == catalog_total
     passed = (observation.get("status") == "observed" and integrity == ["ok"]
               and not foreign_keys and not failures and states.get("running", 0) == 0
-              and schema == 4 and catalog_consistent and indexed == catalog_total
+              and schema == 5 and catalog_consistent and indexed == catalog_total
               and search_unknown == 0 and fts_integrity["passed"])
-    result = {"report_version": 2, "status": "passed" if passed else "failed",
+    result = {"report_version": 3, "status": "passed" if passed else "failed",
               "scope": "automated_shutdown_and_database_checks", "manual_review_required": True,
               "checked_at": utc(), "snapshot_time_ms": now_ms, "integrity_check": integrity,
               "fts5_integrity_check": fts_integrity,
               "schema_version": schema, "foreign_key_violation_count": len(foreign_keys),
-              "states": states, "metadata_count": count, "sha1_failure_count": failures,
+              "states": states, "metadata_count": count, "identity_failure_count": failures,
               "catalog": {"count": catalog_count, "indexed": indexed, "total": catalog_total,
                           "missing": missing_catalog, "search_incomplete": search_incomplete,
                           "search_unknown": search_unknown, "search_complete": search_complete,

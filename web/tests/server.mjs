@@ -11,6 +11,15 @@ const cursors = [];
 const events = [];
 const torrent = {
   hash,
+  format: "v1",
+  semantic_status: "valid",
+  semantic_reason: null,
+  identities: [],
+  verification: ["v1_full"],
+  validation_scope: "info_only",
+  piece_layers: "not_fetched",
+  piece_space_length: "9007199254740993",
+  padding_length: "0",
   parse_status: "parsed",
   name: "Fixture Torrent",
   name_truncated: false,
@@ -24,6 +33,15 @@ const torrent = {
 };
 const archive = {
   hash: "b".repeat(40),
+  format: "v1",
+  semantic_status: "valid",
+  semantic_reason: null,
+  identities: [],
+  verification: ["v1_full"],
+  validation_scope: "info_only",
+  piece_layers: "not_fetched",
+  piece_space_length: "9007199254740993",
+  padding_length: "0",
   parse_status: "parsed",
   name: "Fixture Archive",
   name_truncated: false,
@@ -37,6 +55,15 @@ const archive = {
 };
 const big = {
   hash: "c".repeat(40),
+  format: "v1",
+  semantic_status: "valid",
+  semantic_reason: null,
+  identities: [],
+  verification: ["v1_full"],
+  validation_scope: "info_only",
+  piece_layers: "not_fetched",
+  piece_space_length: "9007199254740993",
+  padding_length: "0",
   parse_status: "parsed",
   name: "Fixture Big",
   name_truncated: false,
@@ -51,6 +78,15 @@ const big = {
 /** 无空格长名称 fixture：覆盖结果表名称列的换行与两行截断。 */
 const long = {
   hash: "d".repeat(40),
+  format: "v1",
+  semantic_status: "valid",
+  semantic_reason: null,
+  identities: [],
+  verification: ["v1_full"],
+  validation_scope: "info_only",
+  piece_layers: "not_fetched",
+  piece_space_length: "9007199254740993",
+  padding_length: "0",
   parse_status: "parsed",
   name: "NEW.Anna.Ralphs.Riding.After.Erotic.Massage.sxyprn.amateur.ass.bigass.bigtits.boobs.deepthroat.hardcore.hot.onlyfans.porn.hub.sexy.mp4",
   name_truncated: false,
@@ -66,6 +102,15 @@ const records = [torrent, archive, big, long];
 /** 填充记录：把目录撑到两页以覆盖页码分页；名称含 Fixture，在 fixture 搜索中同样出现。 */
 const fillers = Array.from({ length: 96 }, (_, index) => ({
   hash: (index + 16).toString(16).padStart(40, "0"),
+  format: "v1",
+  semantic_status: "valid",
+  semantic_reason: null,
+  identities: [],
+  verification: ["v1_full"],
+  validation_scope: "info_only",
+  piece_layers: "not_fetched",
+  piece_space_length: "9007199254740993",
+  padding_length: "0",
   parse_status: "parsed",
   name: `Fixture Filler ${String(index).padStart(3, "0")}`,
   name_truncated: false,
@@ -78,12 +123,13 @@ const fillers = Array.from({ length: 96 }, (_, index) => ({
   fetched_at_ms: Date.now() - 240_000 - index * 60_000,
 }));
 /** 目录顺序（采集时间倒序）：空 q 与 fixture 搜索下 torrent 都在第 1 页、archive 都在第 2 页。 */
+for (const record of [...records, ...fillers]) record.identities = [{ kind: "v1", hash: record.hash }];
 const catalogOrder = [torrent, long, ...fillers.slice(0, 49), archive, big, ...fillers.slice(49)];
 /** torrent 250 个文件覆盖嵌套目录与三层深度；archive 两个文件单页。 */
 function fixtureFiles(record) {
   const files = [
-    { index: 0, path: `${record.name}/folder/movie.mkv`, path_truncated: false, encoding_lossy: false, length: "9007199254740000" },
-    { index: 1, path: `${record.name}/readme.txt`, path_truncated: false, encoding_lossy: false, length: "993" },
+    { index: 0, path: `${record.name}/folder/movie.mkv`, kind: "file", hidden: false, executable: false, symlink_path: null, sha1: null, path_truncated: false, encoding_lossy: false, length: "9007199254740000" },
+    { index: 1, path: `${record.name}/readme.txt`, kind: "file", hidden: false, executable: false, symlink_path: null, sha1: null, path_truncated: false, encoding_lossy: false, length: "993" },
   ];
   if (record !== torrent)
     return files;
@@ -94,7 +140,7 @@ function fixtureFiles(record) {
       : bucket === 1
         ? `${record.name}/photos/2024/raw/img-${index}.jpg`
         : `${record.name}/extras/file-${index}.bin`;
-    files.push({ index, path, path_truncated: false, encoding_lossy: false, length: String(1000 + index) });
+    files.push({ index, path, kind: "file", hidden: false, executable: false, symlink_path: null, sha1: null, path_truncated: false, encoding_lossy: false, length: String(1000 + index) });
   }
   return files;
 }
@@ -127,7 +173,7 @@ function replay(count) {
       const outcome = i % 10 === 9 && transaction % 5 === 0 ? "failed" : result;
       if (kind === "commit" && step === "complete_transaction" && outcome === "applied")
         committed++;
-      return add(kind, step, outcome, {}, { hash: (transaction + 1).toString(16).padStart(40, "0") });
+      return add(kind, step, outcome, {}, { swarm_key: (transaction + 1).toString(16).padStart(40, "0") });
     });
     broadcast("events", { events: batch, next: String(latest), window: window(), completeness: "complete" }, `${run}:${latest}`);
     if (++replayBatches >= 175)
@@ -208,14 +254,14 @@ function broadcast(name, value, id) {
 }
 function add(kind, step, result, data = {}, context = {}) {
   const event = {
-    schema_version: 1,
+    schema_version: 2,
     run_id: run,
     sequence: String(++latest),
     at_ms: Date.now(),
     kind,
     step,
     result,
-    context: { hash, generation: 2, batch_id: "batch-1", ...context },
+    context: { swarm_key: hash, generation: 2, batch_id: "batch-1", ...context },
     data,
     truncated: false,
   };
@@ -312,8 +358,8 @@ const server = createServer(async (req, res) => {
       const batch = [
         add("discovery", "hash_saved", "new"),
         add("lookup", "lookup", "started"),
-        add("peer", "connect", "failed", {}, { hash: "b".repeat(40) }),
-        add("commit", "complete_transaction", "applied", {}, { hash: "c".repeat(40) }),
+        add("peer", "connect", "failed", {}, { swarm_key: "b".repeat(40) }),
+        add("commit", "complete_transaction", "applied", {}, { swarm_key: "c".repeat(40) }),
       ];
       broadcast("events", { events: batch, next: String(latest), window: window(), completeness: "complete" }, `${run}:${latest}`);
     }
@@ -322,8 +368,8 @@ const server = createServer(async (req, res) => {
       const stage = url.searchParams.get("stage") === "lookup" ? "lookup" : "discovery";
       const batch = Array.from({ length: 100 }, (_, index) =>
         stage === "lookup"
-          ? add("lookup", "lookup", "started", {}, { hash: animationHash(offset + index) })
-          : add("discovery", "hash_saved", "new", {}, { hash: animationHash(offset + index) }));
+          ? add("lookup", "lookup", "started", {}, { swarm_key: animationHash(offset + index) })
+          : add("discovery", "hash_saved", "new", {}, { swarm_key: animationHash(offset + index) }));
       broadcast("events", { events: batch, next: String(latest), window: window(), completeness: "complete" }, `${run}:${latest}`);
     }
     if (url.pathname === "/control/load") {
@@ -413,7 +459,7 @@ const server = createServer(async (req, res) => {
         // 无限页 fixture：供前端全量拉取上限（50 页 / 5000 条）测试
         const items = Array.from({ length: limit }, (_, offset) => {
           const index = start + offset;
-          return { index, path: `${record.name}/group/sub-${Math.floor(index / 100)}/file-${index}.bin`, path_truncated: false, encoding_lossy: false, length: "128" };
+          return { index, path: `${record.name}/group/sub-${Math.floor(index / 100)}/file-${index}.bin`, kind: "file", hidden: false, executable: false, symlink_path: null, sha1: null, path_truncated: false, encoding_lossy: false, length: "128" };
         });
         return json({ available: true, items, next: String(start + limit) });
       }

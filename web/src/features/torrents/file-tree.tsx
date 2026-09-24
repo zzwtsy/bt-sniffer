@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { filesAllOptions } from "@/lib/api/torrents";
 import { bytes } from "./format";
+import { fileKindLabel } from "./labels";
 import { buildFileTree } from "./tree";
 
 /** 全量拉取上限：50 页 × 100 条 = 5000 个文件，防止超大 metadata 拖垮页面。 */
@@ -32,8 +33,8 @@ export function FileTree({ hash }: { hash: string }) {
   const roots = useMemo(() => buildFileTree((files.data?.pages ?? []).flatMap(page => page.items)), [files.data]);
 
   function toggle(node: TreeNode) {
-    const expanded = toggled[node.path] ?? node.depth < 2;
-    setToggled({ ...toggled, [node.path]: !expanded });
+    const expanded = toggled[node.key] ?? node.depth < 2;
+    setToggled({ ...toggled, [node.key]: !expanded });
   }
 
   return (
@@ -85,7 +86,7 @@ function TreeRows({ nodes, toggled, onToggle }: {
   onToggle: (node: TreeNode) => void;
 }) {
   return nodes.map(node => node.file == null
-    ? <DirectoryRow key={`d:${node.path}`} node={node} toggled={toggled} onToggle={onToggle} />
+    ? <DirectoryRow key={`d:${node.key}`} node={node} toggled={toggled} onToggle={onToggle} />
     : <FileRow key={`f:${node.file.index}`} node={node} />);
 }
 
@@ -94,7 +95,7 @@ function DirectoryRow({ node, toggled, onToggle }: {
   toggled: Record<string, boolean>;
   onToggle: (node: TreeNode) => void;
 }) {
-  const expanded = toggled[node.path] ?? node.depth < 2;
+  const expanded = toggled[node.key] ?? node.depth < 2;
   return (
     <div>
       <button
@@ -120,13 +121,25 @@ function DirectoryRow({ node, toggled, onToggle }: {
 
 function FileRow({ node }: { node: TreeNode }) {
   const file = node.file!;
+  const kindLabel = fileKindLabel(file.kind);
   return (
     <div
       className="flex items-center gap-1.5 py-1 pr-2 text-sm"
       style={{ paddingInlineStart: `${node.depth * 1.25 + 1.75}rem` }}
     >
       <File size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
-      <span className="truncate">{node.name}</span>
+      <span className="truncate">{node.name === "" ? `填充 #${file.index}` : node.name}</span>
+      {kindLabel != null && <Badge variant="outline">{kindLabel}</Badge>}
+      {file.hidden && <Badge variant="outline">隐藏</Badge>}
+      {file.executable && <Badge variant="outline">可执行</Badge>}
+      {file.symlink_path != null && (
+        <span className="truncate text-xs text-muted-foreground">
+          →
+          {" "}
+          {file.symlink_path}
+        </span>
+      )}
+      {file.sha1 != null && <Badge variant="outline" title={file.sha1}>SHA-1</Badge>}
       {(file.encoding_lossy || file.path_truncated) && (
         <Badge variant="outline" className="shrink-0">{file.encoding_lossy ? "有损" : "已截断"}</Badge>
       )}

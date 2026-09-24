@@ -6,7 +6,7 @@ use crate::dht::krpc::CompactPeerAddress;
 use crate::dht::krpc::NodeId;
 use crate::dht::krpc::QueryMethod;
 use crate::dht::krpc::ResponseArgs;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::HashSet,
@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Clone)]
 pub(crate) struct AnnounceEvent {
     pub(crate) observer: crate::observation::Observer,
-    pub(crate) hash: InfoHashV1,
+    pub(crate) hash: SwarmKey,
     pub(crate) peer: SocketAddr,
     pub(crate) observed_at: SystemTime,
 }
@@ -71,10 +71,10 @@ pub(super) enum Outbound {
     Ping,
     FindNode(NodeId),
     Sample(NodeId),
-    GetPeers(InfoHashV1),
+    GetPeers(SwarmKey),
 }
 impl Outbound {
-    pub(super) fn fields(self) -> (QueryMethod, Option<NodeId>, Option<InfoHashV1>) {
+    pub(super) fn fields(self) -> (QueryMethod, Option<NodeId>, Option<SwarmKey>) {
         match self {
             Self::Ping => (QueryMethod::Ping, None, None),
             Self::FindNode(id) => (QueryMethod::FindNode, Some(id), None),
@@ -88,7 +88,7 @@ impl DhtHandle {
     pub(crate) async fn get_peers(
         &self,
         remote: RemoteNode,
-        hash: InfoHashV1,
+        hash: SwarmKey,
     ) -> Result<GetPeersResponse, QueryError> {
         self.get_peers_observed(remote, hash, Arc::new(RpcProgress::default()))
             .await
@@ -98,7 +98,7 @@ impl DhtHandle {
     pub(crate) async fn get_peers_observed(
         &self,
         remote: RemoteNode,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         progress: Arc<RpcProgress>,
     ) -> Result<GetPeersResponse, QueryError> {
         let mut command = progress
@@ -142,7 +142,7 @@ impl DhtHandle {
     /// 从当前路由表读取查找种子；空集合是无可用种子，不是网络查询返回空结果。
     pub(crate) async fn fetch_seeds(
         &self,
-        hash: InfoHashV1,
+        hash: SwarmKey,
     ) -> Result<Vec<DiscoveredNode>, QueryError> {
         let (reply, result) = oneshot::channel();
         self.commands
@@ -274,7 +274,7 @@ mod tests {
         };
         let event = AnnounceEvent {
             observer: Default::default(),
-            hash: InfoHashV1([1; 20]),
+            hash: SwarmKey([1; 20]),
             peer: "127.0.0.1:1".parse().unwrap(),
             observed_at: SystemTime::now(),
         };

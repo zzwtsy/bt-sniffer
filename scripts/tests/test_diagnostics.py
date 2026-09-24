@@ -255,11 +255,12 @@ class DatabaseTests(unittest.TestCase):
         (root / "state").mkdir()
         path = root / "state/state.sqlite3"
         with closing(sqlite3.connect(path)) as connection, connection:
-            connection.executescript('''PRAGMA user_version=4;
+            connection.executescript('''PRAGMA user_version=5;
                 CREATE TABLE infohashes(hash BLOB PRIMARY KEY, first_seen INTEGER);
                 CREATE TABLE fetch_jobs(hash BLOB, generation INTEGER, state TEXT, due_at INTEGER);
                 CREATE INDEX fetch_claim_due ON fetch_jobs(due_at);
-                CREATE TABLE metadata(hash BLOB, info BLOB, fetched_at INTEGER);
+                CREATE TABLE metadata(id INTEGER PRIMARY KEY, hash BLOB, info BLOB, fetched_at INTEGER);
+                CREATE TABLE torrent_identities(kind TEXT, hash BLOB, metadata_id INTEGER);
                 CREATE TABLE torrent_catalog(id INTEGER PRIMARY KEY, hash BLOB UNIQUE,
                     search_text TEXT, search_incomplete INTEGER);
                 CREATE VIRTUAL TABLE torrent_catalog_fts USING fts5(search_text,
@@ -267,7 +268,8 @@ class DatabaseTests(unittest.TestCase):
                 CREATE TABLE torrent_catalog_state(singleton INTEGER PRIMARY KEY, indexed INTEGER,
                     total INTEGER, search_incomplete INTEGER);''')
             hash_value = hashlib.sha1(b"de").digest()
-            connection.execute("INSERT INTO metadata VALUES(?,?,1)", (hash_value, b"de"))
+            connection.execute("INSERT INTO metadata VALUES(1,?,?,1)", (hash_value, b"de"))
+            connection.execute("INSERT INTO torrent_identities VALUES('v1',?,1)", (hash_value,))
             connection.execute("INSERT INTO torrent_catalog VALUES(1,?,'fixture',0)", (hash_value,))
             connection.execute("INSERT INTO torrent_catalog_fts(torrent_catalog_fts) VALUES('rebuild')")
             connection.execute("INSERT INTO torrent_catalog_state VALUES(1,1,1,0)")

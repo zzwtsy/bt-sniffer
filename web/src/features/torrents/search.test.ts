@@ -8,6 +8,7 @@ describe("种子查询输入", () => {
     expect(classifyTorrentInput("  ")).toEqual({ kind: "empty" });
     expect(classifyTorrentInput("ab").kind).toBe("error");
     expect(classifyTorrentInput("中文搜索")).toEqual({ kind: "query", value: "中文搜索" });
+    expect(classifyTorrentInput("A".repeat(64))).toEqual({ kind: "hash", value: "a".repeat(64) });
     expect(classifyTorrentInput("A".repeat(40))).toEqual({ kind: "hash", value: "a".repeat(40) });
     expect(classifyTorrentInput("😀".repeat(200)).kind).toBe("query");
     expect(classifyTorrentInput("😀".repeat(201)).kind).toBe("error");
@@ -20,6 +21,7 @@ describe("种子查询输入", () => {
   });
 
   it("磁力链接补全 xt 前缀并按需编码名称", () => {
+    expect(magnetLink("b".repeat(64))).toBe(`magnet:?xt=urn:btmh:1220${"b".repeat(64)}`);
     const hash = "a".repeat(40);
     expect(magnetLink(hash)).toBe(`magnet:?xt=urn:btih:${hash}`);
     expect(magnetLink(hash, null)).toBe(`magnet:?xt=urn:btih:${hash}`);
@@ -60,6 +62,11 @@ describe("目录树聚合", () => {
   const file = (index: number, path: string) => ({
     index,
     path,
+    kind: "file" as const,
+    hidden: false,
+    executable: false,
+    symlink_path: null,
+    sha1: null,
     path_truncated: false,
     encoding_lossy: false,
     length: "1",
@@ -75,10 +82,12 @@ describe("目录树聚合", () => {
     const dir = roots[0];
     expect(dir.count).toBe(2);
     expect(dir.depth).toBe(0);
+    expect(dir.key).toBe("a");
     expect(dir.children.map(node => node.name)).toEqual(["b", "d.txt"]);
     expect(dir.children[0].count).toBe(1);
     expect(dir.children[0].depth).toBe(1);
     expect(dir.children[1].file?.path).toBe("a/d.txt");
+    expect(dir.children[1].key).toBe("file:1");
     expect(roots[1].file?.index).toBe(2);
   });
 
@@ -87,6 +96,15 @@ describe("目录树聚合", () => {
     expect(roots).toHaveLength(1);
     expect(roots[0].file?.path).toBe("readme.txt");
     expect(buildFileTree([])).toEqual([]);
+  });
+
+  it("padding 文件（path 为 null）置于根部，name 为空并以合成键标识", () => {
+    const padding = { ...file(0, "ignored"), path: null, kind: "padding" as const };
+    const roots = buildFileTree([padding, file(1, "b.txt")]);
+    expect(roots.map(node => node.name)).toEqual(["", "b.txt"]);
+    expect(roots[0].key).toBe("file:0");
+    expect(roots[0].depth).toBe(0);
+    expect(roots[1].key).toBe("file:1");
   });
 });
 

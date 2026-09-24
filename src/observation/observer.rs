@@ -88,7 +88,7 @@ impl Observer {
             return Self::default();
         }
         let mut next = self.clone();
-        next.context.hash = Some(hex(hash));
+        next.context.swarm_key = Some(hex(hash));
         next
     }
 
@@ -118,7 +118,7 @@ impl Observer {
         history.sequence += 1;
         let sequence = history.sequence;
         let at_ms = wall_ms();
-        let mut event = json!({"schema_version":1,"run_id":hub.run_id,"sequence":sequence.to_string(),"at_ms":at_ms,"kind":kind,"step":step,"result":result,"context":self.context,"data":data,"truncated":truncated});
+        let mut event = json!({"schema_version":2,"run_id":hub.run_id,"sequence":sequence.to_string(),"at_ms":at_ms,"kind":kind,"step":step,"result":result,"context":self.context,"data":data,"truncated":truncated});
         let mut encoded = event.to_string();
         if encoded.len() > MAX_EVENT_BYTES {
             event["data"] = Value::Null;
@@ -129,7 +129,7 @@ impl Observer {
         history.truncated += u64::from(truncated);
         let retained_bytes = encoded.capacity()
             + [
-                self.context.hash.as_ref(),
+                self.context.swarm_key.as_ref(),
                 self.context.node_id.as_ref(),
                 self.context.parent_span_id.as_ref(),
                 self.context.span_id.as_ref(),

@@ -9,14 +9,14 @@ use rusqlite::StatementStatus;
 
 const NOW: i64 = 3_600_000;
 
-fn hash(n: u32) -> InfoHashV1 {
+fn hash(n: u32) -> SwarmKey {
     let mut bytes = [0; 20];
     bytes[..4].copy_from_slice(&n.to_be_bytes());
-    InfoHashV1(bytes)
+    SwarmKey(bytes)
 }
 
 /// 真实生产领取 SQL 的选择结果与执行成本，包含语句完整执行。
-fn claim_steps(connection: &Connection, class: ClaimClass) -> (InfoHashV1, i32) {
+fn claim_steps(connection: &Connection, class: ClaimClass) -> (SwarmKey, i32) {
     let mut query = connection.prepare(&schedule_sql(Some(class))).unwrap();
     let bytes = query
         .query_row(params![NOW, PEER_HINT_TTL_MS, RECENT_MS], |r| {

@@ -1,7 +1,7 @@
 //! 只处理 BEP 3/10/9 在线上的字节形状，不连接网络、不保存下载状态。
 //!
 //! collection::peer::session 负责协商状态和超时；本层只借用输入字节解析字段，不接纳未经校验的下载结果。
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use bendy::decoding::{Decoder, Object};
 use bytes::Bytes;
 use serde::Serialize;
@@ -23,7 +23,7 @@ pub(crate) const LOCAL_METADATA_ID: u8 = 1;
 pub(crate) struct PeerId(pub(crate) [u8; 20]);
 
 /// 标准握手不属于长度前缀帧，必须先单独收发这 68 字节。
-pub(crate) fn handshake(hash: InfoHashV1, peer_id: PeerId) -> [u8; 68] {
+pub(crate) fn handshake(hash: SwarmKey, peer_id: PeerId) -> [u8; 68] {
     let mut bytes = [0; 68];
     bytes[0] = 19;
     bytes[1..20].copy_from_slice(b"BitTorrent protocol");
@@ -42,7 +42,7 @@ pub(crate) struct HandshakeInfo {
 /// 校验协议名及目标 info-hash，不进行 TCP 读写，也不改变会话状态。
 pub(crate) fn parse_handshake(
     bytes: &[u8; 68],
-    hash: InfoHashV1,
+    hash: SwarmKey,
 ) -> Result<HandshakeInfo, WireError> {
     if bytes[0] != 19 || &bytes[1..20] != b"BitTorrent protocol" {
         return Err(WireErrorKind::ProtocolName.into());

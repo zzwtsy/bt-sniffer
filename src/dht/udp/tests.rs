@@ -24,6 +24,7 @@ fn ping(transaction_id: &[u8]) -> KrpcMessage {
         }),
         r: None,
         e: None,
+        ip: None,
         ro: None,
     }
 }

@@ -8,7 +8,7 @@ use crate::dht::peer_store::PeerStoreConfig;
 use crate::dht::routing::{AddressFamily, RoutingTable};
 use crate::dht::transaction::TransactionManager;
 use crate::dht::udp::UdpTransport;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use std::{net::SocketAddr, time::Duration};
 use tokio::sync::oneshot;
 
@@ -43,7 +43,7 @@ async fn peer_cleanup_is_independent_of_routing_maintenance() {
             dispatcher
                 .peers
                 .announce(
-                    InfoHashV1([hash; 20]),
+                    SwarmKey([hash; 20]),
                     SocketAddr::from(([127, 0, 0, 1], port)),
                     now,
                 )
@@ -165,7 +165,7 @@ async fn queued_rpc_timeout_cancel_shutdown_and_head_of_line_isolation() {
                     address: blocked,
                     expected_id: None,
                 },
-                hash: InfoHashV1([0; 20]),
+                hash: SwarmKey([0; 20]),
                 progress: progress.clone(),
                 cancel: cancel.clone(),
                 reply,

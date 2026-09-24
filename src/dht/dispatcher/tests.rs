@@ -109,6 +109,7 @@ fn query_message(
         r: None,
         e: None,
         ro: read_only.then_some(1),
+        ip: None,
     }
 }
 
@@ -120,6 +121,7 @@ fn response_message(transaction_id: ByteBuf, responder_id: NodeId) -> KrpcMessag
         a: None,
         r: Some(empty_response(responder_id)),
         e: None,
+        ip: None,
         ro: None,
     }
 }
@@ -322,6 +324,7 @@ async fn malformed_query_envelope_returns_protocol_error() {
             ),
             r: None,
             e: None,
+            ip: None,
             ro: Some(1),
         },
         KrpcMessage {
@@ -331,6 +334,7 @@ async fn malformed_query_envelope_returns_protocol_error() {
             a: None,
             r: None,
             e: None,
+            ip: None,
             ro: Some(1),
         },
         KrpcMessage {
@@ -340,6 +344,7 @@ async fn malformed_query_envelope_returns_protocol_error() {
             a: query_message(b"x", QueryMethod::Ping, NodeId([2; 20]), None, true).a,
             r: Some(empty_response(NodeId([3; 20]))),
             e: None,
+            ip: None,
             ro: Some(1),
         },
     ];
@@ -466,6 +471,7 @@ async fn outbound_find_node_decodes_discovered_nodes() {
             a: None,
             r: Some(response),
             e: None,
+            ip: None,
             ro: None,
         },
     )
@@ -510,6 +516,7 @@ async fn remote_error_is_returned_to_caller() {
             a: None,
             r: None,
             e: Some((202, ByteBuf::from(b"busy".to_vec()))),
+            ip: None,
             ro: None,
         },
     )

@@ -33,6 +33,7 @@ fn query_message(method: QueryMethod, arguments: QueryArgs) -> KrpcMessage {
         a: Some(arguments),
         r: None,
         e: None,
+        ip: None,
         ro: None,
     }
 }
@@ -60,6 +61,7 @@ fn response_message(arguments: ResponseArgs) -> KrpcMessage {
         a: None,
         r: Some(arguments),
         e: None,
+        ip: None,
         ro: None,
     }
 }
@@ -116,7 +118,7 @@ fn find_node_query_encodes_target() {
 #[test]
 fn get_peers_query_encodes_info_hash() {
     let mut arguments = query_args();
-    arguments.info_hash = Some(InfoHashV1(RESPONDING_NODE_ID));
+    arguments.info_hash = Some(SwarmKey(RESPONDING_NODE_ID));
     let message = query_message(QueryMethod::GetPeers, arguments);
     let expected = b"d1:ad2:id20:abcdefghij01234567899:info_hash20:mnopqrstuvwxyz123456e1:q9:get_peers1:t2:aa1:y1:qe";
 
@@ -128,7 +130,7 @@ fn get_peers_query_encodes_info_hash() {
     let decoded: KrpcMessage = from_bytes(expected).expect("get_peers 应该能够解码");
     assert_eq!(
         decoded.a.expect("查询必须包含参数").info_hash,
-        Some(InfoHashV1(RESPONDING_NODE_ID))
+        Some(SwarmKey(RESPONDING_NODE_ID))
     );
 }
 
@@ -137,7 +139,7 @@ fn get_peers_query_encodes_info_hash() {
 #[test]
 fn announce_peer_query_encodes_all_arguments_transparently() {
     let mut arguments = query_args();
-    arguments.info_hash = Some(InfoHashV1(RESPONDING_NODE_ID));
+    arguments.info_hash = Some(SwarmKey(RESPONDING_NODE_ID));
     arguments.port = Some(6881);
     arguments.token = Some(Token(ByteBuf::from(b"XX".to_vec())));
     arguments.implied_port = Some(1);
@@ -292,7 +294,7 @@ fn get_peers_response_encodes_token_and_peer_values() {
 /// BEP 51 响应应直接携带刷新间隔、远端样本总数和连续的 info-hash 字节串。
 #[test]
 fn sample_infohashes_response_encodes_all_bep51_fields() {
-    let samples = InfoHashSamples(vec![InfoHashV1([1; 20]), InfoHashV1([2; 20])]);
+    let samples = InfoHashSamples(vec![SwarmKey([1; 20]), SwarmKey([2; 20])]);
     let mut arguments = response_args();
     arguments.samples = Some(samples.clone());
     arguments.interval = Some(300);
@@ -326,6 +328,7 @@ fn error_response_encodes_code_and_message_as_a_list() {
         a: None,
         r: None,
         e: Some((201, ByteBuf::from(b"A Generic Error Occurred".to_vec()))),
+        ip: None,
         ro: None,
     };
     let expected = b"d1:eli201e24:A Generic Error Occurrede1:t2:aa1:y1:ee";
@@ -367,17 +370,16 @@ fn response_omits_absent_optional_fields() {
 fn twenty_byte_identifiers_reject_wrong_lengths() {
     assert!(from_bytes::<NodeId>(&bencode_byte_string(&[0; 19])).is_err());
     assert!(from_bytes::<NodeId>(&bencode_byte_string(&[0; 21])).is_err());
-    assert!(from_bytes::<InfoHashV1>(&bencode_byte_string(&[0; 19])).is_err());
-    assert!(from_bytes::<InfoHashV1>(&bencode_byte_string(&[0; 21])).is_err());
+    assert!(from_bytes::<SwarmKey>(&bencode_byte_string(&[0; 19])).is_err());
+    assert!(from_bytes::<SwarmKey>(&bencode_byte_string(&[0; 21])).is_err());
 
     assert_eq!(
         from_bytes::<NodeId>(&bencode_byte_string(&[7; 20])).expect("20 字节 Node ID 应该合法"),
         NodeId([7; 20])
     );
     assert_eq!(
-        from_bytes::<InfoHashV1>(&bencode_byte_string(&[8; 20]))
-            .expect("20 字节 info-hash 应该合法"),
-        InfoHashV1([8; 20])
+        from_bytes::<SwarmKey>(&bencode_byte_string(&[8; 20])).expect("20 字节 info-hash 应该合法"),
+        SwarmKey([8; 20])
     );
 }
 
@@ -447,4 +449,16 @@ fn unknown_extension_fields_are_ignored() {
         decoded.a.expect("查询必须包含参数").id,
         NodeId(QUERYING_NODE_ID)
     );
+}
+
+#[test]
+fn malformed_optional_observed_ip_does_not_discard_response() {
+    for field in [b"i1e".as_slice(), b"3:bad", b"le"] {
+        let mut packet = b"d2:ip".to_vec();
+        packet.extend_from_slice(field);
+        packet.extend_from_slice(b"1:rd2:id20:aaaaaaaaaaaaaaaaaaaae1:t1:x1:y1:re");
+        let message: KrpcMessage = bendy::serde::from_bytes(&packet).unwrap();
+        assert!(message.ip.is_none());
+        assert_eq!(message.y, MessageType::Response);
+    }
 }

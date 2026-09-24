@@ -7,7 +7,7 @@ use crate::address::AddressPolicy;
 use crate::collection::peer::wire::BLOCK_SIZE;
 use crate::collection::peer::wire::PeerId;
 use crate::collection::peer::wire::WireError;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use rand::TryRng;
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -215,12 +215,12 @@ impl fmt::Display for PeerFetchError {
 }
 impl std::error::Error for PeerFetchError {}
 
-/// 字段私有，只有经过原始字节 SHA-1 和字典结构校验才能创建这个结果。
+/// 字段私有，只有经过原始字节身份匹配和字典结构校验才能创建这个结果。
 #[derive(Debug)]
 pub(crate) struct VerifiedMetadata {
     /// 仅成功来源 peer 的会话标记；不写数据库，不继承此前失败 peer 的状态。
     used_extension_compatibility: bool,
-    info_hash: InfoHashV1,
+    info_hash: SwarmKey,
     source: SocketAddr,
     peer_id: PeerId,
     info: Vec<u8>,
@@ -230,6 +230,13 @@ impl VerifiedMetadata {
     #[cfg(test)]
     pub(crate) fn fixture(info: Vec<u8>) -> Self {
         use sha1::{Digest, Sha1};
+        let key = SwarmKey(Sha1::digest(&info).into());
+        Self::fixture_key(info, key)
+    }
+    /// 固定离线夹具显式指定来源查找键，沿用生产摘要匹配与字典边界。
+    #[cfg(test)]
+    pub(crate) fn fixture_key(info: Vec<u8>, key: SwarmKey) -> Self {
+        assert!(super::metainfo::match_identity(&info, key).is_some());
         assert_eq!(
             crate::collection::peer::wire::dictionary_prefix(&info, 64)
                 .unwrap()
@@ -238,7 +245,7 @@ impl VerifiedMetadata {
         );
         Self {
             used_extension_compatibility: false,
-            info_hash: InfoHashV1(Sha1::digest(&info).into()),
+            info_hash: key,
             source: "127.0.0.1:6881".parse().unwrap(),
             peer_id: PeerId([7; 20]),
             info,
@@ -247,7 +254,7 @@ impl VerifiedMetadata {
     pub(crate) fn used_extension_compatibility(&self) -> bool {
         self.used_extension_compatibility
     }
-    pub(crate) fn info_hash(&self) -> InfoHashV1 {
+    pub(crate) fn info_hash(&self) -> SwarmKey {
         self.info_hash
     }
     pub(crate) fn source(&self) -> SocketAddr {
@@ -337,7 +344,7 @@ impl PeerClient {
     /// 返回已校验下载或单 peer 失败；成功不表示事务已经提交。
     pub(crate) async fn fetch_one(
         &self,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         address: SocketAddr,
         cancellation: &CancellationToken,
         context: PeerContext,

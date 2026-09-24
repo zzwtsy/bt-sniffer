@@ -30,10 +30,16 @@ impl DhtDispatcher {
                 })
                 .collect();
             let deadline = self.transactions.next_deadline();
-            let maintenance_deadline = self.maintenance.deadline(&self.routing);
+            let maintenance_deadline = self
+                .maintenance
+                .deadline(&self.routing)
+                .filter(|_| !self.identity_paused);
             let peer_deadline = self.peers.next_deadline();
             let sampler_deadline = self.sampler.deadline;
-            let recovery_deadline = self.recovery.deadline(self.recovery_capacity());
+            let recovery_deadline = self
+                .recovery
+                .deadline(self.recovery_capacity())
+                .filter(|_| !self.identity_paused);
             let output = self.sampler.output_watch();
             tokio::select! {
                 _ = super::super::fetch::wait_cancelled(cancellations) => { self.cancel_fetch_queries(); },
@@ -64,6 +70,10 @@ impl DhtDispatcher {
                 _ = wait_until(deadline) => { self.expire_transactions(current_time()).await; }
                 _ = wait_until(maintenance_deadline) => {}
                 _ = wait_until(peer_deadline) => { self.peers.expire(current_time(), 256); }
+            }
+            self.rotate_identity(current_time()).await;
+            if self.identity_paused {
+                continue;
             }
             self.advance_outbound(current_time()).await;
             self.advance_maintenance(current_time()).await;

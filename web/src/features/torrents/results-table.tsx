@@ -1,10 +1,12 @@
 import type { CatalogPage } from "@/lib/api/torrents";
 import { Link } from "@tanstack/react-router";
+import { StatusBadge } from "@/components/observation/common";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CopyMagnet } from "./copy-magnet";
 import { bytes, fetchedAt, relativeTime, shortHash } from "./format";
 import { highlight } from "./highlight";
+import { semanticLabel, semanticTone } from "./labels";
 
 type CatalogItem = CatalogPage["items"][number];
 
@@ -38,7 +40,12 @@ export function ResultsTable({ items, q, from }: { items: CatalogItem[]; q: stri
                   >
                     {highlight(name, q)}
                   </Link>
-                  {item.parse_status === "unavailable" && <Badge variant="outline" className="mt-1">不可解析</Badge>}
+                  {(item.semantic_status !== "valid" || item.parse_status === "unavailable") && (
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <StatusBadge tone={semanticTone(item.semantic_status)}>{semanticLabel(item.semantic_status)}</StatusBadge>
+                      {item.parse_status === "unavailable" && <Badge variant="outline">不可解析</Badge>}
+                    </div>
+                  )}
                   {(item.encoding_lossy || item.name_truncated) && (
                     <p className="mt-1 text-xs text-muted-foreground">{item.encoding_lossy ? "包含非 UTF-8 文本" : "名称已截断"}</p>
                   )}

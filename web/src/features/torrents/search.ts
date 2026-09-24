@@ -1,4 +1,4 @@
-const HASH = /^[0-9a-f]{40}$/i;
+const HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
 export type TorrentInput
   = | { kind: "empty" }
@@ -14,7 +14,7 @@ export function classifyTorrentInput(input: string): TorrentInput {
     return { kind: "hash", value: value.toLowerCase() };
   const length = [...value].length;
   if (length < 3)
-    return { kind: "error", message: "请输入至少 3 个字符，或输入完整的 40 位 hash。" };
+    return { kind: "error", message: "请输入至少 3 个字符，或输入完整的 40 位 v1 或 64 位 v2 hash。" };
   if (length > 200)
     return { kind: "error", message: "搜索内容不能超过 200 个字符。" };
   return { kind: "query", value };

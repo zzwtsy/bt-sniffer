@@ -52,6 +52,7 @@ async fn answer(peer: &UdpTransport) {
             a: None,
             r: Some(args),
             e: None,
+            ip: None,
             ro: None,
         },
     )

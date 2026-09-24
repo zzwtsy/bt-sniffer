@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     dht::NodeId,
-    info_hash::InfoHashV1,
+    info_hash::SwarmKey,
     storage::{Storage, StorageConfig},
 };
 use std::time::Duration;
@@ -24,8 +24,8 @@ async fn failed_collection_retains_batch_and_resume_offset() {
         Ok(())
     }).await.unwrap();
     let (tx, rx) = mpsc::channel(1);
-    let mut samples = vec![InfoHashV1([1; 20]); 1024];
-    samples.extend([InfoHashV1([0; 20]); 10]);
+    let mut samples = vec![SwarmKey([1; 20]); 1024];
+    samples.extend([SwarmKey([0; 20]); 10]);
     tx.send(SampleBatch {
         observer: Default::default(),
         responder: crate::dht::dispatcher::DiscoveredNode {
@@ -122,7 +122,7 @@ async fn cancelled_database_confirmation_preserves_unconfirmed_batch() {
             observed_at: std::time::UNIX_EPOCH + Duration::from_secs(1),
             interval: Duration::from_secs(300),
             num: 1,
-            samples: vec![InfoHashV1([1; 20])],
+            samples: vec![SwarmKey([1; 20])],
         })
         .await
         .unwrap();

@@ -241,7 +241,7 @@ async fn first_attempt_backpressure_reaches_sampler_and_recovers() {
         )
         .await
         .unwrap();
-    let hashes: Vec<_> = (0..66).map(|n| InfoHashV1([n; 20])).collect();
+    let hashes: Vec<_> = (0..66).map(|n| SwarmKey([n; 20])).collect();
     // 先准备 50 条非到期重试，再统一补建 16 个首试。
     store.enable_recent_admission(0, AddressPolicy::LocalUnicast);
     store.save_hashes(&hashes[..50], start).await.unwrap();

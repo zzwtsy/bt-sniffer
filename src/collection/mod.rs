@@ -17,6 +17,8 @@ pub(crate) mod inspection;
 pub(crate) mod jobs;
 mod lifecycle;
 mod lookup;
+mod metadata_store;
+pub(crate) mod metainfo;
 pub(crate) mod peer;
 mod records;
 mod scheduler;

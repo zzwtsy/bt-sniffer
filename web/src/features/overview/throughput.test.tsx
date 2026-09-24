@@ -36,7 +36,7 @@ function setup() {
 }
 it("每秒采样最新输入，事件自然过期；卸载取消定时器", () => {
   const { update, view } = setup();
-  const discovery = eventSchema.parse({ schema_version: 1, run_id: "run", sequence: "1", at_ms: 41_000, kind: "discovery", step: "hash_saved", result: "new", context: {}, data: {}, truncated: false });
+  const discovery = eventSchema.parse({ schema_version: 2, run_id: "run", sequence: "1", at_ms: 41_000, kind: "discovery", step: "hash_saved", result: "new", context: {}, data: {}, truncated: false });
   const initial = draw.mock.calls.length;
   update({ events: [discovery], commits: 3 });
   act(() => {

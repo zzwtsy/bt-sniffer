@@ -125,8 +125,8 @@ export function OverviewPage() {
               ? `${nodes.filter(n => n.available === true).length} / ${nodes.length}`
               : "—"
           }
-          detail="可用 / 总数"
-          hint="IPv4 与 IPv6 节点分别观察"
+          detail={nodes.length === 0 ? "可用 / 总数" : nodes.map(node => `${node.family === "ipv6" ? "IPv6" : "IPv4"} 公网 IP ${record(node.bep42).confirmed === true ? "已确认" : "未确认"}`).join(" · ")}
+          hint="可用 / 总数；公网地址由显式配置或多前缀共识确认"
           icon={<Network size={17} />}
         />
         <Metric

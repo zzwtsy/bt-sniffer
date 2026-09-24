@@ -9,8 +9,22 @@ const indexState = z.object({
   search_complete: z.boolean(),
 });
 
+const identity = z.object({
+  kind: z.enum(["v1", "v2"]),
+  hash: z.string(),
+});
+
 const catalogItem = z.object({
-  hash: z.string().regex(/^[0-9a-f]{40}$/),
+  hash: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+  format: z.enum(["unknown", "v1", "v2", "hybrid"]),
+  semantic_status: z.enum(["pending", "valid", "invalid", "unsupported"]),
+  semantic_reason: z.string().nullable(),
+  identities: z.array(identity),
+  verification: z.array(z.enum(["v1_full", "v2_prefix", "hybrid_derived"])),
+  validation_scope: z.literal("info_only"),
+  piece_layers: z.literal("not_fetched"),
+  piece_space_length: z.string().nullable(),
+  padding_length: z.string().nullable(),
   parse_status: z.enum(["parsed", "unavailable"]),
   name: z.string().nullable(),
   name_truncated: z.boolean(),
@@ -31,13 +45,16 @@ const catalogPage = z.object({
   index: indexState,
 });
 
-const torrentDetail = catalogItem.omit({ match_excerpt: true }).extend({
-  file_count: z.number().int().nonnegative().nullable(),
-});
+const torrentDetail = catalogItem.omit({ match_excerpt: true });
 
 const fileItem = z.object({
   index: z.number().int().nonnegative(),
-  path: z.string(),
+  path: z.string().nullable(),
+  kind: z.enum(["file", "padding", "symlink"]),
+  hidden: z.boolean(),
+  executable: z.boolean(),
+  symlink_path: z.string().nullable(),
+  sha1: z.string().nullable(),
   path_truncated: z.boolean(),
   encoding_lossy: z.boolean(),
   length: z.string().regex(/^\d+$/),
@@ -50,6 +67,7 @@ const filePage = z.object({
 });
 
 export type CatalogPage = z.infer<typeof catalogPage>;
+export type TorrentIdentity = z.infer<typeof identity>;
 export type TorrentDetail = z.infer<typeof torrentDetail>;
 export type FileItem = z.infer<typeof fileItem>;
 export type FilePage = z.infer<typeof filePage>;

@@ -4,7 +4,7 @@ use super::*;
 /// 扩展能力只占 reserved[5] 的 0x10，Peer ID 与 DHT Node ID 不混用。
 #[test]
 fn standard_handshake_layout_and_validation() {
-    let hash = InfoHashV1([3; 20]);
+    let hash = SwarmKey([3; 20]);
     let id = PeerId([4; 20]);
     let mut bytes = handshake(hash, id);
     assert_eq!(&bytes[20..28], &[0, 0, 0, 0, 0, 16, 0, 0]);

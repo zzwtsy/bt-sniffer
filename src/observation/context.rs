@@ -32,7 +32,7 @@ pub(crate) struct Context {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) node_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) hash: Option<String>,
+    pub(crate) swarm_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) generation: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,7 +59,7 @@ impl std::ops::Deref for TraceContext {
     fn deref(&self) -> &Context {
         static EMPTY: Context = Context {
             node_id: None,
-            hash: None,
+            swarm_key: None,
             generation: None,
             parent_span_id: None,
             span_id: None,
@@ -89,7 +89,7 @@ impl Context {
         filter
             .hash
             .as_ref()
-            .is_none_or(|hash| self.hash.as_ref() == Some(hash))
+            .is_none_or(|hash| self.swarm_key.as_ref() == Some(hash))
             && filter.object.as_ref().is_none_or(|id| {
                 [
                     self.span_id.as_ref(),

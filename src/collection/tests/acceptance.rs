@@ -50,7 +50,7 @@ async fn sustained_mixed_loopback_30_minutes() {
     let mut servers = Vec::new();
     let mut completed = false;
     let work = async {
-        let mut previous = InfoHashV1([0; 20]);
+        let mut previous = SwarmKey([0; 20]);
         while start.elapsed() < Duration::from_secs(1800) {
             // 新鲜合法任务、实际失败 peer、重复宣布和无效 token 并存。
             sender
@@ -66,13 +66,13 @@ async fn sustained_mixed_loopback_30_minutes() {
                 .unwrap()
                 .token
                 .unwrap();
-            let mut target = InfoHashV1([0; 20]);
+            let mut target = SwarmKey([0; 20]);
             target.0[..8].copy_from_slice(&rounds.to_be_bytes());
             let mut port = 1;
             if rounds.is_multiple_of(10) {
                 let name = format!("soak-{rounds}");
                 let info = format!("d4:name{}:{}6:pieces0:e", name.len(), name).into_bytes();
-                target = InfoHashV1(Sha1::digest(&info).into());
+                target = SwarmKey(Sha1::digest(&info).into());
                 let (peer, task) = tcp_info(AddressFamily::Ipv4, info).await;
                 port = peer.port();
                 servers.push(task);

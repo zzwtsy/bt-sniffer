@@ -6,7 +6,6 @@ use crate::collection::peer::wire as peer_wire;
 use crate::collection::peer::wire::MetadataMessage;
 use crate::collection::peer::wire::WireErrorKind;
 use futures_util::{SinkExt, StreamExt};
-use sha1::{Digest, Sha1};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -91,7 +90,7 @@ async fn send(
 /// 标准握手与后续扩展握手共用 deadline，不因一次成功读写重新计时。
 async fn exchange_handshake(
     socket: &mut TcpStream,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     local_id: PeerId,
     handshake_deadline: Instant,
 ) -> Result<peer_wire::HandshakeInfo, PeerError> {
@@ -211,16 +210,16 @@ fn apply_extension(
     Ok(())
 }
 
-/// SHA-1 校验原始 info 字节，然后检查完整字典；两步均成功才移动缓冲区交给上层。
+/// 原始 info 匹配 SHA-1 或 v2 SHA-256 前缀，再检查完整字典；两步均成功才移动缓冲区交给上层。
 fn verify_metadata(
     state: &mut Pieces,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     address: SocketAddr,
     peer_id: PeerId,
     max_depth: usize,
     observer: &crate::observation::Observer,
 ) -> Result<VerifiedMetadata, PeerError> {
-    let matches = Sha1::digest(&state.bytes).as_slice() == hash.0;
+    let matches = crate::collection::metainfo::match_identity(&state.bytes, hash).is_some();
     observer.emit(
         crate::observation::Kind::Validation,
         "raw_info_hash",
@@ -261,7 +260,7 @@ fn verify_metadata(
 pub(super) async fn fetch_peer(
     config: &MetadataConfig,
     local_id: PeerId,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     address: SocketAddr,
     diagnostic: &mut crate::collection::diagnostics::PeerObservation,
 ) -> Result<VerifiedMetadata, PeerError> {

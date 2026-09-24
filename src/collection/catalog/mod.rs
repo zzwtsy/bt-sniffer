@@ -1,4 +1,4 @@
-//! 已保存 v1 metadata 的可重建查询目录；原始 info 仍由 metadata 表持有。
+//! 已保存 metadata 的可重建查询目录；原始 info 仍由 metadata 表持有。
 
 mod parser;
 mod queries;
@@ -15,7 +15,7 @@ pub(crate) fn ensure_catalog(
 ) -> rusqlite::Result<bool> {
     let existing = transaction
         .query_row(
-            "SELECT search_incomplete FROM torrent_catalog WHERE hash=?1",
+            "SELECT CASE WHEN semantic_status='pending' OR (semantic_status='invalid' AND semantic_reason='empty_directory') THEN NULL ELSE search_incomplete END FROM torrent_catalog WHERE hash=?1",
             [hash],
             |row| row.get::<_, Option<i64>>(0),
         )
@@ -23,7 +23,16 @@ pub(crate) fn ensure_catalog(
     if matches!(existing, Some(Some(_))) {
         return Ok(false);
     }
-    let parsed = parser::parse(info);
+    let mut analysis = super::metainfo::analyze(info);
+    let piece_space = analysis
+        .parsed
+        .as_ref()
+        .map(|p| p.piece_space_length.to_string());
+    let padding = analysis
+        .parsed
+        .as_ref()
+        .map(|p| p.padding_length.to_string());
+    let parsed = analysis.parsed.take().map(parser::from_parsed);
     let search_incomplete = parsed.as_ref().is_none_or(|parsed| parsed.search_truncated);
     let (
         status,
@@ -44,7 +53,7 @@ pub(crate) fn ensure_catalog(
             name_truncated,
             parsed.encoding_lossy,
             Some(parsed.total_length.to_string()),
-            Some(i64::try_from(parsed.files.len()).unwrap_or(i64::MAX)),
+            Some(i64::try_from(parsed.file_count).unwrap_or(i64::MAX)),
             Some(parsed.piece_length.to_string()),
             Some(i64::try_from(parsed.piece_count).unwrap_or(i64::MAX)),
             parsed.private,
@@ -108,5 +117,8 @@ pub(crate) fn ensure_catalog(
             ],
         )?;
     }
+    transaction.execute("UPDATE torrent_catalog SET format=?2,semantic_status=?3,semantic_reason=?4,piece_space_length=?5,padding_length=?6 WHERE hash=?1",
+        params![hash, analysis.format, analysis.status, analysis.reason,
+            piece_space, padding])?;
     Ok(true)
 }

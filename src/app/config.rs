@@ -15,6 +15,12 @@ pub(crate) const DEFAULT_BOOTSTRAP: [&str; 3] = [
 #[derive(Debug, Parser)]
 #[command(version, about = "持久化的双栈 BitTorrent DHT 服务节点")]
 pub(crate) struct Cli {
+    /// 固定 IPv4 公网地址；不指定时由匹配 DHT 响应形成地址共识。
+    #[arg(long,conflicts_with="ipv6_only",value_parser=external_v4)]
+    pub(crate) external_ip_v4: Option<std::net::IpAddr>,
+    /// 固定 IPv6 公网地址；不指定时自动观察。
+    #[arg(long,conflicts_with="ipv4_only",value_parser=external_v6)]
+    pub(crate) external_ip_v6: Option<std::net::IpAddr>,
     /// 开启只读观测 HTTP；仅允许 loopback，省略时不创建监控资源。
     #[arg(long, value_parser = monitor_address)]
     pub(crate) monitor_listen: Option<SocketAddr>,
@@ -246,4 +252,42 @@ fn monitor_address(value: &str) -> Result<SocketAddr, String> {
         return Err("监控只能监听 loopback".into());
     }
     Ok(address)
+}
+
+fn external_v4(value: &str) -> Result<std::net::IpAddr, String> {
+    external(value, true)
+}
+fn external_v6(value: &str) -> Result<std::net::IpAddr, String> {
+    external(value, false)
+}
+fn external(value: &str, v4: bool) -> Result<std::net::IpAddr, String> {
+    let ip: std::net::IpAddr = value.parse().map_err(|_| "公网 IP 格式错误".to_owned())?;
+    if ip.is_ipv4() != v4 || !crate::dht::security::public(ip) {
+        return Err("必须指定对应地址族的公网单播 IP".into());
+    }
+    Ok(ip)
+}
+
+#[test]
+fn external_ip_cli_requires_public_matching_family() {
+    for args in [
+        vec!["--external-ip-v4", "127.0.0.1"],
+        vec!["--external-ip-v4", "2001:4860:4860::8888"],
+        vec!["--external-ip-v6", "8.8.8.8"],
+        vec!["--external-ip-v6", "ff02::1"],
+        vec!["--external-ip-v4", "8.8.8.8", "--ipv6-only"],
+        vec!["--external-ip-v6", "2001:4860:4860::8888", "--ipv4-only"],
+    ] {
+        assert!(Cli::try_parse_from(std::iter::once("bt-sniffer").chain(args)).is_err());
+    }
+    assert!(
+        Cli::try_parse_from([
+            "bt-sniffer",
+            "--external-ip-v4",
+            "8.8.8.8",
+            "--external-ip-v6",
+            "2001:4860:4860::8888"
+        ])
+        .is_ok()
+    );
 }

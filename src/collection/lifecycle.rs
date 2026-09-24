@@ -5,7 +5,7 @@ use super::worker::Outcome;
 use crate::collection::jobs::Job;
 use crate::collection::peer::PeerInitError;
 use crate::dht::dispatcher::QueryError;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::StorageError;
 use std::{collections::HashMap, error::Error, fmt, future::Future};
 use tokio::task::{Id, JoinError, JoinSet};
@@ -25,7 +25,7 @@ pub(crate) enum CollectorError {
     SupervisorClosed,
     /// JoinSet 返回异常时附回原领取标识，便于继续延期或恢复，不能丢失 generation。
     Worker {
-        hash: InfoHashV1,
+        hash: SwarmKey,
         generation: i64,
         source: JoinError,
     },

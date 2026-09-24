@@ -94,6 +94,7 @@ pub(crate) struct FindNodeResponse {
 /// dispatcher 内部命令队列的配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DhtDispatcherConfig {
+    pub(crate) external_ip: Option<std::net::IpAddr>,
     /// 等待事件循环处理的上层命令最多可以积压多少条。
     pub(crate) command_capacity: usize,
     /// 自动执行启动自查找和陈旧 bucket 刷新的参数。
@@ -105,6 +106,7 @@ pub(crate) struct DhtDispatcherConfig {
 impl Default for DhtDispatcherConfig {
     fn default() -> Self {
         Self {
+            external_ip: None,
             command_capacity: DEFAULT_COMMAND_CAPACITY,
             maintenance: MaintenanceConfig::default(),
             peer_store: PeerStoreConfig::default(),
@@ -163,6 +165,8 @@ pub(crate) enum QueryError {
     DispatcherClosed,
     /// 待发意图在本地限流队列超时，未发送数据报。
     LocalWait,
+    /// 本地 Node ID 切换，不能计为远端失败。
+    IdentityChanged,
     /// 查询已经进入 dispatcher，但在等待期间节点开始关闭。
     ShuttingDown,
     /// 等待响应的 transaction 已达到配置上限。
@@ -184,6 +188,7 @@ pub(crate) enum QueryError {
 impl fmt::Display for QueryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::IdentityChanged => write!(formatter, "DHT 本地身份已切换"),
             Self::LocalWait => write!(formatter, "DHT 本地待发队列超时"),
             Self::DispatcherClosed => write!(formatter, "DHT dispatcher 已经停止"),
             Self::ShuttingDown => write!(formatter, "DHT dispatcher 正在关闭"),
@@ -389,13 +394,13 @@ pub(super) enum Command {
     GetPeers {
         observer: crate::observation::Observer,
         remote: RemoteNode,
-        hash: crate::info_hash::InfoHashV1,
+        hash: crate::info_hash::SwarmKey,
         progress: std::sync::Arc<RpcProgress>,
         cancel: tokio_util::sync::CancellationToken,
         reply: oneshot::Sender<Result<super::fetch::GetPeersResponse, QueryError>>,
     },
     FetchSeeds {
-        hash: crate::info_hash::InfoHashV1,
+        hash: crate::info_hash::SwarmKey,
         reply: oneshot::Sender<Vec<DiscoveredNode>>,
     },
     FetchIngress {
@@ -462,6 +467,7 @@ impl QueryError {
         match self {
             Self::DispatcherClosed => "dispatcher_closed",
             Self::LocalWait => "local_wait",
+            Self::IdentityChanged => "identity_changed",
             Self::ShuttingDown => "shutting_down",
             Self::AtCapacity { .. } => "capacity",
             Self::Transaction(_) => "transaction",

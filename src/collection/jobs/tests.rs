@@ -11,8 +11,8 @@ async fn dedup_capacity_recovery_and_stale_generation() {
     let store = &storage.handle;
     // 只允许一个活跃任务；重复发现同一 hash 不会额外占用容量。
     store.enable_fetch(1);
-    let first_hash = InfoHashV1([1; 20]);
-    let second_hash = InfoHashV1([2; 20]);
+    let first_hash = SwarmKey([1; 20]);
+    let second_hash = SwarmKey([2; 20]);
     store
         .save_hashes(&[first_hash, first_hash, second_hash], 100)
         .await
@@ -87,7 +87,7 @@ async fn hints_are_bounded_expire_and_dormancy_needs_new_observation() {
     let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
     let s = &storage.handle;
     s.enable_fetch(2);
-    let hash = InfoHashV1([3; 20]);
+    let hash = SwarmKey([3; 20]);
     for port in 1..=12 {
         s.discover_peer(hash, format!("127.0.0.1:{port}").parse().unwrap(), 100)
             .await
@@ -145,11 +145,12 @@ async fn hints_are_bounded_expire_and_dormancy_needs_new_observation() {
 #[tokio::test]
 async fn v1_upgrade_preserves_hashes_and_backfills_only_on_fetch() {
     let dir = tempfile::tempdir().unwrap();
-    let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
-    let hash = InfoHashV1([4; 20]);
-    storage.handle.save_hashes(&[hash], 1).await.unwrap();
-    storage.shutdown().await.unwrap();
+    let hash = SwarmKey([4; 20]);
     let c = Connection::open(dir.path().join("state.sqlite3")).unwrap();
+    c.execute_batch(include_str!("../../storage/fixtures/v4.sql"))
+        .unwrap();
+    c.execute("INSERT INTO infohashes VALUES(?1,1,1)", [hash.0.as_slice()])
+        .unwrap();
     c.execute_batch(
         "DROP TRIGGER metadata_catalog_total_ai;
          DROP TRIGGER metadata_catalog_total_ad;
@@ -183,7 +184,7 @@ async fn historical_backfill_bounds_scans_and_preserves_cursor_at_capacity() {
         .map(|i| {
             let mut bytes = [0; 20];
             bytes[..2].copy_from_slice(&i.to_be_bytes());
-            InfoHashV1(bytes)
+            SwarmKey(bytes)
         })
         .collect();
     s.save_hashes(&hashes, 1).await.unwrap();
@@ -224,7 +225,7 @@ async fn preferred_claims_rotate_borrow_and_respect_hint_policy_and_due_time() {
     store.enable_fetch(16);
     let policy = crate::address::AddressPolicy::PublicOnly;
     for id in 1..=12 {
-        let hash = InfoHashV1([id; 20]);
+        let hash = SwarmKey([id; 20]);
         store.save_hashes(&[hash], 100).await.unwrap();
         if id >= 4 {
             store
@@ -278,7 +279,7 @@ async fn capacity_still_refreshes_accepted_hints_and_local_deferral_keeps_attemp
     let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
     let s = &storage.handle;
     s.enable_fetch(1);
-    let hash = InfoHashV1([1; 20]);
+    let hash = SwarmKey([1; 20]);
     s.save_hashes(&[hash], 100).await.unwrap();
     assert!(
         s.discover_peer(hash, "127.0.0.1:6881".parse().unwrap(), 200)
@@ -286,7 +287,7 @@ async fn capacity_still_refreshes_accepted_hints_and_local_deferral_keeps_attemp
             .unwrap()
     );
     assert!(
-        !s.discover_peer(InfoHashV1([2; 20]), "127.0.0.1:6881".parse().unwrap(), 200)
+        !s.discover_peer(SwarmKey([2; 20]), "127.0.0.1:6881".parse().unwrap(), 200)
             .await
             .unwrap()
     );
@@ -314,5 +315,80 @@ async fn capacity_still_refreshes_accepted_hints_and_local_deferral_keeps_attemp
     })
     .await
     .unwrap();
+    storage.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_hybrid_completions_invalidate_the_other_claim() {
+    use crate::collection::peer::VerifiedMetadata;
+    use sha1::{Digest, Sha1};
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
+    let store = &storage.handle;
+    let info = include_bytes!("../fixtures/hybrid.info");
+    let v1 = SwarmKey(Sha1::digest(info).into());
+    let v2 = SwarmKey(sha2::Sha256::digest(info)[..20].try_into().unwrap());
+    store.enable_fetch(2);
+    store.save_hashes(&[v1, v2], 100).await.unwrap();
+    let first = store.claim_job(100).await.unwrap().unwrap();
+    let second = store.claim_job(100).await.unwrap().unwrap();
+    let first_metadata = VerifiedMetadata::fixture_key(info.to_vec(), first.hash);
+    let second_metadata = VerifiedMetadata::fixture_key(info.to_vec(), second.hash);
+    let (a, b) = tokio::join!(
+        store.complete_job(first, first_metadata, 101),
+        store.complete_job(second, second_metadata, 101)
+    );
+    assert_eq!(
+        [a.unwrap(), b.unwrap()]
+            .iter()
+            .filter(|result| matches!(result, UpdateResult::Applied))
+            .count(),
+        1
+    );
+    let stats = store.fetch_stats().await.unwrap();
+    assert_eq!(
+        (stats.metadata_count, stats.succeeded, stats.running),
+        (1, 2, 0)
+    );
+    storage.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn historical_hybrid_backfill_rejects_late_completion() {
+    use crate::collection::peer::VerifiedMetadata;
+    use sha1::{Digest, Sha1};
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
+    let store = &storage.handle;
+    let info = include_bytes!("../fixtures/hybrid-empty-directory.info");
+    let v1 = SwarmKey(Sha1::digest(info).into());
+    let v2 = SwarmKey(sha2::Sha256::digest(info)[..20].try_into().unwrap());
+    store.enable_fetch(2);
+    store.save_hashes(&[v2], 100).await.unwrap();
+    let job = store.claim_job(100).await.unwrap().unwrap();
+    store.save_hashes(&[v1], 100).await.unwrap();
+    store.call(move |c| {
+        let tx = c.transaction()?;
+        tx.execute("INSERT INTO metadata(hash,info,fetched_at) VALUES(?1,?2,100)", rusqlite::params![v1.0.as_slice(),info.as_slice()])?;
+        tx.execute("INSERT INTO torrent_identities SELECT 'v1',hash,id FROM metadata", [])?;
+        tx.execute("INSERT INTO swarm_metadata SELECT hash,id,'v1_full' FROM metadata", [])?;
+        crate::collection::catalog::ensure_catalog(&tx,&v1.0,info)?;
+        tx.execute("UPDATE torrent_catalog SET semantic_status='invalid',semantic_reason='empty_directory'", [])?;
+        tx.execute("UPDATE fetch_jobs SET state='succeeded' WHERE hash=?1", [v1.0.as_slice()])?;
+        tx.commit()?;
+        Ok(())
+    }).await.unwrap();
+    let permit = store.read_permit.clone().acquire_owned().await.unwrap();
+    store
+        .backfill_catalog_one(None, permit, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .complete_job(job, VerifiedMetadata::fixture_key(info.to_vec(), v2), 101)
+            .await
+            .unwrap(),
+        UpdateResult::Stale
+    );
     storage.shutdown().await.unwrap();
 }

@@ -30,13 +30,16 @@ pub(crate) enum TaskRole {
     Snapshot(usize),
     SampleCollector(usize),
     FetchCoordinator,
+    CatalogMaintenance,
 }
 
 impl TaskRole {
     pub(super) fn node(self) -> usize {
         match self {
             Self::Dispatcher(index) | Self::Snapshot(index) | Self::SampleCollector(index) => index,
-            Self::FetchCoordinator => unreachable!("全局采集协调器没有节点索引"),
+            Self::FetchCoordinator | Self::CatalogMaintenance => {
+                unreachable!("全局采集协调器没有节点索引")
+            }
         }
     }
 }
@@ -47,6 +50,7 @@ impl std::fmt::Display for TaskRole {
             Self::Dispatcher(node) => write!(f, "节点 {node} dispatcher"),
             Self::Snapshot(node) => write!(f, "节点 {node} snapshot"),
             Self::SampleCollector(node) => write!(f, "节点 {node} sample collector"),
+            Self::CatalogMaintenance => f.write_str("历史元数据回填"),
             Self::FetchCoordinator => f.write_str("全局 metadata 采集协调器"),
         }
     }

@@ -141,6 +141,11 @@ impl DhtDispatcher {
         } else {
             ValidatedResponse::Basic
         };
+        self.observe_external(
+            received.source,
+            received.message.ip.as_ref().map(|b| b.as_slice()),
+            now,
+        );
         self.budget.validated(received.source.ip());
         self.observer.emit(crate::observation::Kind::Routing,"contact","validated",||serde_json::json!({"node_id":crate::observation::hex(&response.id.0),"address":received.source.to_string()}));
         let outcome = self
@@ -189,6 +194,13 @@ impl DhtDispatcher {
             .await;
             return;
         }
+        if received.message.e.is_some() {
+            self.observe_external(
+                received.source,
+                received.message.ip.as_ref().map(|b| b.as_slice()),
+                now,
+            );
+        }
         let error = match received.message.e {
             Some((code, message)) => QueryError::Remote { code, message },
             None => QueryError::InvalidResponse("错误消息缺少 e 字段"),
@@ -196,3 +208,6 @@ impl DhtDispatcher {
         self.finish_network_failure(pending, error, now).await;
     }
 }
+
+#[cfg(test)]
+mod security_tests;

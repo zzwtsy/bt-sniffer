@@ -13,7 +13,7 @@ use crate::dht::dispatcher::RpcProgress;
 use crate::dht::routing::xor_distance;
 use crate::dht::shortlist::CandidateState;
 use crate::dht::shortlist::closest_valid;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -68,7 +68,7 @@ impl LookupPacer {
 async fn query(
     handle: DhtHandle,
     node: DiscoveredNode,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     pacer: Arc<LookupPacer>,
     progress: Arc<RpcProgress>,
 ) -> Result<GetPeersResponse, QueryError> {
@@ -123,7 +123,7 @@ async fn query(
 }
 async fn family(
     handle: DhtHandle,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     pacer: Arc<LookupPacer>,
     found_seeds: Arc<AtomicBool>,
     progress: Arc<RpcProgress>,
@@ -158,7 +158,7 @@ async fn family(
 /// peers 与另一地址族共享并去重，合计最多 32 个；结果通过 try_send 尽力通知，不等待慢消费者。
 /// 普通远端失败继续尝试，dispatcher 关闭或 transaction 故障向上返回；总期限由 stream 施加。
 async fn search<Q, F>(
-    hash: InfoHashV1,
+    hash: SwarmKey,
     seeds: Vec<DiscoveredNode>,
     peers: Arc<Mutex<Vec<SocketAddr>>>,
     output: Option<Arc<PeerOutput>>,
@@ -202,9 +202,9 @@ where
             states.insert(id, CandidateState::InFlight);
             queries += 1;
             let response = query_node(node);
-            pending.push(async move { (id, response.await) });
+            pending.push(async move { (node, response.await) });
         }
-        let Some((id, result)) = pending.next().await else {
+        let Some((queried, result)) = pending.next().await else {
             if queries < 32
                 && closest_valid(
                     candidates.keys().map(|id| {
@@ -223,9 +223,11 @@ where
             }
             break;
         };
+        let id = queried.id;
         if matches!(
             result,
-            Err(QueryError::DispatcherClosed
+            Err(QueryError::IdentityChanged
+                | QueryError::DispatcherClosed
                 | QueryError::ShuttingDown
                 | QueryError::Transaction(_))
         ) {
@@ -233,7 +235,7 @@ where
         }
         states.insert(
             id,
-            if result.is_ok() {
+            if result.is_ok() && crate::dht::security::trusted(id, queried.address.ip()) {
                 CandidateState::Succeeded
             } else {
                 CandidateState::Failed
@@ -311,7 +313,7 @@ impl Drop for LookupReport {
 #[cfg(test)]
 pub(super) async fn lookup(
     handles: &[DhtHandle],
-    hash: InfoHashV1,
+    hash: SwarmKey,
     pacer: Arc<LookupPacer>,
 ) -> LookupResult {
     stream(handles, hash, pacer, Arc::default(), None, Arc::default()).await
@@ -322,7 +324,7 @@ pub(super) async fn lookup(
 /// LookupReport 在退出时记录统计，不能把结束计数理解成查找成功。
 pub(super) async fn stream(
     handles: &[DhtHandle],
-    hash: InfoHashV1,
+    hash: SwarmKey,
     pacer: Arc<LookupPacer>,
     metrics: Arc<Metrics>,
     sender: Option<Sender<SocketAddr>>,
@@ -422,7 +424,7 @@ mod search_tests {
         });
         let work = || {
             search(
-                InfoHashV1([0; 20]),
+                SwarmKey([0; 20]),
                 nodes(8),
                 peers.clone(),
                 Some(output.clone()),
@@ -463,7 +465,7 @@ mod search_tests {
         for succeeds in [false, true] {
             let attempts = std::sync::Mutex::new(Vec::new());
             let peers = Arc::new(std::sync::Mutex::new(Vec::new()));
-            search(InfoHashV1([0; 20]), nodes(40), peers, None, |node| {
+            search(SwarmKey([0; 20]), nodes(40), peers, None, |node| {
                 attempts.lock().unwrap().push(node.id);
                 async move {
                     if succeeds {
@@ -493,7 +495,7 @@ mod search_tests {
             seeds[index].address = seeds[0].address;
         }
         let attempts = std::sync::Mutex::new(Vec::new());
-        search(InfoHashV1([0; 20]), seeds, Arc::default(), None, |node| {
+        search(SwarmKey([0; 20]), seeds, Arc::default(), None, |node| {
             attempts.lock().unwrap().push(node.address);
             async { Err(QueryError::Timeout) }
         })
@@ -512,7 +514,7 @@ mod search_tests {
         let active = Arc::new(AtomicU64::new(0));
         let peers = Arc::new(std::sync::Mutex::new(Vec::new()));
         let expected = "127.0.0.1:9999".parse().unwrap();
-        let work = search(InfoHashV1([0; 20]), nodes(8), peers.clone(), None, |node| {
+        let work = search(SwarmKey([0; 20]), nodes(8), peers.clone(), None, |node| {
             let active = active.clone();
             async move {
                 active.fetch_add(1, Ordering::Relaxed);
@@ -533,5 +535,45 @@ mod search_tests {
         );
         assert_eq!(*peers.lock().unwrap(), vec![expected]);
         assert_eq!(active.load(Ordering::Relaxed), 0);
+    }
+    /// 候选裁剪不改变在途请求的来源；迟到响应仍可按实际请求地址判断安全状态。
+    #[tokio::test]
+    async fn evicted_inflight_candidate_keeps_its_queried_address() {
+        let mut seeds = nodes(3);
+        for seed in &mut seeds {
+            seed.id.0[0] += 200;
+        }
+        search(
+            SwarmKey([0; 20]),
+            seeds,
+            Arc::default(),
+            None,
+            |node| async move {
+                if node.id.0[0] == 201 {
+                    let candidates = (0..=255u8)
+                        .map(|n| {
+                            let mut id = [0; 20];
+                            id[1] = n;
+                            DiscoveredNode {
+                                id: crate::dht::NodeId(id),
+                                address: SocketAddr::from(([127, 1, 0, n], 6881)),
+                            }
+                        })
+                        .collect();
+                    Ok(GetPeersResponse {
+                        nodes: candidates,
+                        peers: vec![],
+                    })
+                } else {
+                    tokio::task::yield_now().await;
+                    Ok(GetPeersResponse {
+                        nodes: vec![],
+                        peers: vec![],
+                    })
+                }
+            },
+        )
+        .await
+        .unwrap();
     }
 }

@@ -171,7 +171,7 @@ fn metadata_commit_event_requires_applied_transaction() {
         .collect();
     assert_eq!(commits.len(), 1);
     let fields = &commits[0]["fields"];
-    assert_eq!(fields["schema_version"].as_u64(), Some(1));
+    assert_eq!(fields["schema_version"].as_u64(), Some(2));
     assert_eq!(fields["phase"], "commit");
     assert_eq!(
         fields["bytes"].as_u64(),

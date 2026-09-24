@@ -20,7 +20,7 @@ use crate::dht::routing::{AddressFamily, RoutingTable};
 use crate::dht::transaction::TransactionManager;
 use crate::dht::udp::UdpTransport;
 use crate::dht::udp::UdpTransportConfig;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::{Storage, StorageConfig, StorageError};
 use serde_bytes::ByteBuf;
 use std::time::{Duration, SystemTime};
@@ -187,7 +187,7 @@ fn response_family(t: ByteBuf, method: QueryMethod, family: AddressFamily) -> Kr
         } else {
             args.nodes = Some(CompactNodesV4(vec![]));
         }
-        args.samples = Some(InfoHashSamples(vec![InfoHashV1([9; 20]); 2]));
+        args.samples = Some(InfoHashSamples(vec![SwarmKey([9; 20]); 2]));
         args.interval = Some(300);
         args.num = Some(1);
     }
@@ -198,6 +198,7 @@ fn response_family(t: ByteBuf, method: QueryMethod, family: AddressFamily) -> Kr
         a: None,
         r: Some(args),
         e: None,
+        ip: None,
         ro: None,
     }
 }
@@ -392,6 +393,7 @@ fn find_query() -> KrpcMessage {
         }),
         r: None,
         e: None,
+        ip: None,
         ro: Some(1),
     }
 }
@@ -865,7 +867,7 @@ async fn session_logs_use_module_targets_and_fields() {
             observed_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
             interval: Duration::from_secs(300),
             num: 1,
-            samples: vec![InfoHashV1([1; 20])],
+            samples: vec![SwarmKey([1; 20])],
         })
         .await
         .unwrap();
@@ -900,4 +902,95 @@ async fn session_logs_use_module_targets_and_fields() {
     assert_eq!(events[1]["fields"]["schema_version"], 1);
     assert_eq!(events[1]["fields"]["success"], true);
     assert_eq!(events[1]["fields"]["error_count"], 0);
+}
+
+#[tokio::test]
+async fn historical_hybrid_backfill_runs_without_browser_in_fetch_and_monitor_modes() {
+    use sha1::{Digest, Sha1};
+    for monitor_only in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::open(StorageConfig::new(dir.path())).await.unwrap();
+        session
+            .add_node(
+                "backfill",
+                udp().await,
+                TransactionManager::new(Duration::from_secs(2), 8),
+                config(),
+                AddressPolicy::LocalUnicast,
+            )
+            .await
+            .unwrap();
+        let store = session.test_store();
+        store
+            .call(|c| {
+                let info = include_bytes!("../../collection/fixtures/hybrid.info");
+                let hash = Sha1::digest(info);
+                let tx = c.transaction()?;
+                tx.execute("INSERT INTO infohashes VALUES(?1,1,2)", [hash.as_slice()])?;
+                tx.execute(
+                    "INSERT INTO metadata(hash,info,fetched_at) VALUES(?1,?2,3)",
+                    rusqlite::params![hash.as_slice(), info.as_slice()],
+                )?;
+                let id = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO torrent_identities VALUES('v1',?1,?2)",
+                    rusqlite::params![hash.as_slice(), id],
+                )?;
+                tx.execute(
+                    "INSERT INTO swarm_metadata VALUES(?1,?2,'v1_full')",
+                    rusqlite::params![hash.as_slice(), id],
+                )?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        if monitor_only {
+            session.start_monitor(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap());
+        } else {
+            session
+                .start_fetch(crate::collection::Config {
+                    metadata: crate::collection::peer::MetadataConfig {
+                        address_policy: AddressPolicy::LocalUnicast,
+                        ..Default::default()
+                    },
+                    concurrency: 1,
+                    max_active: 2,
+                    sample_backpressure: crate::collection::SampleBackpressure::Capacity,
+                    state_max_bytes: 1024 * 1024 * 1024,
+                    directory: dir.path().into(),
+                    policy: AddressPolicy::LocalUnicast,
+                })
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let count = store
+                    .call(|c| {
+                        Ok(c.query_row(
+                            "SELECT count(*) FROM torrent_identities WHERE kind='v2'",
+                            [],
+                            |r| r.get::<_, i64>(0),
+                        )?)
+                    })
+                    .await
+                    .unwrap();
+                if count == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.active_jobs().await.unwrap(), 0);
+        session.shutdown().await.unwrap();
+        let c = rusqlite::Connection::open(dir.path().join("state.sqlite3")).unwrap();
+        assert_eq!(
+            c.query_row("SELECT info FROM metadata", [], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap(),
+            include_bytes!("../../collection/fixtures/hybrid.info")
+        );
+    }
 }

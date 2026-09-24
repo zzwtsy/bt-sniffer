@@ -2,10 +2,7 @@
 use super::{
     Job, LOCAL_RETRY_DELAY_MS, MAX_FAILED_ATTEMPTS, RETRY_BASE_DELAY_MS, RetryReason, UpdateResult,
 };
-use crate::collection::{
-    catalog::ensure_catalog, peer::VerifiedMetadata, records::check_metadata_size,
-    store::CollectionStore,
-};
+use crate::collection::{peer::VerifiedMetadata, store::CollectionStore};
 use crate::storage::StorageError;
 use rusqlite::{OptionalExtension, params};
 impl CollectionStore {
@@ -33,8 +30,8 @@ impl CollectionStore {
                      error = NULL
                  WHERE EXISTS (
                      SELECT 1
-                     FROM metadata
-                     WHERE metadata.hash = fetch_jobs.hash
+                     FROM swarm_metadata
+                     WHERE swarm_metadata.hash = fetch_jobs.hash
                  )",
                 [],
             )?;
@@ -175,33 +172,11 @@ impl CollectionStore {
                 observation.finish("stale");
                 return Ok(UpdateResult::Stale);
             }
-            check_metadata_size(&tx, job.hash)?;
-            let existing_info: Option<Vec<u8>> = tx
-                .query_row(
-                    "SELECT info
-                     FROM metadata
-                     WHERE hash = ?1",
-                    [job.hash.0.as_slice()],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if existing_info
-                .as_ref()
-                .is_some_and(|bytes| bytes.as_slice() != metadata.info())
-            {
-                return Err(StorageError::Conflict);
-            }
-            tx.execute(
-                "INSERT INTO metadata
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT (hash) DO NOTHING",
-                params![
-                    job.hash.0.as_slice(), // ?1：hash
-                    metadata.info(),       // ?2：info，保留原始字节
-                    now_ms,                // ?3：fetched_at
-                ],
-            )?;
-            ensure_catalog(&tx, &job.hash.0, metadata.info())?;
+            let metadata_id = super::super::metadata_store::save(&tx, job.hash, metadata.info(), now_ms)?;
+            let identities = if observer.enabled() {
+                let mut statement = tx.prepare("SELECT kind,hash FROM torrent_identities WHERE metadata_id=?1 ORDER BY kind")?;
+                statement.query_map([metadata_id], |row| Ok(serde_json::json!({"kind":row.get::<_,String>(0)?,"hash":crate::observation::hex(&row.get::<_,Vec<u8>>(1)?)})))?.collect::<rusqlite::Result<Vec<_>>>()?
+            } else { Vec::new() };
             tx.execute(
                 "UPDATE fetch_jobs
                  SET state = 'succeeded',
@@ -215,15 +190,15 @@ impl CollectionStore {
                  WHERE hash = ?1",
                 [job.hash.0.as_slice()],
             )?;
-            // 领取检查与三次写入都在本事务内；只有提交成功后才记录日志并返回 Applied。
+            // 领取检查与关联写入都在本事务内；只有提交成功后才记录日志并返回 Applied。
             tx.commit()?;
-            observer.emit(crate::observation::Kind::Commit,"metadata","applied",||serde_json::json!({"bytes":metadata.info().len(),"peer":metadata.source().to_string(),"peer_id":crate::observation::hex(&metadata.peer_id().0)}));
+            observer.emit(crate::observation::Kind::Commit,"metadata","applied",||serde_json::json!({"identities":identities,"bytes":metadata.info().len(),"peer":metadata.source().to_string(),"peer_id":crate::observation::hex(&metadata.peer_id().0)}));
             observation.finish("applied");
             tracing::debug!(
                 event = "metadata_committed",
-                schema_version = 1u64,
+                schema_version = 2u64,
                 phase = "commit",
-                hash = ?metadata.info_hash(),
+                swarm_key = ?metadata.info_hash(),
                 source = %metadata.source(),
                 peer_id = ?metadata.peer_id(),
                 bytes = metadata.info().len(),

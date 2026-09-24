@@ -75,6 +75,13 @@ pub(in crate::dht::dispatcher) enum PendingPurpose {
 /// 单个 UDP socket 对应的 DHT 状态所有者与消息分派器。
 #[derive(Debug)]
 pub(crate) struct DhtDispatcher {
+    pub(in crate::dht::dispatcher) identity_paused: bool,
+    pub(crate) security: crate::dht::security::AddressConsensus,
+    pub(in crate::dht::dispatcher) identity_store: Option<(
+        crate::dht::persistence::DhtStore,
+        crate::dht::persistence::identity::LocalIdentity,
+    )>,
+    pub(in crate::dht::dispatcher) pending_external_ip: Option<std::net::IpAddr>,
     pub(crate) observer: crate::observation::Observer,
     pub(in crate::dht::dispatcher) budget: Arc<crate::dht::traffic::Budget>,
     pub(in crate::dht::dispatcher) queued: VecDeque<super::super::traffic::Queued>,
@@ -166,6 +173,10 @@ impl DhtDispatcher {
         let maintenance = MaintenanceState::new(maintenance, current_time());
         Ok((
             Self {
+                identity_paused: false,
+                security: crate::dht::security::AddressConsensus::new(config.external_ip, None),
+                identity_store: None,
+                pending_external_ip: None,
                 observer: Default::default(),
                 budget,
                 queued: Default::default(),

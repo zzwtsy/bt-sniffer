@@ -26,7 +26,7 @@ async fn roundtrip(v6: bool) {
     peer.send_to(address, &announce).await.unwrap();
     assert_eq!(receive(&peer).await.message.y, MessageType::Response);
     let mut unannounced = query(QueryMethod::GetPeers);
-    unannounced.a.as_mut().unwrap().info_hash = Some(InfoHashV1([8; 20]));
+    unannounced.a.as_mut().unwrap().info_hash = Some(SwarmKey([8; 20]));
     peer.send_to(address, &unannounced).await.unwrap();
     receive(&peer).await;
     peer.send_to(address, &sample_query()).await.unwrap();
@@ -176,7 +176,7 @@ async fn response_budget_trims_samples_before_nodes_and_keeps_cache() {
         for value in 0..40 {
             dispatcher
                 .peers
-                .announce(InfoHashV1([value; 20]), peer.local_addr().unwrap(), now)
+                .announce(SwarmKey([value; 20]), peer.local_addr().unwrap(), now)
                 .unwrap();
         }
         for value in 3..11 {
@@ -253,7 +253,7 @@ async fn live_count_changes_without_refilling_cached_samples() {
     dispatcher
         .peers
         .announce(
-            InfoHashV1([8; 20]),
+            SwarmKey([8; 20]),
             peer.local_addr().unwrap(),
             start + Duration::from_secs(10),
         )
@@ -296,7 +296,7 @@ async fn ipv6_full_sampling_response_fits_actual_udp_payload() {
     for value in 0..40 {
         dispatcher
             .peers
-            .announce(InfoHashV1([value; 20]), peer.local_addr().unwrap(), now)
+            .announce(SwarmKey([value; 20]), peer.local_addr().unwrap(), now)
             .unwrap();
     }
     for value in 3..11 {

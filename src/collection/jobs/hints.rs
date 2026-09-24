@@ -3,7 +3,7 @@ use super::admission::{available, enqueue};
 use super::{MAX_PEER_HINTS, PEER_HINT_CLEANUP_BATCH_SIZE, PEER_HINT_TTL_MS};
 use crate::collection::{records::upsert_hash, store::CollectionStore};
 use crate::{
-    info_hash::InfoHashV1,
+    info_hash::SwarmKey,
     storage::{
         StorageError,
         address::{decode_ip, ip_bytes},
@@ -16,7 +16,7 @@ impl CollectionStore {
     /// 返回 false 表示满载且该 hash 没有已接纳的活跃任务。
     pub(crate) async fn discover_peer(
         &self,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         peer: SocketAddr,
         observed_at_ms: i64,
     ) -> Result<bool, StorageError> {

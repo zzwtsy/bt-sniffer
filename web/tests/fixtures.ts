@@ -2,14 +2,14 @@ import { eventSchema, snapshotSchema } from "../src/lib/observation/contracts";
 
 export function event(sequence: number, data: Record<string, unknown> = {}) {
   return eventSchema.parse({
-    schema_version: 1,
+    schema_version: 2,
     run_id: "run",
     sequence: String(sequence),
     at_ms: 1000 + sequence,
     kind: "piece",
     step: "receive",
     result: "accepted",
-    context: { hash: "a".repeat(40), generation: 3, peer_attempt_id: "p1" },
+    context: { swarm_key: "a".repeat(40), generation: 3, peer_attempt_id: "p1" },
     data,
     truncated: false,
   });

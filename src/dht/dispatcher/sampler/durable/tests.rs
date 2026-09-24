@@ -298,3 +298,44 @@ async fn stopping_before_send_revokes_ready_lease() {
     assert_eq!(count, 0);
     store.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn identity_change_drains_ready_and_pending_reservations() {
+    for ready in [false, true] {
+        let Fixture {
+            _dir,
+            store,
+            mut sampler,
+            table,
+            receiver: _receiver,
+            now,
+        } = fixture().await;
+        let request = sampler.next(&table, 7, now).unwrap();
+        assert!(sampler.reserve_request(request, now).is_none());
+        if ready {
+            sampler.storage_event().await;
+        }
+        sampler.prepare_identity_change(now).await.unwrap();
+        assert!(
+            sampler
+                .take_reserved(7, now + Duration::from_secs(2))
+                .is_none()
+        );
+        let pending = store
+            .handle
+            .call(|c| {
+                Ok(c.query_row(
+                    "SELECT count(*) FROM sampling_cooldowns WHERE pending=1",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(pending, 0);
+        assert!(sampler.status().running);
+        sampler.stop(now);
+        sampler.flush_storage().await.unwrap();
+        store.shutdown().await.unwrap();
+    }
+}

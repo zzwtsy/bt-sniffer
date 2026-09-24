@@ -107,7 +107,11 @@ impl IterativeLookup {
         discovered: Vec<(NodeContact, bool)>,
         local_id: NodeId,
     ) {
-        self.finish_candidate(id, true);
+        let trusted = self
+            .candidates
+            .get(&id)
+            .is_some_and(|c| crate::dht::security::trusted(id, c.node.address.ip()));
+        self.finish_candidate(id, trusted);
         for (node, verified) in discovered {
             if node.id == local_id {
                 continue;
@@ -433,9 +437,9 @@ mod tests {
                     contact(
                         id,
                         &if v6 {
-                            format!("[2606:4700::{id}]:6881")
+                            format!("[fd00::{id}]:6881")
                         } else {
-                            format!("8.8.8.{id}:6881")
+                            format!("127.0.0.{id}:6881")
                         },
                     )
                 })

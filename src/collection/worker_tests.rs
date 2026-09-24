@@ -8,13 +8,13 @@ use super::{
     jobs::{ClaimClass, Job, RetryReason},
     worker::{Outcome, WorkerResources, run_job},
 };
-use crate::{address::AddressPolicy, dht::routing::AddressFamily, info_hash::InfoHashV1};
+use crate::{address::AddressPolicy, dht::routing::AddressFamily, info_hash::SwarmKey};
 use sha1::{Digest, Sha1};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 async fn run_candidates(
     client: PeerClient,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     peers: Vec<SocketAddr>,
 ) -> Result<VerifiedMetadata, RetryReason> {
     let network = Arc::new(WorkerResources::new(client.clone(), client.test_metrics()));
@@ -102,7 +102,7 @@ async fn compatible_failed_peer_does_not_claim_strict_peers_download() {
     let (success, success_task, _) = peer(false, Reply::Serve).await;
     let result = run_candidates(
         fetcher(metrics.clone()),
-        InfoHashV1(Sha1::digest(INFO).into()),
+        SwarmKey(Sha1::digest(INFO).into()),
         vec![failed, success],
     )
     .await

@@ -38,7 +38,7 @@ pub(crate) async fn peer(
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut hello = [0; 68];
         socket.read_exact(&mut hello).await.unwrap();
-        let target = InfoHashV1(Sha1::digest(INFO).into());
+        let target = SwarmKey(Sha1::digest(INFO).into());
         socket
             .write_all(&peer_wire::handshake(target, PeerId([7; 20])))
             .await
@@ -120,7 +120,7 @@ async fn compatible_sessions_download_or_fail_without_duplicate_samples() {
         let (address, task, ready) = peer(true, reply).await;
         let fetcher = fetcher(metrics.clone());
         let cancel = CancellationToken::new();
-        let target = InfoHashV1(Sha1::digest(INFO).into());
+        let target = SwarmKey(Sha1::digest(INFO).into());
         let fetch = fetcher.fetch_one(
             target,
             address,

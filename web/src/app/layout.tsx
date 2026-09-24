@@ -180,9 +180,6 @@ export function Layout() {
             )}
             <Outlet />
           </main>
-          <footer className="flex shrink-0 justify-between gap-4 px-8 py-4 text-[9px] tracking-[1px] text-muted-foreground max-[760px]:flex-wrap max-[760px]:p-4">
-            <span>BT-SNIFFER / READ-ONLY MONITOR</span>
-          </footer>
         </div>
       </div>
     </>

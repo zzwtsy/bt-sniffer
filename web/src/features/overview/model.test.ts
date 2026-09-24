@@ -28,14 +28,14 @@ function event(
   options: { hash?: string; data?: Record<string, unknown>; at?: number } = {},
 ) {
   return eventSchema.parse({
-    schema_version: 1,
+    schema_version: 2,
     run_id: "run",
     sequence: String(sequence),
     at_ms: options.at ?? 1000 + sequence,
     kind,
     step,
     result,
-    context: { hash: options.hash ?? "a".repeat(40) },
+    context: { swarm_key: options.hash ?? "a".repeat(40) },
     data: options.data ?? {},
     truncated: false,
   });

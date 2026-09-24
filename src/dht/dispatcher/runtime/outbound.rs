@@ -142,8 +142,21 @@ impl DhtDispatcher {
 
     pub(super) fn close_pending(&mut self) {
         self.stop_sampler(current_time());
+        self.clear_queries(false);
+    }
+    pub(in crate::dht::dispatcher) fn cancel_for_identity(&mut self) {
+        self.clear_queries(true);
+    }
+    fn clear_queries(&mut self, rotating: bool) {
+        let error = || {
+            if rotating {
+                QueryError::IdentityChanged
+            } else {
+                QueryError::ShuttingDown
+            }
+        };
         while let Some(queued) = self.queued.pop_front() {
-            self.finish_start_error(queued.purpose, QueryError::ShuttingDown, current_time());
+            self.finish_start_error(queued.purpose, error(), current_time());
         }
         let pending = std::mem::take(&mut self.pending);
         for (id, pending) in pending {
@@ -151,22 +164,25 @@ impl DhtDispatcher {
             self.transactions.cancel(id);
             match pending.purpose {
                 PendingPurpose::Fetch { reply, .. } => {
-                    let _ = reply.send(Err(QueryError::ShuttingDown));
+                    let _ = reply.send(Err(error()));
                 }
                 PendingPurpose::UserPing { reply, .. } => {
-                    let _ = reply.send(Err(QueryError::ShuttingDown));
+                    let _ = reply.send(Err(error()));
                 }
                 #[cfg(test)]
                 PendingPurpose::UserFindNode { reply, .. } => {
-                    let _ = reply.send(Err(QueryError::ShuttingDown));
+                    let _ = reply.send(Err(error()));
+                }
+                PendingPurpose::Sampling(request) => {
+                    self.sampler.cancel_request(&request, current_time())
                 }
                 PendingPurpose::Verification { .. }
                 | PendingPurpose::Recovery { .. }
-                | PendingPurpose::Sampling(_)
                 | PendingPurpose::BucketProbe { .. }
                 | PendingPurpose::MaintenanceLookup { .. } => {}
             }
         }
+        self.queue_deadline = None;
         self.verifications.clear();
         self.bucket_probes.clear();
         self.maintenance.clear();

@@ -1,9 +1,12 @@
 //! 目录分页、详情读取与单条后台回填；所有 SQL 仍串行经过唯一数据库线程。
 
+#[cfg(test)]
+use crate::info_hash::SwarmKey;
+
 use super::{TorrentFile, ensure_catalog, parse, parser::truncate_display};
 use crate::{
     collection::{inspection::ReadError, store::CollectionStore},
-    info_hash::InfoHashV1,
+    info_hash::TorrentIdentity,
     observation::hex,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -23,6 +26,53 @@ const RECENT_PAGE_SQL: &str =
 const RECENT_TOTAL_SQL: &str = "SELECT COUNT(*) FROM torrent_catalog";
 
 #[derive(Debug, Clone, Serialize)]
+struct IdentityView {
+    kind: String,
+    hash: String,
+}
+#[derive(Debug, Clone, Serialize)]
+struct ProtocolSummary {
+    format: String,
+    semantic_status: String,
+    semantic_reason: Option<String>,
+    identities: Vec<IdentityView>,
+    verification: Vec<String>,
+    validation_scope: &'static str,
+    piece_layers: &'static str,
+    piece_space_length: Option<String>,
+    padding_length: Option<String>,
+}
+fn protocol(connection: &Connection, hash: &[u8]) -> rusqlite::Result<ProtocolSummary> {
+    let mut result = connection.query_row("SELECT format,semantic_status,semantic_reason,piece_space_length,padding_length FROM torrent_catalog WHERE hash=?1",[hash],|r|Ok(ProtocolSummary {
+        format:r.get(0)?,semantic_status:r.get(1)?,semantic_reason:r.get(2)?,piece_space_length:r.get(3)?,padding_length:r.get(4)?,identities:Vec::new(),verification:Vec::new(),validation_scope:"info_only",piece_layers:"not_fetched",
+    }))?;
+    load_identity_summary(connection, hash, &mut result)?;
+    Ok(result)
+}
+
+/// 只读取已持久化的身份依据，详情即时解析不创建别名或目录。
+fn load_identity_summary(
+    connection: &Connection,
+    hash: &[u8],
+    result: &mut ProtocolSummary,
+) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("SELECT i.kind,i.hash FROM torrent_identities i JOIN metadata m ON m.id=i.metadata_id WHERE m.hash=?1 ORDER BY i.kind")?;
+    result.identities = statement
+        .query_map([hash], |r| {
+            Ok(IdentityView {
+                kind: r.get(0)?,
+                hash: hex(&r.get::<_, Vec<u8>>(1)?),
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut statement = connection.prepare("SELECT DISTINCT s.verification FROM swarm_metadata s JOIN metadata m ON m.id=s.metadata_id WHERE m.hash=?1 ORDER BY s.verification")?;
+    result.verification = statement
+        .query_map([hash], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct IndexState {
     indexed: i64,
     total: i64,
@@ -35,6 +85,8 @@ pub(crate) struct IndexState {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CatalogItem {
     hash: String,
+    #[serde(flatten)]
+    protocol: ProtocolSummary,
     parse_status: String,
     name: Option<String>,
     name_truncated: bool,
@@ -62,6 +114,8 @@ pub(crate) struct CatalogPage {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TorrentDetail {
     hash: String,
+    #[serde(flatten)]
+    protocol: ProtocolSummary,
     parse_status: &'static str,
     name: Option<String>,
     name_truncated: bool,
@@ -77,7 +131,12 @@ pub(crate) struct TorrentDetail {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct FileItem {
     index: usize,
-    path: String,
+    path: Option<String>,
+    kind: &'static str,
+    hidden: bool,
+    executable: bool,
+    symlink_path: Option<String>,
+    sha1: Option<String>,
     path_truncated: bool,
     encoding_lossy: bool,
     length: String,
@@ -92,7 +151,7 @@ pub(crate) struct FilePage {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BackfillStep {
-    pub(crate) cursor: Option<[u8; 20]>,
+    pub(crate) cursor: Option<i64>,
     /// 没有剩余缺失目录或旧版未知路径状态；已知搜索截断不要求重复回填。
     pub(crate) complete: bool,
 }
@@ -137,7 +196,7 @@ impl CollectionStore {
 
     pub(crate) async fn torrent_detail(
         &self,
-        hash: InfoHashV1,
+        hash: TorrentIdentity,
         permit: OwnedSemaphorePermit,
         cancel: CancellationToken,
     ) -> Result<TorrentDetail, ReadError> {
@@ -155,7 +214,7 @@ impl CollectionStore {
 
     pub(crate) async fn torrent_files(
         &self,
-        hash: InfoHashV1,
+        hash: TorrentIdentity,
         after: Option<String>,
         limit: usize,
         permit: OwnedSemaphorePermit,
@@ -176,7 +235,7 @@ impl CollectionStore {
     /// 单次只补一条；等待 future 被取消不会撤销已经进入数据库线程的事务。
     pub(crate) async fn backfill_catalog_one(
         &self,
-        cursor: Option<[u8; 20]>,
+        cursor: Option<i64>,
         permit: OwnedSemaphorePermit,
         cancel: CancellationToken,
     ) -> Result<BackfillStep, ReadError> {
@@ -237,7 +296,7 @@ fn read_catalog_page(
             .map_err(sql_error)?;
         let items = statement
             .query_map(params![literal, limit as i64, offset], |row| {
-                catalog_item(row, true)
+                catalog_item(&tx, row, true)
             })
             .map_err(sql_error)?
             .collect::<Result<Vec<_>, _>>()
@@ -250,7 +309,7 @@ fn read_catalog_page(
         let mut statement = tx.prepare(RECENT_PAGE_SQL).map_err(sql_error)?;
         let items = statement
             .query_map(params![limit as i64, offset], |row| {
-                catalog_item(row, false)
+                catalog_item(&tx, row, false)
             })
             .map_err(sql_error)?
             .collect::<Result<Vec<_>, _>>()
@@ -267,7 +326,11 @@ fn read_catalog_page(
     })
 }
 
-fn catalog_item(row: &rusqlite::Row<'_>, matched: bool) -> rusqlite::Result<CatalogItem> {
+fn catalog_item(
+    connection: &Connection,
+    row: &rusqlite::Row<'_>,
+    matched: bool,
+) -> rusqlite::Result<CatalogItem> {
     let hash = row.get::<_, Vec<u8>>(0)?;
     let excerpt = row.get::<_, Option<String>>(11)?;
     let excerpt = if matched {
@@ -276,6 +339,7 @@ fn catalog_item(row: &rusqlite::Row<'_>, matched: bool) -> rusqlite::Result<Cata
         None
     };
     Ok(CatalogItem {
+        protocol: protocol(connection, &hash)?,
         hash: hex(&hash),
         parse_status: row.get(1)?,
         name: row.get(2)?,
@@ -291,12 +355,36 @@ fn catalog_item(row: &rusqlite::Row<'_>, matched: bool) -> rusqlite::Result<Cata
     })
 }
 
-fn read_detail(connection: &Connection, hash: InfoHashV1) -> Result<TorrentDetail, ReadError> {
-    let (info, fetched_at) = metadata(connection, hash)?;
-    let parsed = parse(&info);
+fn read_detail(
+    connection: &Connection,
+    hash: impl Into<TorrentIdentity>,
+) -> Result<TorrentDetail, ReadError> {
+    let (info, fetched_at, canonical) = metadata(connection, hash.into())?;
+    // 详情不依赖派生目录是否完成回填；同一次分析提供语义和展示统计。
+    let analysis = super::super::metainfo::analyze(&info);
+    let mut protocol = ProtocolSummary {
+        format: analysis.format.into(),
+        semantic_status: analysis.status.into(),
+        semantic_reason: analysis.reason.map(str::to_owned),
+        piece_space_length: analysis
+            .parsed
+            .as_ref()
+            .map(|p| p.piece_space_length.to_string()),
+        padding_length: analysis
+            .parsed
+            .as_ref()
+            .map(|p| p.padding_length.to_string()),
+        identities: Vec::new(),
+        verification: Vec::new(),
+        validation_scope: "info_only",
+        piece_layers: "not_fetched",
+    };
+    load_identity_summary(connection, &canonical, &mut protocol).map_err(sql_error)?;
+    let parsed = analysis.parsed;
     let Some(parsed) = parsed else {
         return Ok(TorrentDetail {
-            hash: hex(&hash.0),
+            hash: hex(&canonical),
+            protocol,
             parse_status: "unavailable",
             name: None,
             name_truncated: false,
@@ -311,13 +399,14 @@ fn read_detail(connection: &Connection, hash: InfoHashV1) -> Result<TorrentDetai
     };
     let (name, name_truncated) = truncate_display(&parsed.name);
     Ok(TorrentDetail {
-        hash: hex(&hash.0),
+        hash: hex(&canonical),
+        protocol,
         parse_status: "parsed",
         name: Some(name),
         name_truncated,
         encoding_lossy: parsed.encoding_lossy,
         total_length: Some(parsed.total_length.to_string()),
-        file_count: Some(parsed.files.len()),
+        file_count: Some(parsed.file_count),
         piece_length: Some(parsed.piece_length.to_string()),
         piece_count: Some(parsed.piece_count),
         private: parsed.private,
@@ -327,7 +416,7 @@ fn read_detail(connection: &Connection, hash: InfoHashV1) -> Result<TorrentDetai
 
 fn read_files(
     connection: &Connection,
-    hash: InfoHashV1,
+    hash: impl Into<TorrentIdentity>,
     after: Option<String>,
     limit: usize,
 ) -> Result<FilePage, ReadError> {
@@ -338,7 +427,7 @@ fn read_files(
         .map(|value| parse_file_cursor(&value))
         .transpose()?
         .unwrap_or(0);
-    let (info, _) = metadata(connection, hash)?;
+    let (info, _, _) = metadata(connection, hash.into())?;
     let Some(parsed) = parse(&info) else {
         return Ok(FilePage {
             available: false,
@@ -363,33 +452,37 @@ fn read_files(
 }
 
 fn file_item(index: usize, file: &TorrentFile) -> FileItem {
-    let (path, path_truncated) = truncate_display(&file.path);
+    let (path, path_truncated) = truncate_display(file.path.as_deref().unwrap_or(""));
     FileItem {
         index,
-        path,
+        path: file.path.as_ref().map(|_| path),
+        kind: file.kind,
+        hidden: file.hidden,
+        executable: file.executable,
+        symlink_path: file.symlink_path.as_deref().map(|p| truncate_display(p).0),
+        sha1: file.sha1.clone(),
         path_truncated,
         encoding_lossy: file.encoding_lossy,
         length: file.length.to_string(),
     }
 }
 
-fn metadata(connection: &Connection, hash: InfoHashV1) -> Result<(Vec<u8>, i64), ReadError> {
-    let result = connection
-        .query_row(
-            "SELECT info,fetched_at FROM metadata WHERE hash=?1",
-            [hash.0.as_slice()],
-            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .optional()
-        .map_err(sql_error)?
-        .ok_or(ReadError::Missing)?;
+fn metadata(
+    connection: &Connection,
+    hash: TorrentIdentity,
+) -> Result<(Vec<u8>, i64, Vec<u8>), ReadError> {
+    let result = connection.query_row(
+        "SELECT CASE WHEN length(m.info) BETWEEN 1 AND 4194304 THEN m.info ELSE NULL END,m.fetched_at,m.hash FROM metadata m WHERE m.id=(SELECT metadata_id FROM torrent_identities WHERE kind=?1 AND hash=?2) OR m.hash=?2 LIMIT 1",
+        params![hash.kind(),hash.bytes()], |r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,i64>(1)?,r.get::<_,Vec<u8>>(2)?)))
+        .optional().map_err(sql_error)?.ok_or(ReadError::Missing)?;
+    let digest_matches = match hash {
+        TorrentIdentity::V1(_) => Sha1::digest(&result.0).as_slice() == hash.bytes(),
+        TorrentIdentity::V2(_) => sha2::Sha256::digest(&result.0).as_slice() == hash.bytes(),
+    };
     if result.0.is_empty()
         || result.0.len() > 4 * 1024 * 1024
-        || Sha1::digest(&result.0).as_slice() != hash.0
-        || !matches!(
-            crate::collection::peer::wire::dictionary_prefix(&result.0, 64),
-            Ok(prefix) if prefix.len() == result.0.len()
-        )
+        || !digest_matches
+        || !matches!(crate::collection::peer::wire::dictionary_prefix(&result.0,64),Ok(raw) if raw.len()==result.0.len())
     {
         return Err(ReadError::Unavailable);
     }
@@ -398,22 +491,22 @@ fn metadata(connection: &Connection, hash: InfoHashV1) -> Result<(Vec<u8>, i64),
 
 fn backfill_one(
     connection: &mut Connection,
-    cursor: Option<[u8; 20]>,
+    cursor: Option<i64>,
 ) -> Result<BackfillStep, ReadError> {
     let tx = connection.transaction().map_err(sql_error)?;
-    let after = cursor.map_or_else(Vec::new, |value| value.to_vec());
+    let after = cursor.unwrap_or(0);
     let row = tx
         .query_row(
-            "SELECT m.hash,m.info FROM metadata m
+            "SELECT m.id,m.hash,CASE WHEN length(m.info) BETWEEN 1 AND 4194304 THEN m.info ELSE X'' END FROM metadata m
              LEFT JOIN torrent_catalog c ON c.hash=m.hash
-             WHERE m.hash>?1 AND (c.hash IS NULL OR c.search_incomplete IS NULL)
-             ORDER BY m.hash LIMIT 1",
+             WHERE m.id>?1 AND (c.hash IS NULL OR c.search_incomplete IS NULL OR c.semantic_status='pending' OR (c.semantic_status='invalid' AND c.semantic_reason='empty_directory'))
+             ORDER BY m.id LIMIT 1",
             [after],
-            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            |row| Ok((row.get::<_,i64>(0)?,row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)),
         )
         .optional()
         .map_err(sql_error)?;
-    let Some((hash, info)) = row else {
+    let Some((id, hash, info)) = row else {
         let state = index_state(&tx)?;
         tx.commit().map_err(sql_error)?;
         return Ok(BackfillStep {
@@ -421,11 +514,35 @@ fn backfill_one(
             complete: state.complete,
         });
     };
-    let hash_array: [u8; 20] = hash.try_into().map_err(|_| ReadError::Unavailable)?;
-    ensure_catalog(&tx, &hash_array, &info).map_err(sql_error)?;
+    let identity = if hash.len() == 20 {
+        TorrentIdentity::V1(crate::info_hash::InfoHashV1(
+            hash.as_slice()
+                .try_into()
+                .map_err(|_| ReadError::Unavailable)?,
+        ))
+    } else {
+        TorrentIdentity::V2(crate::info_hash::InfoHashV2(
+            hash.as_slice()
+                .try_into()
+                .map_err(|_| ReadError::Unavailable)?,
+        ))
+    };
+    // 损坏原始数据保留为不可解析目录，不能据此添加身份别名。
+    if super::super::metainfo::match_identity(&info, identity.swarm_key()) == Some(identity) {
+        let at: i64 = tx
+            .query_row("SELECT fetched_at FROM metadata WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .map_err(sql_error)?;
+        super::super::metadata_store::save(&tx, identity.swarm_key(), &info, at)
+            .map_err(|_| ReadError::Unavailable)?;
+    } else {
+        ensure_catalog(&tx, &hash, b"").map_err(sql_error)?;
+        tx.execute("UPDATE torrent_catalog SET semantic_status='invalid',semantic_reason='identity_mismatch' WHERE hash=?1",[&hash]).map_err(sql_error)?;
+    }
     tx.commit().map_err(sql_error)?;
     Ok(BackfillStep {
-        cursor: Some(hash_array),
+        cursor: Some(id),
         // 至少存在一条尚未检查的记录；下一轮才能确认扫描完成。
         complete: false,
     })
@@ -484,8 +601,8 @@ mod tests {
         connection
     }
 
-    fn insert(connection: &mut Connection, info: &[u8], fetched_at: i64) -> InfoHashV1 {
-        let hash = InfoHashV1(Sha1::digest(info).into());
+    fn insert(connection: &mut Connection, info: &[u8], fetched_at: i64) -> SwarmKey {
+        let hash = SwarmKey(Sha1::digest(info).into());
         let tx = connection.transaction().unwrap();
         tx.execute(
             "INSERT INTO infohashes(hash,first_seen,last_seen) VALUES(?1,?2,?2)",
@@ -504,7 +621,7 @@ mod tests {
 
     fn insert_without_catalog(
         connection: &mut Connection,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         info: &[u8],
         fetched_at: i64,
     ) {
@@ -529,7 +646,7 @@ mod tests {
             read_catalog_page(&connection, None, 1, 50).unwrap().total,
             0
         );
-        insert_without_catalog(&mut connection, InfoHashV1([9; 20]), b"de", 1);
+        insert_without_catalog(&mut connection, SwarmKey([9; 20]), b"de", 1);
         assert_eq!(
             read_catalog_page(&connection, None, 1, 50).unwrap().total,
             0
@@ -565,7 +682,7 @@ mod tests {
             tx.execute("INSERT INTO infohashes VALUES(?1,0,0)", [hash.as_slice()])
                 .unwrap();
             tx.execute(
-                "INSERT INTO metadata VALUES(?1,X'6465',0)",
+                "INSERT INTO metadata(hash,info,fetched_at) VALUES(?1,X'6465',0)",
                 [hash.as_slice()],
             )
             .unwrap();
@@ -626,9 +743,15 @@ mod tests {
         assert_eq!(detail.total_length.as_deref(), Some("5"));
         assert_eq!(detail.file_count, Some(2));
         let first_files = read_files(&connection, newer, None, 1).unwrap();
-        assert_eq!(first_files.items[0].path, "测试集/folder/movie.mkv");
+        assert_eq!(
+            first_files.items[0].path.as_deref(),
+            Some("测试集/folder/movie.mkv")
+        );
         let second_files = read_files(&connection, newer, first_files.next, 1).unwrap();
-        assert_eq!(second_files.items[0].path, "测试集/notes.txt");
+        assert_eq!(
+            second_files.items[0].path.as_deref(),
+            Some("测试集/notes.txt")
+        );
     }
 
     #[test]
@@ -640,7 +763,7 @@ mod tests {
             Err(ReadError::Invalid)
         ));
         assert!(matches!(
-            read_detail(&connection, InfoHashV1([9; 20])),
+            read_detail(&connection, SwarmKey([9; 20])),
             Err(ReadError::Missing)
         ));
         assert_eq!(
@@ -658,8 +781,8 @@ mod tests {
     fn backfill_resumes_from_missing_rows_and_keeps_counts_consistent() {
         let mut connection = connection();
         let info = b"d6:lengthi1e4:name3:one12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaae";
-        insert_without_catalog(&mut connection, InfoHashV1([1; 20]), info, 1);
-        insert_without_catalog(&mut connection, InfoHashV1([2; 20]), info, 2);
+        insert_without_catalog(&mut connection, SwarmKey([1; 20]), info, 1);
+        insert_without_catalog(&mut connection, SwarmKey([2; 20]), info, 2);
 
         let first = backfill_one(&mut connection, None).unwrap();
         assert!(!first.complete);
@@ -821,5 +944,216 @@ mod tests {
                 "{page}/{limit}"
             );
         }
+    }
+    #[test]
+    fn details_do_not_require_catalog_or_write_derived_state() {
+        let mut c = connection();
+        for info in [
+            include_bytes!("../fixtures/v1.info").as_slice(),
+            include_bytes!("../fixtures/v1-bad-pieces.info"),
+            include_bytes!("../fixtures/unknown-version.info"),
+        ] {
+            let hash = SwarmKey(Sha1::digest(info).into());
+            insert_without_catalog(&mut c, hash, info, 1);
+            let id = c.last_insert_rowid();
+            c.execute(
+                "INSERT INTO torrent_identities VALUES('v1',?1,?2)",
+                params![hash.0.as_slice(), id],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO swarm_metadata VALUES(?1,?2,'v1_full')",
+                params![hash.0.as_slice(), id],
+            )
+            .unwrap();
+            let expected = super::super::super::metainfo::analyze(info);
+            for phase in 0..3 {
+                if phase == 1 {
+                    let tx = c.transaction().unwrap();
+                    ensure_catalog(&tx, &hash.0, info).unwrap();
+                    tx.execute("UPDATE torrent_catalog SET semantic_status='pending',semantic_reason=NULL WHERE hash=?1", [hash.0.as_slice()]).unwrap();
+                    tx.commit().unwrap();
+                } else if phase == 2 {
+                    let tx = c.transaction().unwrap();
+                    ensure_catalog(&tx, &hash.0, info).unwrap();
+                    tx.commit().unwrap();
+                }
+                let before = c.total_changes();
+                let detail = read_detail(&c, hash).unwrap();
+                assert_eq!(detail.protocol.semantic_status, expected.status);
+                assert_eq!(detail.protocol.semantic_reason.as_deref(), expected.reason);
+                assert_eq!(detail.protocol.identities.len(), 1);
+                assert_eq!(detail.protocol.verification, ["v1_full"]);
+                assert_eq!(
+                    detail.parse_status,
+                    if expected.parsed.is_some() {
+                        "parsed"
+                    } else {
+                        "unavailable"
+                    }
+                );
+                assert_eq!(
+                    read_files(&c, hash, None, 100).unwrap().available,
+                    expected.parsed.is_some()
+                );
+                assert_eq!(c.total_changes(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_directory_backfill_is_atomic_and_resumes() {
+        let mut c = connection();
+        let info = include_bytes!("../fixtures/hybrid-empty-directory.info");
+        let key = insert(&mut c, info, 1);
+        let v2: [u8; 32] = sha2::Sha256::digest(info).into();
+        c.execute("UPDATE torrent_catalog SET semantic_status='invalid',semantic_reason='empty_directory',parse_status='unavailable'", []).unwrap();
+        c.execute(
+            "INSERT INTO torrent_identities SELECT 'v1',hash,id FROM metadata",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO swarm_metadata SELECT hash,id,'v1_full' FROM metadata",
+            [],
+        )
+        .unwrap();
+        c.execute("INSERT INTO infohashes VALUES(?1,1,1)", [&v2[..20]])
+            .unwrap();
+        c.execute("INSERT INTO fetch_jobs(hash,state,due_at,generation,updated_at) VALUES(?1,'running',1,7,1)", [&v2[..20]]).unwrap();
+        c.execute(
+            "INSERT INTO peer_hints VALUES(?1,X'7F000001',6881,1)",
+            [&v2[..20]],
+        )
+        .unwrap();
+        c.execute_batch("CREATE TRIGGER fail_rebuild BEFORE UPDATE ON torrent_catalog BEGIN SELECT RAISE(ABORT,'test'); END;").unwrap();
+        assert!(backfill_one(&mut c, None).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM torrent_identities", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.query_row("SELECT generation FROM fetch_jobs", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM peer_hints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        c.execute_batch("DROP TRIGGER fail_rebuild").unwrap();
+        backfill_one(&mut c, None).unwrap();
+        assert_eq!(
+            c.query_row("SELECT info FROM metadata", [], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap(),
+            info
+        );
+        assert_eq!(
+            c.query_row("SELECT generation FROM fetch_jobs", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            8
+        );
+        assert_eq!(
+            c.query_row("SELECT state FROM fetch_jobs", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "succeeded"
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM peer_hints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        let detail = read_detail(&c, key).unwrap();
+        assert_eq!(detail.protocol.semantic_status, "valid");
+        assert_eq!(detail.protocol.identities.len(), 2);
+        let other = read_detail(&c, TorrentIdentity::V2(crate::info_hash::InfoHashV2(v2))).unwrap();
+        assert_eq!(detail.hash, other.hash);
+        let before = c.total_changes();
+        assert!(backfill_one(&mut c, None).unwrap().complete);
+        assert_eq!(c.total_changes(), before);
+
+        let invalid = insert(&mut c, include_bytes!("../fixtures/v1-bad-pieces.info"), 2);
+        c.execute("UPDATE torrent_catalog SET semantic_status='invalid',semantic_reason='empty_directory' WHERE hash=?1",[invalid.0.as_slice()]).unwrap();
+        backfill_one(&mut c, None).unwrap();
+        assert_eq!(
+            read_detail(&c, invalid)
+                .unwrap()
+                .protocol
+                .semantic_reason
+                .as_deref(),
+            Some("piece_count")
+        );
+        assert!(backfill_one(&mut c, None).unwrap().complete);
+    }
+    #[test]
+    fn large_catalog_identity_queries_use_bounded_work() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let c = connection();
+        c.execute_batch("BEGIN;
+            WITH RECURSIVE seq(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x<100000)
+            INSERT INTO metadata(hash,info,fetched_at) SELECT CAST(printf('%020d',x) AS BLOB),X'6465',x FROM seq;
+            INSERT INTO infohashes SELECT hash,1,1 FROM metadata;
+            INSERT INTO torrent_identities SELECT 'v1',hash,id FROM metadata;
+            INSERT INTO swarm_metadata SELECT hash,id,'v1_full' FROM metadata;
+            INSERT INTO torrent_catalog(hash,parse_status,name,name_truncated,encoding_lossy,search_text,search_incomplete,format,semantic_status)
+            SELECT hash,'unavailable',NULL,0,0,CASE WHEN id>99900 THEN 'needle' ELSE '' END,1,'v1','invalid' FROM metadata;
+            INSERT INTO torrent_identities VALUES('v2',zeroblob(32),100000);
+            INSERT INTO infohashes VALUES(zeroblob(20),1,1);
+            INSERT INTO swarm_metadata VALUES(zeroblob(20),100000,'hybrid_derived');
+            COMMIT;").unwrap();
+        let mut measurements = Vec::new();
+        for search in [false, true] {
+            for limit in [50, 100] {
+                let query = search.then(|| "needle".to_owned());
+                let calls = Arc::new(AtomicUsize::new(0));
+                let counter = calls.clone();
+                c.progress_handler(
+                    1,
+                    Some(move || {
+                        counter.fetch_add(1, Ordering::Relaxed);
+                        false
+                    }),
+                )
+                .unwrap();
+                let page = read_catalog_page(&c, query.clone(), 1, limit).unwrap();
+                c.progress_handler(0, None::<fn() -> bool>).unwrap();
+                let steps = calls.load(Ordering::Relaxed);
+                assert!(
+                    steps < 100_000,
+                    "search={search} limit={limit} steps={steps}"
+                );
+                assert_eq!(page.items.len(), limit);
+                assert_eq!(page.total, if search { 100 } else { 100000 });
+                assert_eq!(page.items[0].protocol.identities.len(), 2);
+                assert_eq!(page.items[0].protocol.verification.len(), 2);
+                let started = Instant::now();
+                let progress = Progress::install(&c, CancellationToken::new()).unwrap();
+                read_catalog_page(&c, query, 1, limit).unwrap();
+                drop(progress);
+                measurements.push(serde_json::json!({"search":search,"limit":limit,"vm_steps":steps,"elapsed_us":started.elapsed().as_micros()}));
+            }
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/checks/catalog-query-benchmark.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"metadata_count":100000,"measurements":measurements}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     }
 }

@@ -42,6 +42,7 @@ async fn ping_response_completes_registered_transaction() {
         }),
         r: None,
         e: None,
+        ip: None,
         ro: None,
     };
     client
@@ -67,6 +68,7 @@ async fn ping_response_completes_registered_transaction() {
             num: None,
         }),
         e: None,
+        ip: None,
         ro: None,
     };
     server

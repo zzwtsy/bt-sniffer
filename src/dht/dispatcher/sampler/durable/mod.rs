@@ -43,6 +43,39 @@ impl std::fmt::Debug for Durable {
     }
 }
 impl Sampler {
+    /// 身份切换先拒绝旧预约，再排空；保留输出通道和既有冷却预算。
+    pub(in crate::dht::dispatcher) async fn prepare_identity_change(
+        &mut self,
+        now: Instant,
+    ) -> Result<(), StorageError> {
+        self.generation = self.generation.wrapping_add(1);
+        if let Some(request) = self.durable.as_mut().and_then(|d| d.ready.take()) {
+            self.abandon_unsent(request, now);
+        }
+        self.flush_storage().await?;
+        if let Some(session) = self.session.as_mut() {
+            session.in_flight.clear();
+            session.candidates.clear();
+            session.ready_permit = None;
+            session.target = crate::dht::NodeId(rand::random());
+            session.queries = 0;
+            session.next_send = now;
+        }
+        self.deadline = self.session.as_ref().map(|_| now);
+        Ok(())
+    }
+    pub(in crate::dht::dispatcher) fn identity_changed(&mut self, identity: LocalIdentity) {
+        if let Some(durable) = self.durable.as_mut() {
+            durable.identity = identity;
+        }
+        if self.observer.enabled() {
+            self.observer.context.node_id = Some(crate::observation::hex(&identity.node_id.0));
+        }
+        if let Some(session) = self.session.as_mut() {
+            session.observer = self.observer.child(crate::observation::Kind::Lifecycle);
+        }
+    }
+
     /// 仅在未运行且未挂接时安装持久化状态，将剩余 UTC 毫秒恢复为当前单调期限。
     pub(in crate::dht::dispatcher) fn attach_storage(
         &mut self,

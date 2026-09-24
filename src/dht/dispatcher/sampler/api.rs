@@ -7,7 +7,7 @@ use super::super::{
 };
 use crate::dht::krpc::NodeId;
 use crate::dht::peer_store::PeerAddressPolicy;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -95,7 +95,7 @@ pub(crate) struct SampleBatch {
     pub(crate) interval: Duration,
     /// 远端宣称的已知 hash 总数，不是本批 samples 长度，也不是本地已保存数量。
     pub(crate) num: u64,
-    pub(crate) samples: Vec<InfoHashV1>,
+    pub(crate) samples: Vec<SwarmKey>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SamplerError {

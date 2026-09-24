@@ -63,7 +63,7 @@ async fn schema_version_and_failed_migration_are_safe() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("state.sqlite3");
     let c = Connection::open(&db).unwrap();
-    c.execute_batch("PRAGMA user_version=5;").unwrap();
+    c.execute_batch("PRAGMA user_version=6;").unwrap();
     drop(c);
     assert!(matches!(
         Storage::open(StorageConfig::new(dir.path())).await,
@@ -99,11 +99,13 @@ async fn schema_version_and_failed_migration_are_safe() {
 #[test]
 fn schema_v2_upgrades_without_losing_metadata_and_marks_paths_unknown() {
     let mut connection = Connection::open_in_memory().unwrap();
-    schema::migrate(&mut connection).unwrap();
+    connection
+        .execute_batch(include_str!("fixtures/v4.sql"))
+        .unwrap();
     connection
         .execute_batch(
             "INSERT INTO infohashes VALUES(zeroblob(20),1,1);
-             INSERT INTO metadata VALUES(zeroblob(20),X'6465',2);
+             INSERT INTO metadata(hash,info,fetched_at) VALUES(zeroblob(20),X'6465',2);
              DROP TRIGGER metadata_catalog_total_ai;
              DROP TRIGGER metadata_catalog_total_ad;
              DROP TABLE torrent_catalog_fts;
@@ -119,7 +121,7 @@ fn schema_v2_upgrades_without_losing_metadata_and_marks_paths_unknown() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
     assert_eq!(
         connection
@@ -143,11 +145,13 @@ fn schema_v2_upgrades_without_losing_metadata_and_marks_paths_unknown() {
 #[test]
 fn schema_v3_upgrade_marks_existing_catalog_paths_for_rebuild() {
     let mut connection = Connection::open_in_memory().unwrap();
-    schema::migrate(&mut connection).unwrap();
+    connection
+        .execute_batch(include_str!("fixtures/v4.sql"))
+        .unwrap();
     connection
         .execute_batch(
             "INSERT INTO infohashes VALUES(zeroblob(20),1,1);
-             INSERT INTO metadata VALUES(zeroblob(20),X'6465',2);
+             INSERT INTO metadata(hash,info,fetched_at) VALUES(zeroblob(20),X'6465',2);
              INSERT INTO torrent_catalog(
                  hash,parse_status,name,name_truncated,encoding_lossy,total_length,
                  file_count,piece_length,piece_count,private,search_text,search_incomplete
@@ -384,4 +388,78 @@ fn test_insert_hash(connection: &Connection, byte: u8) -> Result<(), StorageErro
         rusqlite::params![[byte; 20].as_slice()],
     )?;
     Ok(())
+}
+
+#[test]
+fn v4_to_v5_failure_rolls_back_original_bytes_and_version() {
+    let mut c = Connection::open_in_memory().unwrap();
+    c.execute_batch(include_str!("fixtures/v4.sql")).unwrap();
+    c.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    let hash = [4u8; 20];
+    c.execute("INSERT INTO infohashes VALUES(?1,1,2)", [hash.as_slice()])
+        .unwrap();
+    c.execute(
+        "INSERT INTO metadata(hash,info,fetched_at) VALUES(?1,X'6465',3)",
+        [hash.as_slice()],
+    )
+    .unwrap();
+    // 与 v5 新表冲突，失败发生在旧表重命名之后。
+    c.execute_batch("CREATE TABLE torrent_identities(sentinel TEXT);")
+        .unwrap();
+    assert!(schema::migrate(&mut c).is_err());
+    assert_eq!(
+        c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        c.query_row("SELECT info FROM metadata", [], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap(),
+        b"de"
+    );
+    c.execute_batch("DROP TABLE torrent_identities;").unwrap();
+    schema::migrate(&mut c).unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT hash FROM torrent_identities WHERE kind='v1'",
+            [],
+            |r| r.get::<_, Vec<u8>>(0)
+        )
+        .unwrap(),
+        hash
+    );
+    assert_eq!(
+        c.query_row("SELECT info FROM metadata", [], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap(),
+        b"de"
+    );
+}
+
+#[test]
+fn identity_lookup_index_is_installed_for_new_migrated_and_existing_v5() {
+    for legacy in [false, true] {
+        let mut c = Connection::open_in_memory().unwrap();
+        if legacy {
+            c.execute_batch(include_str!("fixtures/v4.sql")).unwrap();
+        }
+        for pass in 0..3 {
+            if pass == 1 {
+                c.execute_batch("DROP INDEX swarm_metadata_by_metadata")
+                    .unwrap();
+            }
+            schema::migrate(&mut c).unwrap();
+            let plan: Vec<String> = c.prepare("EXPLAIN QUERY PLAN SELECT DISTINCT s.verification FROM swarm_metadata s JOIN metadata m ON m.id=s.metadata_id WHERE m.hash=?1 ORDER BY s.verification").unwrap().query_map([[0u8;20].as_slice()], |r| r.get(3)).unwrap().collect::<Result<_,_>>().unwrap();
+            assert!(
+                plan.iter()
+                    .any(|p| p.contains("swarm_metadata_by_metadata")),
+                "{plan:?}"
+            );
+            assert!(!plan.iter().any(|p| p.contains("SCAN s")), "{plan:?}");
+            assert_eq!(
+                c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                5
+            );
+        }
+    }
 }

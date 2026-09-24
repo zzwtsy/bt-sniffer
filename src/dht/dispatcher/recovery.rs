@@ -73,6 +73,7 @@ impl DhtDispatcher {
         {
             return Err(StorageError::Invalid("持久化身份与 dispatcher 不匹配"));
         }
+        self.identity_store = Some((storage.clone(), identity));
         self.sampler.attach_storage(storage, identity, cooldowns)?;
         let mut seen = std::collections::HashSet::new();
         self.recovery.queued = contacts
@@ -171,5 +172,182 @@ impl super::DhtHandle {
             .await
             .map_err(|_| QueryError::DispatcherClosed)?;
         result.await.map_err(|_| QueryError::DispatcherClosed)
+    }
+}
+
+impl DhtDispatcher {
+    /// 只有匹配并校验完的 response/error 可提交地址观察。
+    pub(in crate::dht::dispatcher) fn observe_external(
+        &mut self,
+        source: std::net::SocketAddr,
+        bytes: Option<&[u8]>,
+        now: Instant,
+    ) {
+        if let Some(ip) = bytes.and_then(crate::dht::security::observed)
+            && self
+                .routing
+                .address_family()
+                .accepts(std::net::SocketAddr::new(ip, 1))
+        {
+            self.pending_external_ip = self
+                .security
+                .observe(source.ip(), ip, now)
+                .or(self.pending_external_ip);
+        }
+    }
+    /// 原 socket/handle 保留；取消旧 transaction，保存身份后重新验证联系人。
+    pub(in crate::dht::dispatcher) async fn rotate_identity(&mut self, now: Instant) {
+        let Some(ip) = self.pending_external_ip.take() else {
+            return;
+        };
+        let Some((store, identity)) = self.identity_store.clone() else {
+            return;
+        };
+        let contacts = match self.saved_contacts() {
+            Ok(c) => c,
+            Err(e) => {
+                self.sampler.mark_storage_fault(e);
+                return;
+            }
+        };
+        self.identity_paused = true;
+        self.cancel_for_identity();
+        if let Err(error) = self.sampler.prepare_identity_change(now).await {
+            self.sampler.mark_storage_fault(error);
+            return;
+        }
+        match crate::dht::persistence::identity::bind(&store, identity, ip).await {
+            Ok(identity) => {
+                self.identity_store = Some((store, identity));
+                self.sampler.identity_changed(identity);
+                self.routing =
+                    crate::dht::routing::RoutingTable::new(identity.node_id, identity.family, now);
+                self.recovery = Recovery {
+                    queued: contacts.into(),
+                    active: HashMap::new(),
+                    next: Some(now),
+                };
+                self.maintenance =
+                    super::maintenance::MaintenanceState::new(self.maintenance.config, now);
+                self.security.committed(ip, now);
+                self.identity_paused = false;
+                if self.observer.enabled() {
+                    self.observer.context.node_id =
+                        Some(crate::observation::hex(&identity.node_id.0));
+                }
+                self.observer.emit(crate::observation::Kind::Lifecycle,"identity_changed","applied",||serde_json::json!({"external_ip":ip.to_string(),"node_id":crate::observation::hex(&identity.node_id.0)}));
+            }
+            Err(error) => self.sampler.mark_storage_fault(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dht::{
+        routing::{AddressFamily, RoutingTable},
+        transaction::TransactionManager,
+        udp::UdpTransport,
+    };
+    #[tokio::test]
+    async fn identity_rotation_cancels_old_queries_and_persists_restart_cooldown() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = crate::dht::persistence::test_storage::TestStorage::open(
+            crate::storage::StorageConfig::new(dir.path()),
+        )
+        .await
+        .unwrap();
+        let store = &storage.handle;
+        let identity = crate::dht::persistence::identity::load_or_create(
+            store,
+            "rotate",
+            AddressFamily::Ipv4,
+            1,
+        )
+        .await
+        .unwrap();
+        let transport = UdpTransport::bind("127.0.0.1:0", Default::default())
+            .await
+            .unwrap();
+        let address = transport.local_addr().unwrap();
+        let remote = UdpTransport::bind("127.0.0.1:0", Default::default())
+            .await
+            .unwrap();
+        let now = Instant::now();
+        let (mut dispatcher, _handle) = DhtDispatcher::new(
+            transport,
+            RoutingTable::new(identity.node_id, identity.family, now),
+            TransactionManager::new(Duration::from_secs(5), 8),
+        )
+        .unwrap();
+        dispatcher
+            .attach_storage(
+                store.clone(),
+                identity,
+                vec![],
+                vec![],
+                AddressPolicy::LocalUnicast,
+            )
+            .unwrap();
+        let (reply, result) = oneshot::channel();
+        dispatcher
+            .start_query(
+                RemoteNode {
+                    address: remote.local_addr().unwrap(),
+                    expected_id: None,
+                },
+                QueryMethod::Ping,
+                None,
+                PendingPurpose::UserPing {
+                    reply,
+                    cancel: Default::default(),
+                },
+                now,
+            )
+            .await;
+        let old = remote.recv().await.unwrap();
+        let ip = "8.8.8.8".parse().unwrap();
+        dispatcher.pending_external_ip = Some(ip);
+        dispatcher.rotate_identity(now).await;
+        assert!(matches!(
+            result.await.unwrap(),
+            Err(QueryError::IdentityChanged)
+        ));
+        assert_eq!(dispatcher.transport.local_addr().unwrap(), address);
+        assert!(dispatcher.pending.is_empty());
+        assert_eq!(dispatcher.transactions.len(), 0);
+        assert!(crate::dht::security::valid(
+            dispatcher.routing.local_id(),
+            ip
+        ));
+        assert_ne!(dispatcher.routing.local_id(), identity.node_id);
+        assert!(
+            dispatcher
+                .transactions
+                .complete(&old.message.t, remote.local_addr().unwrap(), now)
+                .is_err()
+        );
+        let restored =
+            crate::dht::persistence::identity::load_or_create(store, "rotate", identity.family, 2)
+                .await
+                .unwrap();
+        assert_eq!(restored.node_id, dispatcher.routing.local_id());
+        assert!(
+            crate::dht::persistence::identity::cooldown_remaining(store, restored)
+                .await
+                .unwrap()
+                > Duration::from_secs(1700)
+        );
+        store.call(|c| {c.execute_batch("CREATE TRIGGER fail_identity BEFORE UPDATE ON node_identities BEGIN SELECT RAISE(ABORT,'test'); END;")?;Ok(())}).await.unwrap();
+        dispatcher.pending_external_ip = Some("9.9.9.9".parse().unwrap());
+        dispatcher
+            .rotate_identity(now + Duration::from_secs(1801))
+            .await;
+        assert!(dispatcher.identity_paused);
+        assert_eq!(dispatcher.routing.local_id(), restored.node_id);
+        dispatcher.cancel_for_identity();
+        assert!(dispatcher.sampler.flush_storage().await.is_err());
+        storage.shutdown().await.unwrap();
     }
 }

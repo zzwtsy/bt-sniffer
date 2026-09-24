@@ -19,7 +19,7 @@ fn store(ttl: Duration, now: Instant) -> PeerStore {
 }
 fn announce(store: &mut PeerStore, n: u8, now: Instant) {
     store
-        .announce(InfoHashV1([n; 20]), "127.0.0.1:6881".parse().unwrap(), now)
+        .announce(SwarmKey([n; 20]), "127.0.0.1:6881".parse().unwrap(), now)
         .unwrap();
 }
 fn now() -> Instant {
@@ -42,7 +42,7 @@ async fn empty_cache_and_refresh_boundary_follow_paused_time() {
     tokio::time::advance(Duration::from_nanos(1)).await;
     assert_eq!(
         cache.sample(&peers, now(), &mut rng).0,
-        vec![InfoHashV1([1; 20])]
+        vec![SwarmKey([1; 20])]
     );
 }
 
@@ -67,7 +67,7 @@ fn cached_samples_are_pruned_without_refill_or_reordering() {
         cache
             .sample(&peers, start + Duration::from_secs(10), &mut rng)
             .0,
-        vec![InfoHashV1([2; 20])]
+        vec![SwarmKey([2; 20])]
     );
     assert!(
         cache
@@ -130,7 +130,7 @@ fn evicted_hash_is_removed_from_cached_samples() {
     announce(&mut peers, 1, start);
     assert_eq!(
         cache.sample(&peers, start, &mut rng).0,
-        vec![InfoHashV1([1; 20])]
+        vec![SwarmKey([1; 20])]
     );
     announce(&mut peers, 2, start + Duration::from_secs(1));
     assert!(
@@ -145,6 +145,6 @@ fn evicted_hash_is_removed_from_cached_samples() {
     );
     assert_eq!(
         cache.sample(&peers, start + SAMPLE_INTERVAL, &mut rng).0,
-        vec![InfoHashV1([2; 20])]
+        vec![SwarmKey([2; 20])]
     );
 }

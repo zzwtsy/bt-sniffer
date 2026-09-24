@@ -18,10 +18,10 @@ use crate::dht::udp::ReceivedMessage;
 use crate::dht::udp::UdpTransport;
 use crate::dht::udp::UdpTransportConfig;
 use crate::dht::udp::UdpTransportError;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use std::time::Duration;
 
-const HASH: InfoHashV1 = InfoHashV1([9; 20]);
+const HASH: SwarmKey = SwarmKey([9; 20]);
 
 // BEP 51 复用这里的本机 UDP 测试工具，不额外启动公网服务。
 mod sampler;
@@ -98,6 +98,7 @@ fn query(method: QueryMethod) -> KrpcMessage {
         }),
         r: None,
         e: None,
+        ip: None,
         ro: Some(1),
     }
 }

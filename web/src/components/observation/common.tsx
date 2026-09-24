@@ -84,7 +84,7 @@ export function PageTitle({
 }: {
   eyebrow: string;
   title: string;
-  description: string;
+  description: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -107,6 +107,16 @@ const statusTones: Record<string, string> = {
   active: "border-transparent bg-primary/10 text-primary",
   neutral: "border-transparent bg-muted text-foreground",
 };
+export type StatusTone = "success" | "warning" | "danger" | "active" | "neutral";
+/** 按色阶渲染状态徽标；调用方负责把领域枚举映射为 tone 与展示文案。 */
+export function StatusBadge({ tone, children }: { tone: StatusTone; children: ReactNode }) {
+  return (
+    <Badge variant="outline" className={cn("status", statusTones[tone])}>
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+      {children}
+    </Badge>
+  );
+}
 export function Status({ value }: { value: unknown }) {
   const raw = typeof value === "string" ? value : "unknown";
   const tone = /failed|error|invalid|mismatch|timeout/.test(raw)
@@ -118,12 +128,7 @@ export function Status({ value }: { value: unknown }) {
         : /running|started|sent/.test(raw)
           ? "active"
           : "neutral";
-  return (
-    <Badge variant="outline" className={cn("status", statusTones[tone])}>
-      <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
-      {label(value)}
-    </Badge>
-  );
+  return <StatusBadge tone={tone}>{label(value)}</StatusBadge>;
 }
 /** 胶囊筛选按钮：选中态高亮边框与底色，用于泳道过滤、状态图例与链路直选。 */
 export function Chip({

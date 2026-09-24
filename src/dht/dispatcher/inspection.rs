@@ -19,6 +19,7 @@ impl DhtDispatcher {
         let sampler = self.sampler.status();
         let mut value = json!({
             "available": true,
+            "bep42": {"external_ip":self.security.external.map(|ip|ip.to_string()),"confirmed":self.security.confirmed,"identity_compliant":self.security.external.is_some_and(|ip|crate::dht::security::valid(self.routing.local_id(),ip))},
             "family": match self.routing.address_family() {
                 crate::dht::routing::AddressFamily::Ipv4 => "ipv4",
                 crate::dht::routing::AddressFamily::Ipv6 => "ipv6",

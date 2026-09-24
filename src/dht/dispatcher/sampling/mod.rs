@@ -7,7 +7,7 @@ use crate::dht::krpc::InfoHashSamples;
 use crate::dht::krpc::KrpcErrorCode;
 use crate::dht::krpc::QueryArgs;
 use crate::dht::peer_store::PeerStore;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use rand::{Rng, seq::SliceRandom};
 use serde_bytes::ByteBuf;
 use std::{
@@ -22,7 +22,7 @@ const MAX_SAMPLES: usize = 32;
 #[derive(Debug, Default)]
 pub(super) struct SampleCache {
     generated_at: Option<Instant>,
-    hashes: Vec<InfoHashV1>,
+    hashes: Vec<SwarmKey>,
 }
 
 impl SampleCache {

@@ -205,7 +205,7 @@ async fn worker_failure_reports_claim_and_drains_success() {
         )
         .await
         .unwrap();
-        let bad_hash = InfoHashV1([1; 20]);
+        let bad_hash = SwarmKey([1; 20]);
         storage
             .handle
             .save_hashes(&[bad_hash, hash()], collector.now().unwrap())
@@ -428,7 +428,7 @@ async fn cleanup_write_failure_still_drains_workers_and_preserves_recovery() {
     .unwrap();
     storage
         .handle
-        .save_hashes(&[hash(), InfoHashV1([1; 20])], collector.now().unwrap())
+        .save_hashes(&[hash(), SwarmKey([1; 20])], collector.now().unwrap())
         .await
         .unwrap();
     let first = storage

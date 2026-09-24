@@ -1,0 +1,107 @@
+[
+  {
+    "name": "v1",
+    "sha1": "0ccb094f86fad7ff8b8aa1dc49ecf157249c4f44",
+    "sha256": "e7fc2283d77b79479b045b10275de133734f365faca24c38616efbe396752cd0",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "v2",
+    "sha1": "91f8c8fce56ad391ffb146cba5137ef44a738ccb",
+    "sha256": "75952710513e6796448eebca3fc05a72e1eb342b69557a7f08ece4ae56edc30c",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "hybrid",
+    "sha1": "9797c01f6a208b774705ac9289d3ccd97e347a90",
+    "sha256": "b764a7890ae2ca35a3075dfeb8bfe6c5876650d3e09841a36e7e454ed665e18c",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "hybrid-mismatch",
+    "sha1": "7f941a9035dd1064ed322d519f4d737f89375c05",
+    "sha256": "0815ff83e52380e03ff7f30e2eeb2696bc1031d87dcd5fa67fbada002e6d0c7f",
+    "status": "invalid",
+    "reason": "hybrid_layout"
+  },
+  {
+    "name": "v2-bad-root",
+    "sha1": "aa436a2baa766eda42ca7fbbf076cd5a14b51d34",
+    "sha256": "e7e15b03178b60615edbd9114541c9f7ea4c1cc92bf85c90c0ffd9bf23cae71d",
+    "status": "invalid",
+    "reason": "pieces_root"
+  },
+  {
+    "name": "v2-tree-conflict",
+    "sha1": "f6df3c47e4041da81e9c7e1f8568bdcfce1cb99c",
+    "sha256": "bd03410d9559f1f6233e2d1d8dee8a5b70185ba648d04f0d6bbf57abc35ce774",
+    "status": "invalid",
+    "reason": "file_tree_conflict"
+  },
+  {
+    "name": "v2-bad-piece",
+    "sha1": "d89bcde314129447d081b7b394d64bf206cef95f",
+    "sha256": "d2e29bbd125a90d3004fa598db225cdf50f4a0dc4737c5950f86980efbe7950d",
+    "status": "invalid",
+    "reason": "piece_length"
+  },
+  {
+    "name": "unknown-version",
+    "sha1": "4bf5cb24d50ae1492d1c984547f41b414af38c9a",
+    "sha256": "7c31034639cb6cc9dec2dc0949f9307217f2f3170b344147b1c779f4bb7e1617",
+    "status": "unsupported",
+    "reason": "unsupported_meta_version"
+  },
+  {
+    "name": "v1-bad-pieces",
+    "sha1": "b36ac6a7d615388be4223bf6a0dac250459d7cfb",
+    "sha256": "b005205cf1859038e2328158067c12013fed396c2fda1f6528dacac6f1252afd",
+    "status": "invalid",
+    "reason": "piece_count"
+  },
+  {
+    "name": "v1-empty",
+    "sha1": "750aeb59ace2f7a7f37b3fd6178a1adabd3f1f21",
+    "sha256": "7841434efccc8327d58a2ebc9826a236e7b285456afc0158c4c452361cc839c8",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "bep47",
+    "sha1": "964b60057bc78843b8b9cf61557e45a6839fc9d6",
+    "sha256": "041644a9bb5fa7abb9ce9df05d8d8ab0f8cd8c016fe792b074b2b61abe84e0ad",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "overflow",
+    "sha1": "e9377a2246488de93a4f42744d4540e6bf1601b1",
+    "sha256": "cb49a2fd8198180594f4605790e037d3d7c86801fbbc7b73d788a78d16fd005f",
+    "status": "invalid",
+    "reason": "length_overflow"
+  },
+  {
+    "name": "hybrid-padding",
+    "sha1": "2d95c8aeabd57a21d366904f80eaaf9e47a43481",
+    "sha256": "d31ab922243981648b9b06cf9abc02ec2e2d67f1d8ebd41914e1b13e1f131d04",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "v2-empty-directory",
+    "sha1": "0112d368721cf76f14371c14e20e7c6b4ade00b4",
+    "sha256": "f202f0d0e67e9b4e9b082f617ab3ad811cb92b64c50b89a6e6388c8bcd8ec538",
+    "status": "valid",
+    "reason": null
+  },
+  {
+    "name": "hybrid-empty-directory",
+    "sha1": "508eaec8052d9330e43b14c7922f87181568daee",
+    "sha256": "bf00e35ec67a134f8f8896932a0e6afc27078d57c4a1d2e746f54fba94cc7950",
+    "status": "valid",
+    "reason": null
+  }
+]

@@ -1,7 +1,7 @@
 //! BEP 51 响应字段校验；普通节点响应仍交给 dispatcher 的联系人处理路径。
 
 use super::super::api::{DiscoveredNode, QueryError};
-use crate::{dht::krpc::ResponseArgs, info_hash::InfoHashV1};
+use crate::{dht::krpc::ResponseArgs, info_hash::SwarmKey};
 use std::{collections::HashSet, time::Duration};
 
 #[derive(Debug)]
@@ -9,7 +9,7 @@ pub(in crate::dht::dispatcher) struct SampleResponse {
     pub(super) nodes: Vec<DiscoveredNode>,
     pub(super) interval: Duration,
     pub(super) num: u64,
-    pub(super) samples: Vec<InfoHashV1>,
+    pub(super) samples: Vec<SwarmKey>,
 }
 
 /// 缺少 samples 的普通节点响应不是采样成功，但可以复用其联系人。

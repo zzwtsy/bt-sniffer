@@ -66,11 +66,11 @@ impl Monitor {
         let finish = CancellationToken::new();
         let state = Arc::new(State {
             observer,
+            database: store.read_permit.clone(),
             store,
             nodes,
             cache: Mutex::new(json!({"nodes":[],"database":{"available":false}})),
             requests: Arc::new(Semaphore::new(4)),
-            database: Arc::new(Semaphore::new(1)),
             streams: Arc::new(Semaphore::new(4)),
             rate: Mutex::new((Instant::now(), 10.0)),
             stop: stop.clone(),
@@ -80,7 +80,6 @@ impl Monitor {
         let connections = Arc::new(Mutex::new(JoinSet::new()));
         tasks.spawn(serve(listener, state.clone(), connections.clone()));
         tasks.spawn(refresh(state.clone()));
-        tasks.spawn(backfill_catalog(state.clone()));
         Self {
             connections,
             tasks,
@@ -192,43 +191,6 @@ impl State {
             cached: self.cached_summary(),
         })
         .expect("监控 snapshot 只包含可序列化状态")
-    }
-}
-
-/// 旧 metadata 每轮只补一条；HTTP 查询占用数据库许可时直接让出本轮。
-async fn backfill_catalog(state: Arc<State>) {
-    let mut cursor = None;
-    loop {
-        if state.stop.is_cancelled() {
-            break;
-        }
-        let Ok(permit) = state.database_permit() else {
-            tokio::select! {
-                _ = state.stop.cancelled() => break,
-                _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
-            }
-        };
-        let cancel = state.stop.child_token();
-        let _guard = cancel.clone().drop_guard();
-        match state
-            .store
-            .backfill_catalog_one(cursor, permit, cancel)
-            .await
-        {
-            Ok(step) => {
-                cursor = step.cursor;
-                if step.complete {
-                    state.stop.cancelled().await;
-                    break;
-                }
-            }
-            Err(ReadError::Cancelled) if state.stop.is_cancelled() => break,
-            Err(_) => {}
-        }
-        tokio::select! {
-            _ = state.stop.cancelled() => break,
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-        }
     }
 }
 

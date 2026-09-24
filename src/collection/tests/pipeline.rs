@@ -31,7 +31,7 @@ async fn pipeline_peer(
             .push(start.elapsed().as_millis() as u64);
         let active = probe.active.fetch_add(1, Ordering::SeqCst) + 1;
         probe.peak.fetch_max(active, Ordering::SeqCst);
-        let h = InfoHashV1(Sha1::digest(&info).into());
+        let h = SwarmKey(Sha1::digest(&info).into());
         tokio::time::sleep(Duration::from_millis(1100)).await;
         let mut hello = [0; 68];
         socket.read_exact(&mut hello).await.unwrap();
@@ -70,7 +70,7 @@ async fn fixed_pipeline_scenario(family: AddressFamily, jobs: usize) -> serde_js
     let mut hashes = Vec::new();
     for n in 0..jobs {
         let info = format!("d4:name1:{n}6:pieces0:e").into_bytes();
-        let h = InfoHashV1(Sha1::digest(&info).into());
+        let h = SwarmKey(Sha1::digest(&info).into());
         let (addr, task) = pipeline_peer(family, info, probe.clone(), start).await;
         hashes.push(h);
         peers.insert(h, addr);

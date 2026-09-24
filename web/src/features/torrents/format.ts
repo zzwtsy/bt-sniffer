@@ -54,8 +54,12 @@ export function shortHash(value: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+/** magnet URN 前缀：v2 完整身份按 BEP 52 使用 multihash sha2-256 前缀。 */
+const URN_V1 = "btih:";
+const URN_V2 = "btmh:1220";
+
 /** 复制用的完整磁力链接；有已解析名称时附带 dn 参数，方便客户端直接显示名称。 */
 export function magnetLink(hash: string, name?: string | null) {
-  const base = `magnet:?xt=urn:btih:${hash}`;
+  const base = `magnet:?xt=urn:${hash.length === 64 ? URN_V2 : URN_V1}${hash}`;
   return name == null || name === "" ? base : `${base}&dn=${encodeURIComponent(name)}`;
 }

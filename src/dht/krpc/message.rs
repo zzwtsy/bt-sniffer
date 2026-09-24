@@ -5,7 +5,7 @@
 //!
 //! 描述报文的可选字段，不承担业务授权；缺失字段是否非法由具体查询处理器决定。
 
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_bytes::ByteBuf;
 
@@ -219,6 +219,14 @@ pub(crate) struct KrpcMessage {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) ro: Option<u8>,
+    /// BEP 42 顶层地址观察；非法可选字段忽略，不降低整个响应的结构校验。
+    #[serde(
+        default,
+        serialize_with = "transparent_option::serialize",
+        deserialize_with = "observed_ip",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) ip: Option<ByteBuf>,
 }
 
 /// KRPC 查询参数。
@@ -244,7 +252,7 @@ pub(crate) struct QueryArgs {
         with = "transparent_option",
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) info_hash: Option<InfoHashV1>,
+    pub(crate) info_hash: Option<SwarmKey>,
 
     /// peer 接受 BitTorrent 连接的端口（TCP 或 uTP），仅供 `announce_peer` 使用。
     #[serde(
@@ -352,4 +360,14 @@ pub(crate) struct ResponseArgs {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) num: Option<u64>,
+}
+
+fn observed_ip<'de, D: Deserializer<'de>>(d: D) -> Result<Option<ByteBuf>, D::Error> {
+    let value = bendy::value::Value::deserialize(d)?;
+    Ok(match value {
+        bendy::value::Value::Bytes(bytes) if matches!(bytes.len(), 6 | 18) => {
+            Some(ByteBuf::from(bytes.into_owned()))
+        }
+        _ => None,
+    })
 }

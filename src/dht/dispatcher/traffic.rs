@@ -59,6 +59,7 @@ impl Outbound {
             }),
             r: None,
             e: None,
+            ip: None,
             ro: None,
         }
     }
@@ -76,11 +77,18 @@ impl DhtDispatcher {
         mut purpose: PendingPurpose,
         now: Instant,
     ) {
-        let parent = match &purpose {
+        if self.identity_paused {
+            self.finish_start_error(purpose, QueryError::IdentityChanged, now);
+            return;
+        }
+        let mut parent = match &purpose {
             PendingPurpose::Fetch { observer, .. } => observer.clone(),
             PendingPurpose::Sampling(request) => request.observer.clone(),
             _ => self.observer.clone(),
         };
+        if parent.enabled() {
+            parent.context.node_id = Some(crate::observation::hex(&self.routing.local_id().0));
+        }
         let mut observation = parent.span(crate::observation::Kind::Rpc, "query");
         observation.observer.emit(crate::observation::Kind::Rpc,"request","created",||serde_json::json!({"peer":remote.address.to_string(),"method":match query{Outbound::Ping=>"ping",Outbound::FindNode(_)=>"find_node",Outbound::Sample(_)=>"sample_infohashes",Outbound::GetPeers(_)=>"get_peers"}}));
         let reserve = if match purpose {

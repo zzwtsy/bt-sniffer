@@ -94,10 +94,10 @@ fn config() -> PeerStoreConfig {
 fn addr(port: u16) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
 }
-fn hash(n: u8) -> InfoHashV1 {
-    InfoHashV1([n; 20])
+fn hash(n: u8) -> SwarmKey {
+    SwarmKey([n; 20])
 }
-fn sample(store: &PeerStore, hash: InfoHashV1, now: Instant) -> Vec<SocketAddr> {
+fn sample(store: &PeerStore, hash: SwarmKey, now: Instant) -> Vec<SocketAddr> {
     store.sample(hash, 100, now, &mut StdRng::seed_from_u64(7))
 }
 

@@ -166,7 +166,7 @@ export class ParticlePool {
     const now = this.clock();
     if (isCommitApplied(event))
       this.committed++;
-    const hash = event.context.hash;
+    const hash = event.context.swarm_key;
     if (hash === undefined || hash === "")
       return;
     const stage = STAGES.findIndex(s => s.kinds.includes(event.kind as KnownKind));

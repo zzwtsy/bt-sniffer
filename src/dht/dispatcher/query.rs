@@ -217,6 +217,7 @@ impl DhtDispatcher {
             a: None,
             r: Some(response),
             e: None,
+            ip: Some(crate::dht::security::compact(destination)),
             ro: None,
         };
         if !fit_response(&mut message, self.transport.max_message_size().min(1024)) {
@@ -246,6 +247,7 @@ impl DhtDispatcher {
                 code.as_i64(),
                 ByteBuf::from(explanation.as_bytes().to_vec()),
             )),
+            ip: Some(crate::dht::security::compact(destination)),
             ro: None,
         };
         if bendy::serde::to_bytes(&message)

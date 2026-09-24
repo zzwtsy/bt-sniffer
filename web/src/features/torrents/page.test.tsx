@@ -14,6 +14,15 @@ import { TorrentsPage } from "./page";
 
 const item = {
   hash: "a".repeat(40),
+  format: "v1",
+  semantic_status: "valid",
+  semantic_reason: null,
+  identities: [],
+  verification: ["v1_full"],
+  validation_scope: "info_only",
+  piece_layers: "not_fetched",
+  piece_space_length: "9007199254740993",
+  padding_length: "0",
   parse_status: "parsed",
   name: "Example",
   name_truncated: false,
@@ -88,6 +97,7 @@ it("首页展示总数与页码链接，上一页为禁用按钮", async () => {
   renderAt("/torrents");
 
   expect(await screen.findByText("共 100 条")).toBeInTheDocument();
+  expect(screen.queryByText("有效")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
   const second = screen.getByRole("link", { name: "第 2 页" });
   expect(second).toHaveAttribute("href", expect.stringContaining("page=2"));
@@ -115,6 +125,12 @@ it("页码越界时 replace 到末页", async () => {
   await waitFor(() => expect(router.state.location.search.page).toBe(2));
   expect(await screen.findByText("共 100 条")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Example" })).toBeInTheDocument();
+});
+
+it("语义异常的行显示状态徽标，valid 行不显示", async () => {
+  stubCatalog(1, [{ ...item, semantic_status: "invalid" }]);
+  renderAt("/torrents");
+  expect(await screen.findByText("无效")).toBeInTheDocument();
 });
 
 it("刷新失败保留已有结果，并可从错误提示重试", async () => {

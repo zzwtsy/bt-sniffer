@@ -59,8 +59,8 @@ export class EventBuffer {
       this.entries.set(event.sequence, { event, bytes, received: now });
       this.order.push(event.sequence);
       this.bytes += bytes;
-      if (event.context.hash != null && event.context.hash !== "")
-        this.index(this.hashes, event.context.hash, event.sequence);
+      if (event.context.swarm_key != null && event.context.swarm_key !== "")
+        this.index(this.hashes, event.context.swarm_key, event.sequence);
       for (const id of this.objectIds(event))
         this.index(this.objects, id, event.sequence);
     }
@@ -92,8 +92,8 @@ export class EventBuffer {
       if (set?.size === 0)
         index.delete(key);
     };
-    if (entry.event.context.hash !== undefined && entry.event.context.hash !== "")
-      removeIndex(this.hashes, entry.event.context.hash);
+    if (entry.event.context.swarm_key !== undefined && entry.event.context.swarm_key !== "")
+      removeIndex(this.hashes, entry.event.context.swarm_key);
     for (const key of this.objectIds(entry.event))
       removeIndex(this.objects, key);
   }

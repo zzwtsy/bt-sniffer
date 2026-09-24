@@ -5,7 +5,7 @@ use super::{
 };
 use crate::address::AddressPolicy;
 use crate::collection::store::CollectionStore;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::StorageError;
 use rusqlite::{Connection, params};
 use std::sync::atomic::Ordering;
@@ -191,7 +191,7 @@ impl Admission {
     pub(in crate::collection) fn observe(
         &mut self,
         connection: &Connection,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         now: i64,
     ) -> Result<bool, StorageError> {
         if !self.enabled {
@@ -210,7 +210,7 @@ impl Admission {
         }
         Ok(connection.query_row(
             "SELECT NOT EXISTS(SELECT 1 FROM fetch_jobs WHERE hash=?1)
-                AND NOT EXISTS(SELECT 1 FROM metadata WHERE hash=?1)",
+                AND NOT EXISTS(SELECT 1 FROM swarm_metadata WHERE hash=?1)",
             [hash.0.as_slice()],
             |r| r.get(0),
         )?)
@@ -218,7 +218,7 @@ impl Admission {
     pub(in crate::collection) fn enqueue(
         &mut self,
         connection: &Connection,
-        hash: InfoHashV1,
+        hash: SwarmKey,
         now: i64,
     ) -> Result<usize, StorageError> {
         let first_seen: i64 = connection.query_row(
@@ -299,8 +299,8 @@ impl CollectionStore {
     pub(crate) async fn backfill_recent_page(
         &self,
         now: i64,
-        cursor: Option<(i64, InfoHashV1)>,
-    ) -> Result<Option<(i64, InfoHashV1)>, StorageError> {
+        cursor: Option<(i64, SwarmKey)>,
+    ) -> Result<Option<(i64, SwarmKey)>, StorageError> {
         let limit = self.fetch_limit.load(Ordering::Relaxed);
         let recent_config = self.recent_admission();
         let observer = self.observer.clone();
@@ -395,7 +395,7 @@ pub(super) fn available(connection: &Connection, limit: usize) -> Result<usize, 
 /// 无名额、已有 metadata 或现有任务无需激活时也可返回 Ok，不代表新建了任务。
 pub(super) fn enqueue(
     connection: &Connection,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     now_ms: i64,
     available_slots: &mut usize,
 ) -> Result<(), StorageError> {
@@ -412,7 +412,7 @@ pub(super) fn enqueue(
          SELECT ?1, 'pending', ?2, ?2
          WHERE NOT EXISTS (
              SELECT 1
-             FROM metadata
+             FROM swarm_metadata
              WHERE hash = ?1
          )
          ON CONFLICT (hash) DO NOTHING",
@@ -431,7 +431,7 @@ pub(super) fn enqueue(
                AND updated_at <= ?2 - ?3
                AND NOT EXISTS (
                    SELECT 1
-                   FROM metadata
+                   FROM swarm_metadata
                    WHERE hash = ?1
                )",
             params![
@@ -462,8 +462,8 @@ impl CollectionStore {
     pub(crate) async fn backfill_page(
         &self,
         now_ms: i64,
-        cursor: Option<InfoHashV1>,
-    ) -> Result<Option<InfoHashV1>, StorageError> {
+        cursor: Option<SwarmKey>,
+    ) -> Result<Option<SwarmKey>, StorageError> {
         let limit = self.fetch_limit.load(Ordering::Relaxed);
         let recent_config = self.recent_admission();
         let recent_limit = recent_config.limit;
@@ -489,7 +489,7 @@ impl CollectionStore {
                                  WHERE j.hash = h.hash
                              ) AND NOT EXISTS (
                                  SELECT 1
-                                 FROM metadata m
+                                 FROM swarm_metadata m
                                  WHERE m.hash = h.hash
                              )
                          FROM infohashes h

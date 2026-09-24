@@ -47,7 +47,7 @@ async fn refills_share_cursor_and_only_successful_claims_advance() {
             assert!(workers.is_empty());
             assert_eq!(policy.order()[0], expected);
         }
-        let h = InfoHashV1([n as u8; 20]);
+        let h = SwarmKey([n as u8; 20]);
         collector
             .store
             .save_hashes(&[h], collector.now().unwrap())

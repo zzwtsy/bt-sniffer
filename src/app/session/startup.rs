@@ -99,10 +99,24 @@ impl Session {
         let mut identity_span = self
             .observer
             .span(crate::observation::Kind::Lifecycle, "identity_restore");
-        let identity =
+        let mut identity =
             identity::load_or_create(&store, instance, family, unix_millis(SystemTime::now())?)
                 .await
                 .inspect_err(|_| identity_span.finish("failed"))?;
+        let mut cached_ip = identity::external_ip(&store, identity).await?;
+        if let Some(ip) = cached_ip
+            && (!family.accepts(std::net::SocketAddr::new(ip, 1))
+                || !crate::dht::security::public(ip)
+                || !crate::dht::security::valid(identity.node_id, ip))
+        {
+            return Err(StorageError::Invalid("缓存的 BEP42 身份与地址不一致"));
+        }
+        if let Some(ip) = config.external_ip
+            && (cached_ip != Some(ip) || !crate::dht::security::valid(identity.node_id, ip))
+        {
+            identity = identity::bind(&store, identity, ip).await?;
+            cached_ip = Some(ip);
+        }
         identity_span.finish("ready");
         if self
             .nodes
@@ -139,6 +153,11 @@ impl Session {
         if node_observer.enabled() {
             node_observer.context.node_id = Some(crate::observation::hex(&identity.node_id.0));
         }
+        dispatcher.security.external = dispatcher.security.external.or(cached_ip);
+        dispatcher.security.restore_cooldown(
+            identity::cooldown_remaining(&store, identity).await?,
+            tokio::time::Instant::now().into_std(),
+        );
         dispatcher.observer = node_observer.clone();
         handle.observer = node_observer;
         self.observer.emit(crate::observation::Kind::Lifecycle,"node_restore","ready",||serde_json::json!({"node_id":crate::observation::hex(&identity.node_id.0),"contacts":contacts.len(),"address":address.to_string()}));
@@ -200,6 +219,7 @@ impl Session {
         {
             return Err(StorageError::Conflict.into());
         }
+        self.start_catalog_maintenance();
         let collector = crate::collection::Collector::new(
             self.collection_store.clone(),
             self.nodes.iter().map(|node| node.handle.clone()).collect(),
@@ -253,11 +273,62 @@ impl Session {
     }
 
     pub(crate) fn start_monitor(&mut self, listener: tokio::net::TcpListener) {
+        self.start_catalog_maintenance();
         self.monitor = Some(crate::monitor::Monitor::start(
             listener,
             self.collection_store.clone(),
             self.nodes.iter().map(|node| node.handle.clone()).collect(),
             self.observer.clone(),
         ));
+    }
+}
+
+impl Session {
+    /// 回填由 Session 监督，与监控连接无关；许可随实际数据库命令保留到结束。
+    fn start_catalog_maintenance(&mut self) {
+        if self
+            .roles
+            .values()
+            .any(|r| *r == TaskRole::CatalogMaintenance)
+        {
+            return;
+        }
+        let store = self.collection_store.clone();
+        let stop = self.stop_snapshots.clone();
+        let task = self.tasks.spawn(async move {
+            let mut cursor = None;
+            loop {
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                }
+                let Ok(permit) = store.read_permit.clone().try_acquire_owned() else {
+                    continue;
+                };
+                match store
+                    .backfill_catalog_one(cursor, permit, stop.clone())
+                    .await
+                {
+                    Ok(step) => {
+                        cursor = step.cursor;
+                        if step.complete {
+                            stop.cancelled().await;
+                            break;
+                        }
+                    }
+                    Err(crate::collection::inspection::ReadError::Cancelled)
+                        if stop.is_cancelled() =>
+                    {
+                        break;
+                    }
+                    Err(error) => {
+                        let message = format!("历史回填失败：{error:?}");
+                        return TaskOutput::Snapshot(Err(StorageError::Database(message)));
+                    }
+                }
+            }
+            TaskOutput::Snapshot(Ok(()))
+        });
+        self.roles.insert(task.id(), TaskRole::CatalogMaintenance);
     }
 }

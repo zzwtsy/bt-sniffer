@@ -11,7 +11,7 @@ mod transitions;
 #[cfg(test)]
 use crate::collection::peer::VerifiedMetadata;
 use crate::collection::store::CollectionStore;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::StorageError;
 #[cfg(test)]
 use claim::{CLAIM_SQL, ClaimRow, schedule_sql};
@@ -75,6 +75,7 @@ impl RetryReason {
 /// 本地条件导致的延期分类，均不消耗远端失败重试次数。
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LocalReason {
+    IdentityChanged,
     /// 资源或配额暂不可用，尚不能据此认定远端失败。
     ResourceWait,
     /// 缺少可用 DHT 路由，等待后续发现。
@@ -86,6 +87,7 @@ impl RetryReason {
     pub(crate) fn category(self) -> Option<&'static str> {
         match self {
             Self::Deferred => Some("local_deferred"),
+            Self::Local(LocalReason::IdentityChanged) => Some("identity_changed"),
             Self::Local(LocalReason::ResourceWait) => Some("local_wait"),
             Self::Local(LocalReason::NoRoute) => Some("no_route"),
             Self::Local(LocalReason::Cancelled) => Some("cancelled"),
@@ -149,7 +151,7 @@ pub(crate) struct Job {
     pub(crate) class: ClaimClass,
     /// 领取事务确认存在合法且未过期的提示；与调度类别独立。
     pub(crate) had_valid_hint: bool,
-    pub(crate) hash: InfoHashV1,
+    pub(crate) hash: SwarmKey,
     /// 领取版本号；重新领取或恢复后递增，拒绝旧 worker 的迟到结果。
     pub(crate) generation: i64,
     /// 领取事务读取的远端失败次数，取值 0..=6；本地延期和恢复不增加它。
@@ -172,8 +174,8 @@ impl CollectionStore {
         self.sample_observations.load(Ordering::Relaxed)
     }
 }
-fn decode_hash(bytes: Vec<u8>) -> Result<InfoHashV1, StorageError> {
-    Ok(InfoHashV1(
+fn decode_hash(bytes: Vec<u8>) -> Result<SwarmKey, StorageError> {
+    Ok(SwarmKey(
         bytes
             .try_into()
             .map_err(|_| StorageError::Invalid("hash 长度无效"))?,

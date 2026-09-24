@@ -13,7 +13,7 @@ use crate::dht::routing::RoutingTable;
 use crate::dht::traffic::Budget;
 use crate::dht::transaction::TransactionManager;
 use crate::dht::udp::UdpTransport;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::StorageConfig;
 use futures_util::{SinkExt, StreamExt};
 use sha1::{Digest, Sha1};
@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_util::codec::LengthDelimitedCodec;
 
-type Catalog = Arc<HashMap<InfoHashV1, Vec<u8>>>;
+type Catalog = Arc<HashMap<SwarmKey, Vec<u8>>>;
 async fn serve_peer(mut socket: TcpStream, slow: bool, catalog: Catalog) -> std::io::Result<()> {
     let mut hello = [0; 68];
     socket.read_exact(&mut hello).await?;
@@ -33,7 +33,7 @@ async fn serve_peer(mut socket: TcpStream, slow: bool, catalog: Catalog) -> std:
         tokio::time::sleep(Duration::from_secs(6)).await;
         return Ok(());
     }
-    let hash = InfoHashV1(hello[28..48].try_into().unwrap());
+    let hash = SwarmKey(hello[28..48].try_into().unwrap());
     let Some(info) = catalog.get(&hash) else {
         return Ok(());
     };
@@ -149,7 +149,7 @@ async fn run_group(concurrency: usize, repetition: usize) -> serde_json::Value {
     let mut order = Vec::new();
     for n in 0..1000 {
         let info = format!("d4:name8:{n:08}6:pieces0:e").into_bytes();
-        let hash = InfoHashV1(Sha1::digest(&info).into());
+        let hash = SwarmKey(Sha1::digest(&info).into());
         order.push(hash);
         catalog.insert(hash, info);
     }
@@ -244,6 +244,7 @@ async fn run_group(concurrency: usize, repetition: usize) -> serde_json::Value {
                             q: None,
                             a: None,
                             e: None,
+                            ip: None,
                             ro: None,
                             r: Some(ResponseArgs {
                                 id: NodeId([8; 20]),

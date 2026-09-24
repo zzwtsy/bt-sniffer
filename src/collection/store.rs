@@ -12,6 +12,8 @@ use std::sync::{
 /// 一个采集能力共享一份接纳状态；克隆不创建连接，也不重置计数。
 #[derive(Clone)]
 pub(crate) struct CollectionStore {
+    /// Monitor 读取和历史回填共用一个数据库许可。
+    pub(crate) read_permit: Arc<tokio::sync::Semaphore>,
     pub(crate) observer: crate::observation::Observer,
     #[cfg(test)]
     pub(super) test_barrier: Arc<
@@ -33,6 +35,7 @@ pub(crate) struct CollectionStore {
 impl CollectionStore {
     pub(crate) fn new(database: StorageHandle) -> Self {
         Self {
+            read_permit: Arc::new(tokio::sync::Semaphore::new(1)),
             observer: Default::default(),
             #[cfg(test)]
             test_barrier: Arc::default(),

@@ -51,7 +51,7 @@ export const windowSchema = z
   .passthrough();
 export const contextSchema = z
   .object({
-    hash: z.string().optional(),
+    swarm_key: z.string().optional(),
     generation: z.number().int().safe().optional(),
     node_id: z.string().optional(),
     observation_id: z.string().optional(),
@@ -64,7 +64,7 @@ export const contextSchema = z
   .passthrough();
 export const eventSchema = z
   .object({
-    schema_version: z.literal(1),
+    schema_version: z.literal(2),
     run_id: z.string(),
     sequence,
     at_ms: millis,

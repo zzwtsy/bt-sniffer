@@ -30,6 +30,7 @@ fn sample_response(t: ByteBuf, v6: bool) -> KrpcMessage {
         a: None,
         r: Some(r),
         e: None,
+        ip: None,
         ro: None,
     }
 }
@@ -187,6 +188,7 @@ async fn unsupported_rpc_falls_back_without_emitting_batch() {
             a: None,
             r: None,
             e: Some((204, b"unsupported".to_vec().into())),
+            ip: None,
             ro: None,
         },
     )

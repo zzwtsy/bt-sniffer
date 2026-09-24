@@ -26,7 +26,7 @@ use crate::dht::krpc::Token;
 use crate::dht::routing::AddressFamily;
 use crate::dht::transaction::TransactionManager;
 use crate::dht::udp::UdpTransport;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::StorageConfig;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde_bytes::ByteBuf;
@@ -43,8 +43,8 @@ fn now() -> Result<i64, StorageError> {
 }
 
 const INFO: &[u8] = b"d4:name4:test6:pieces0:e";
-fn hash() -> InfoHashV1 {
-    InfoHashV1(Sha1::digest(INFO).into())
+fn hash() -> SwarmKey {
+    SwarmKey(Sha1::digest(INFO).into())
 }
 fn config(dir: &std::path::Path) -> Config {
     Config {
@@ -86,7 +86,12 @@ async fn tcp_info_with_order(
     info: Vec<u8>,
     compatible: bool,
 ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
-    let info_hash = InfoHashV1(Sha1::digest(&info).into());
+    let info_hash = if super::metainfo::is_v2(&info) {
+        let digest = sha2::Sha256::digest(&info);
+        SwarmKey(digest[..20].try_into().unwrap())
+    } else {
+        SwarmKey(Sha1::digest(&info).into())
+    };
     let listener = TcpListener::bind(if family == AddressFamily::Ipv6 {
         "[::1]:0"
     } else {
@@ -139,6 +144,7 @@ fn response(
         q: None,
         a: None,
         e: None,
+        ip: None,
         ro: None,
         r: Some(ResponseArgs {
             id: NodeId([8; 20]),
@@ -232,6 +238,7 @@ fn announce_query(token: Option<Token>, port: u16) -> KrpcMessage {
         }),
         r: None,
         e: None,
+        ip: None,
         ro: Some(1),
     }
 }

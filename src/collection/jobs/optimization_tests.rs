@@ -5,10 +5,10 @@ use crate::address::AddressPolicy;
 use crate::collection::test_storage::TestStorage as Storage;
 use crate::storage::StorageConfig;
 const NOW: i64 = 3_600_000;
-fn hash(n: u32) -> InfoHashV1 {
+fn hash(n: u32) -> SwarmKey {
     let mut bytes = [0; 20];
     bytes[..4].copy_from_slice(&n.to_be_bytes());
-    InfoHashV1(bytes)
+    SwarmKey(bytes)
 }
 
 #[tokio::test]

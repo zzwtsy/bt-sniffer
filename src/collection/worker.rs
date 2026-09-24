@@ -18,7 +18,7 @@ use crate::collection::peer::PeerError;
 use crate::collection::peer::PeerFetchError;
 use crate::collection::peer::VerifiedMetadata;
 use crate::dht::dispatcher::DhtHandle;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use std::{
     net::SocketAddr,
     sync::{
@@ -112,7 +112,14 @@ pub(super) async fn run_job(
                     biased;
                     result = &mut lookup => {
                         dht_active.store(false, Ordering::Relaxed);
-                        if let Some(error) = result.fault { return Outcome::Control(error); }
+                        if let Some(error) = result.fault {
+                            return match error {
+                                crate::dht::dispatcher::QueryError::IdentityChanged => {
+                                    Outcome::Retry(RetryReason::Local(LocalReason::IdentityChanged))
+                                }
+                                error => Outcome::Control(error),
+                            };
+                        }
                         summary = Some(result);
                         next = peers.try_recv().ok().map(|address| PeerCandidate { address, source: Source::Dht });
                     }
@@ -159,7 +166,14 @@ pub(super) async fn run_job(
                     biased;
                     result = &mut lookup, if summary.is_none() => {
                         dht_active.store(false, Ordering::Relaxed);
-                        if let Some(error) = result.fault { return Outcome::Control(error); }
+                        if let Some(error) = result.fault {
+                            return match error {
+                                crate::dht::dispatcher::QueryError::IdentityChanged => {
+                                    Outcome::Retry(RetryReason::Local(LocalReason::IdentityChanged))
+                                }
+                                error => Outcome::Control(error),
+                            };
+                        }
                         summary = Some(result);
                     }
                     result = &mut attempt => break result,
@@ -229,7 +243,7 @@ pub(super) async fn run_job(
 /// 持有同 IP 许可完成一个 peer 尝试；失败返回固定类别，成功返回已校验的 metadata。
 async fn attempt(
     resources: &WorkerResources,
-    hash: InfoHashV1,
+    hash: SwarmKey,
     peer: SocketAddr,
     cancel: &CancellationToken,
     stage: &std::sync::Mutex<ExecutionStage>,
@@ -332,7 +346,7 @@ mod tests {
         // subscriber 只随客户端 future 的 poll 生效，不跨 await 持有线程局部默认 guard。
         let client = attempt(
             &resources,
-            InfoHashV1([1; 20]),
+            SwarmKey([1; 20]),
             peer,
             &cancel,
             &stage,

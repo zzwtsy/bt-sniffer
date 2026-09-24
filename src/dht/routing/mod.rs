@@ -527,6 +527,7 @@ impl RoutingTable {
                     "bucket": id,
                     "node_id": crate::observation::hex(&node.id.0),
                     "address": node.address.to_string(),
+                    "security": crate::dht::security::class(node.id, node.address.ip()),
                     "status": match node.status(now) {
                         NodeStatus::Good => "good",
                         NodeStatus::Questionable => "questionable",

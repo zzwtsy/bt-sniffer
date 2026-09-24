@@ -345,7 +345,7 @@ mod tests {
         use crate::address::AddressPolicy;
         use crate::collection::peer::MetadataConfig;
         use crate::collection::peer::PeerClient;
-        use crate::info_hash::InfoHashV1;
+        use crate::info_hash::SwarmKey;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -370,7 +370,7 @@ mod tests {
             assert!(
                 fetcher
                     .fetch_one(
-                        InfoHashV1([1; 20]),
+                        SwarmKey([1; 20]),
                         address,
                         &tokio_util::sync::CancellationToken::new(),
                         context.clone()

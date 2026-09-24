@@ -1,9 +1,10 @@
 import type { FileItem } from "@/lib/api/torrents";
 
 export interface TreeNode {
+  /** 路径最后一段；padding 文件（path 为 null）为空串，展示名由行组件派生。 */
   name: string;
-  /** 目录为完整前缀，文件为完整路径；同时作为展开状态的稳定键。 */
-  path: string;
+  /** 目录为完整路径前缀，文件为合成键 `file:{index}`；仅作为展开状态与 React key 的稳定标识。 */
+  key: string;
   depth: number;
   file?: FileItem;
   children: TreeNode[];
@@ -16,14 +17,14 @@ export function buildFileTree(items: FileItem[]): TreeNode[] {
   const roots: TreeNode[] = [];
   const dirs = new Map<string, TreeNode>();
   for (const file of items) {
-    const segments = file.path.split("/");
+    const segments = file.path?.split("/") ?? [""];
     let siblings = roots;
     let prefix = "";
     for (let depth = 0; depth < segments.length - 1; depth++) {
       prefix = depth === 0 ? segments[0] : `${prefix}/${segments[depth]}`;
       let dir = dirs.get(prefix);
       if (dir == null) {
-        dir = { name: segments[depth], path: prefix, depth, children: [], count: 0 };
+        dir = { name: segments[depth], key: prefix, depth, children: [], count: 0 };
         dirs.set(prefix, dir);
         siblings.push(dir);
       }
@@ -32,7 +33,7 @@ export function buildFileTree(items: FileItem[]): TreeNode[] {
     }
     siblings.push({
       name: segments[segments.length - 1],
-      path: file.path,
+      key: `file:${file.index}`,
       depth: segments.length - 1,
       file,
       children: [],

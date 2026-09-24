@@ -31,7 +31,7 @@ async fn sample_or_history_observed(
             .unwrap();
     }
     if source == DiscoverySource::BackloggedSampling {
-        let old: Vec<_> = (10..74).map(|n| InfoHashV1([n; 20])).collect();
+        let old: Vec<_> = (10..74).map(|n| SwarmKey([n; 20])).collect();
         store.save_hashes(&old, 0).await.unwrap();
     }
     let (peer, tcp_task) = tcp(family).await;
@@ -417,7 +417,7 @@ async fn lookup_promotes_reserve_on_both_families() {
                 }
             }));
         }
-        let target = InfoHashV1([0; 20]);
+        let target = SwarmKey([0; 20]);
         // 直接查询作为正向对照，但不污染随后查找使用的初始路由。
         handle
             .ping(RemoteNode {
@@ -500,7 +500,7 @@ async fn observed_sampling_preserves_result_and_links_all_stages() {
         .find(|e| e["kind"] == "commit" && e["step"] == "metadata" && e["result"] == "applied")
         .expect("真实事务提交事件");
     assert_eq!(
-        committed["context"]["hash"],
+        committed["context"]["swarm_key"],
         crate::observation::hex(&hash().0)
     );
     assert_eq!(committed["context"]["generation"], 1);
@@ -521,4 +521,95 @@ async fn observed_sampling_preserves_result_and_links_all_stages() {
         observer.window().retained,
         observer.window().bytes
     );
+}
+
+/// 固定 v2/hybrid 字节通过双栈 DHT 发现和真实 TCP 扩展协议提交，再读取完整身份目录。
+#[tokio::test]
+async fn v2_and_hybrid_dual_stack_collection() {
+    for family in [AddressFamily::Ipv4, AddressFamily::Ipv6] {
+        for info in [
+            include_bytes!("../fixtures/v2.info").as_slice(),
+            include_bytes!("../fixtures/hybrid.info"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let Fixture {
+                mut session,
+                handle,
+                ..
+            } = fixture(dir.path(), family).await;
+            let store = session.test_store();
+            let full: [u8; 32] = sha2::Sha256::digest(info).into();
+            let key = SwarmKey(full[..20].try_into().unwrap());
+            let (peer, tcp_task) = tcp_info(family, info.to_vec()).await;
+            let server = udp(family).await;
+            let remote = server.local_addr().unwrap();
+            let task = tokio::spawn(async move {
+                loop {
+                    let request = server.recv().await.unwrap();
+                    let method = request.message.q.unwrap();
+                    let mut message = response(
+                        request.message.t,
+                        family,
+                        (method == QueryMethod::GetPeers).then_some(peer),
+                        method,
+                    );
+                    if let Some(samples) = message.r.as_mut().and_then(|r| r.samples.as_mut()) {
+                        samples.0 = vec![key];
+                    }
+                    server.send_to(request.source, &message).await.unwrap();
+                }
+            });
+            handle
+                .ping(RemoteNode {
+                    address: remote,
+                    expected_id: Some(NodeId([8; 20])),
+                })
+                .await
+                .unwrap();
+            session.start_fetch(config(dir.path())).await.unwrap();
+            session
+                .start_sampling(
+                    0,
+                    crate::dht::dispatcher::SamplerConfig {
+                        address_policy: AddressPolicy::LocalUnicast,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(8), async {
+                loop {
+                    if store.fetch_stats().await.unwrap().succeeded > 0 {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            tcp_task.await.unwrap();
+            let permit = store.read_permit.clone().acquire_owned().await.unwrap();
+            let detail = store
+                .torrent_detail(
+                    crate::info_hash::TorrentIdentity::V2(crate::info_hash::InfoHashV2(full)),
+                    permit,
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            let detail = serde_json::to_value(detail).unwrap();
+            assert_eq!(detail["semantic_status"], "valid");
+            assert_eq!(detail["file_count"], 2);
+            assert_eq!(detail["piece_layers"], "not_fetched");
+            assert!(
+                detail["verification"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("v2_prefix"))
+            );
+            session.shutdown().await.unwrap();
+            task.abort();
+            let _ = task.await;
+        }
+    }
 }

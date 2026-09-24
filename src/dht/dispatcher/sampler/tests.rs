@@ -12,7 +12,7 @@ use crate::{
         peer_store::PeerAddressPolicy,
         routing::{AddressFamily, RoutingTable},
     },
-    info_hash::InfoHashV1,
+    info_hash::SwarmKey,
 };
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -41,7 +41,7 @@ fn response(interval: u64) -> SampleResponse {
         nodes: vec![],
         interval: Duration::from_secs(interval),
         num: 1,
-        samples: vec![InfoHashV1([9; 20])],
+        samples: vec![SwarmKey([9; 20])],
     }
 }
 fn begin(now: Instant, config: SamplerConfig) -> (Sampler, mpsc::Receiver<SampleBatch>) {
@@ -283,7 +283,7 @@ fn sample_response_validation_and_deduplication() {
             .samples
             .is_empty()
     );
-    r.samples = Some(InfoHashSamples(vec![InfoHashV1([9; 20]); 2]));
+    r.samples = Some(InfoHashSamples(vec![SwarmKey([9; 20]); 2]));
     r.num = Some(1);
     assert_eq!(
         decode_sample(&r, vec![], 100)

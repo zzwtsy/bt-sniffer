@@ -66,8 +66,8 @@ async fn verified_metadata_persistence_preserves_bytes_and_detects_corruption() 
     );
     store.shutdown().await.unwrap();
 }
-pub(crate) fn hash(bytes: &[u8]) -> InfoHashV1 {
-    InfoHashV1(Sha1::digest(bytes).into())
+pub(crate) fn hash(bytes: &[u8]) -> SwarmKey {
+    SwarmKey(Sha1::digest(bytes).into())
 }
 pub(crate) fn metadata(size: usize) -> Vec<u8> {
     let mut bytes = format!("d4:name{size}:").into_bytes();
@@ -110,7 +110,7 @@ pub(crate) async fn bind(family: AddressFamily) -> Option<TcpListener> {
 /// 拆分标准握手，并将其尾部和首个帧连写，检查切换到 Codec 时不会丢字节。
 async fn greet(
     mut socket: TcpStream,
-    target: InfoHashV1,
+    target: SwarmKey,
     size: usize,
 ) -> tokio_util::codec::Framed<TcpStream, LengthDelimitedCodec> {
     let mut request = [0; 68];
@@ -147,7 +147,7 @@ pub(crate) enum PeerBehavior {
 
 pub(crate) fn spawn_peer(
     listener: TcpListener,
-    target: InfoHashV1,
+    target: SwarmKey,
     bytes: Vec<u8>,
     behavior: PeerBehavior,
 ) -> JoinHandle<()> {
@@ -263,7 +263,7 @@ async fn ipv6_metadata_roundtrip() {
 #[tokio::test]
 async fn final_verification_rejects_untrusted_metadata() {
     for (bytes, target) in [
-        (b"de".to_vec(), InfoHashV1([0; 20])),
+        (b"de".to_vec(), SwarmKey([0; 20])),
         (b"li1ee".to_vec(), hash(b"li1ee")),
         (b"dejunk".to_vec(), hash(b"dejunk")),
         (b"d1:bi1e1:ai2ee".to_vec(), hash(b"d1:bi1e1:ai2ee")),

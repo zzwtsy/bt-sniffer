@@ -1,6 +1,6 @@
 //! 功能存储测试使用临时数据库；事务与恢复观察沿用真实生产入口。
 use super::store::CollectionStore;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::SwarmKey;
 use crate::storage::{Storage, StorageConfig, StorageError};
 use std::time::Duration;
 // 清楚地区分容量不足、句柄已关闭与线程退出，不留下永远等不到的调用。
@@ -12,7 +12,7 @@ async fn bounded_budget_and_closed_worker_return_errors() {
     let store = Storage::open(config).await.unwrap();
     assert_eq!(
         CollectionStore::new(store.handle.clone())
-            .save_hashes(&[InfoHashV1([1; 20]); 2], 1)
+            .save_hashes(&[SwarmKey([1; 20]); 2], 1)
             .await,
         Err(StorageError::Capacity)
     );
@@ -24,7 +24,7 @@ async fn bounded_budget_and_closed_worker_return_errors() {
     );
     drop(held);
     CollectionStore::new(store.handle.clone())
-        .save_hashes(&[InfoHashV1([1; 20])], 1)
+        .save_hashes(&[SwarmKey([1; 20])], 1)
         .await
         .unwrap();
     let handle = store.handle.clone();
@@ -58,7 +58,7 @@ async fn write_failure_rolls_back_and_retry_is_idempotent() {
         .unwrap();
     assert!(
         CollectionStore::new(store.handle.clone())
-            .save_hashes(&[InfoHashV1([3; 20])], 100)
+            .save_hashes(&[SwarmKey([3; 20])], 100)
             .await
             .is_err()
     );
@@ -72,7 +72,7 @@ async fn write_failure_rolls_back_and_retry_is_idempotent() {
         .unwrap();
     for _ in 0..2 {
         CollectionStore::new(store.handle.clone())
-            .save_hashes(&[InfoHashV1([3; 20])], 100)
+            .save_hashes(&[SwarmKey([3; 20])], 100)
             .await
             .unwrap();
     }
@@ -97,7 +97,7 @@ async fn hashes_are_idempotent() {
     let store = Storage::open(StorageConfig::new(dir.path())).await.unwrap();
     for at in [200, 100, 300, 200] {
         CollectionStore::new(store.handle.clone())
-            .save_hashes(&[InfoHashV1([1; 20]); 2], at)
+            .save_hashes(&[SwarmKey([1; 20]); 2], at)
             .await
             .unwrap();
     }
@@ -140,7 +140,7 @@ async fn sqlite_full_rolls_back_the_entire_batch() {
         .map(|n| {
             let mut bytes = [0; 20];
             bytes[..4].copy_from_slice(&n.to_be_bytes());
-            InfoHashV1(bytes)
+            SwarmKey(bytes)
         })
         .collect();
     let error = CollectionStore::new(store.handle.clone())

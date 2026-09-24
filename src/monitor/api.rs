@@ -1,6 +1,6 @@
 //! 最小监控 HTTP/SSE 接口；错误响应不解析底层错误文字。
 use super::*;
-use crate::info_hash::InfoHashV1;
+use crate::info_hash::{InfoHashV1, InfoHashV2, TorrentIdentity};
 use crate::observation::Filter;
 use axum::{
     Router,
@@ -76,16 +76,29 @@ fn json_response(value: impl Serialize) -> Response {
     }
 }
 
-fn parse_hash(value: &str) -> Result<InfoHashV1, ReadError> {
-    if value.len() != 40 {
+fn parse_hash(value: &str) -> Result<TorrentIdentity, ReadError> {
+    if !matches!(value.len(), 40 | 64) || !value.is_ascii() {
         return Err(ReadError::Invalid);
     }
-    let mut hash = [0; 20];
-    for (index, byte) in hash.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-            .map_err(|_| ReadError::Invalid)?;
+    let bytes = value
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).map_err(|_| ReadError::Invalid)?;
+            u8::from_str_radix(text, 16).map_err(|_| ReadError::Invalid)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if bytes.len() == 20 {
+        Ok(TorrentIdentity::V1(InfoHashV1(
+            bytes.try_into().map_err(|_| ReadError::Invalid)?,
+        )))
+    } else {
+        Ok(TorrentIdentity::V2(InfoHashV2(
+            bytes.try_into().map_err(|_| ReadError::Invalid)?,
+        )))
     }
-    Ok(InfoHashV1(hash))
 }
 
 #[derive(Deserialize)]

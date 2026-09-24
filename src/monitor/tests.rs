@@ -47,7 +47,7 @@ async fn body_json(response: axum::response::Response) -> Value {
 
 async fn insert_torrent(state: &Arc<State>) -> String {
     let info =
-        b"d6:lengthi42e4:name12:example-file12:piece lengthi16e6:pieces20:aaaaaaaaaaaaaaaaaaaae"
+        b"d6:lengthi42e4:name12:example-file12:piece lengthi64e6:pieces20:aaaaaaaaaaaaaaaaaaaae"
             .to_vec();
     let hash: [u8; 20] = Sha1::digest(&info).into();
     let hash_for_db = hash;
@@ -478,5 +478,81 @@ async fn header_deadline_does_not_end_active_sse() {
         .finish(Instant::now() + Duration::from_secs(1))
         .await;
     assert!(monitor.connections.lock().unwrap().is_empty());
+    storage.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn complete_v2_and_hybrid_aliases_share_catalog_and_file_contracts() {
+    use crate::{collection::peer::VerifiedMetadata, info_hash::SwarmKey};
+    for info in [
+        include_bytes!("../collection/fixtures/v2.info").as_slice(),
+        include_bytes!("../collection/fixtures/hybrid.info"),
+    ] {
+        let (_dir, storage, state) = fixture().await;
+        let full = sha2::Sha256::digest(info);
+        let key = SwarmKey(full[..20].try_into().unwrap());
+        state
+            .store
+            .save_metadata(&VerifiedMetadata::fixture_key(info.to_vec(), key), 1)
+            .await
+            .unwrap();
+        let v2 = crate::observation::hex(&full);
+        let detail = body_json(get(&state, &format!("/api/v1/torrents/{v2}")).await).await;
+        assert_eq!(detail["semantic_status"], "valid");
+        assert_eq!(detail["validation_scope"], "info_only");
+        let files = body_json(get(&state, &format!("/api/v1/torrents/{v2}/files")).await).await;
+        assert_eq!(files["items"][0]["kind"], "file");
+        assert_eq!(files["items"][1]["length"], "0");
+        if detail["format"] == "hybrid" {
+            let v1 = crate::observation::hex(&Sha1::digest(info));
+            let alias = body_json(get(&state, &format!("/api/v1/torrents/{v1}")).await).await;
+            assert_eq!(alias, detail);
+            assert_eq!(detail["hash"], v1);
+            assert_eq!(detail["identities"].as_array().unwrap().len(), 2);
+        } else {
+            assert_eq!(files["items"][0]["path"], "a");
+            assert_eq!(
+                get(&state, &format!("/api/v1/torrents/{}", &v2[..40]))
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        let list = body_json(get(&state, "/api/v1/torrents").await).await;
+        assert_eq!(list["total"], 1);
+        storage.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn historical_detail_get_is_read_only_before_catalog_backfill() {
+    let (_dir, storage, state) = fixture().await;
+    let hash = insert_torrent(&state).await;
+    let before = state
+        .store
+        .call(|c| {
+            c.execute("DELETE FROM torrent_catalog", [])?;
+            c.execute(
+                "INSERT INTO torrent_identities SELECT 'v1',hash,id FROM metadata",
+                [],
+            )?;
+            c.execute(
+                "INSERT INTO swarm_metadata SELECT hash,id,'v1_full' FROM metadata",
+                [],
+            )?;
+            Ok(c.total_changes())
+        })
+        .await
+        .unwrap();
+    let response = get(&state, &format!("/api/v1/torrents/{hash}")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let detail = body_json(response).await;
+    assert_eq!(detail["semantic_status"], "valid");
+    assert_eq!(detail["identities"][0]["hash"], hash);
+    let response = get(&state, &format!("/api/v1/torrents/{hash}/files")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["available"], true);
+    let after = state.store.call(|c| Ok(c.total_changes())).await.unwrap();
+    assert_eq!(before, after);
     storage.shutdown().await.unwrap();
 }

@@ -57,7 +57,7 @@ async fn extension_failure_detail_survives_fetch() {
     use crate::collection::peer::MetadataConfig;
     use crate::collection::peer::PeerClient;
     use crate::collection::peer::wire as peer_wire;
-    use crate::info_hash::InfoHashV1;
+    use crate::info_hash::SwarmKey;
     use futures_util::{SinkExt, StreamExt};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -79,7 +79,7 @@ async fn extension_failure_detail_survives_fetch() {
             socket.read_exact(&mut hello).await.unwrap();
             socket
                 .write_all(&peer_wire::handshake(
-                    InfoHashV1([1; 20]),
+                    SwarmKey([1; 20]),
                     peer_wire::PeerId([7; 20]),
                 ))
                 .await
@@ -104,7 +104,7 @@ async fn extension_failure_detail_survives_fetch() {
         assert!(
             fetcher
                 .fetch_one(
-                    InfoHashV1([1; 20]),
+                    SwarmKey([1; 20]),
                     address,
                     &tokio_util::sync::CancellationToken::new(),
                     crate::collection::peer::PeerContext::default()
@@ -163,7 +163,7 @@ async fn extension_negotiation_does_not_restart_handshake_deadline() {
     use crate::collection::peer::PeerClient;
     use crate::collection::peer::wire as peer_wire;
     use crate::collection::peer::wire::PeerId;
-    use crate::info_hash::InfoHashV1;
+    use crate::info_hash::SwarmKey;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -178,7 +178,7 @@ async fn extension_negotiation_does_not_restart_handshake_deadline() {
         socket.read_exact(&mut hello).await.unwrap();
         tokio::time::sleep(Duration::from_secs(3)).await;
         socket
-            .write_all(&peer_wire::handshake(InfoHashV1([1; 20]), PeerId([2; 20])))
+            .write_all(&peer_wire::handshake(SwarmKey([1; 20]), PeerId([2; 20])))
             .await
             .unwrap();
         // 3 秒和 4 秒各发一次兼容增量更新，仍必须在起始 5 秒处超时。
@@ -206,7 +206,7 @@ async fn extension_negotiation_does_not_restart_handshake_deadline() {
     assert!(
         fetcher
             .fetch_one(
-                InfoHashV1([1; 20]),
+                SwarmKey([1; 20]),
                 address,
                 &stop,
                 crate::collection::peer::PeerContext::default()
@@ -309,7 +309,7 @@ async fn real_handshakes_report_standard_extension_eof_and_hash_mismatch() {
     use crate::collection::peer::PeerClient;
     use crate::collection::peer::wire as peer_wire;
     use crate::collection::peer::wire::PeerId;
-    use crate::info_hash::InfoHashV1;
+    use crate::info_hash::SwarmKey;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -334,7 +334,7 @@ async fn real_handshakes_report_standard_extension_eof_and_hash_mismatch() {
             }
             if case != 1 {
                 let mut response = peer_wire::handshake(
-                    InfoHashV1(if case == 4 { [9; 20] } else { [1; 20] }),
+                    SwarmKey(if case == 4 { [9; 20] } else { [1; 20] }),
                     PeerId([2; 20]),
                 );
                 if case == 8 {
@@ -379,7 +379,7 @@ async fn real_handshakes_report_standard_extension_eof_and_hash_mismatch() {
         assert!(
             fetcher
                 .fetch_one(
-                    InfoHashV1([1; 20]),
+                    SwarmKey([1; 20]),
                     address,
                     &cancellation,
                     crate::collection::peer::PeerContext {

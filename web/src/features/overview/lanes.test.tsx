@@ -68,14 +68,14 @@ function event(
   hash = "a".repeat(40),
 ) {
   return eventSchema.parse({
-    schema_version: 1,
+    schema_version: 2,
     run_id: "run",
     sequence: String(sequence),
     at_ms: 1000 + sequence,
     kind,
     step,
     result,
-    context: { hash },
+    context: { swarm_key: hash },
     data: {},
     truncated: false,
   });
